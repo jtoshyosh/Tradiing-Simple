@@ -6,86 +6,212 @@
   <title>JY Trading Journal</title>
   <meta name="theme-color" content="#0b0f17" />
   <style>
-    :root{
-      --bg:#0b0f17;--panel:#121826;--panel2:#171e2f;--muted:#98a2b3;--text:#f5f7fb;--line:#24304a;
-      --green:#69d28c;--red:#ff6b6b;--amber:#f5a524;--blue:#67a6ff;
+    :root {
+      --bg: #0b0f17;
+      --panel: #121826;
+      --panel-2: #171e2f;
+      --line: #2a3550;
+      --text: #f5f7fb;
+      --muted: #98a2b3;
+      --green: #58d689;
+      --red: #ff7878;
+      --amber: #f7ba45;
+      --blue: #79adff;
     }
-    *{box-sizing:border-box} html,body{margin:0;background:radial-gradient(1000px 500px at 50% -10%, #15224f 0%, var(--bg) 50%);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Segoe UI,Roboto,sans-serif}
-    body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
-    .app{max-width:900px;margin:0 auto;min-height:100vh;padding:18px 16px 92px}
-    .header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:18px}
-    h1{font-size:34px;line-height:1.05;margin:8px 0 6px;font-weight:800;letter-spacing:-.03em}
-    .sub{color:var(--muted);font-size:14px;letter-spacing:.08em;text-transform:uppercase}
-    .tag{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:rgba(255,255,255,.03);border-radius:999px;padding:8px 12px;color:var(--muted);font-size:13px}
-    .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-    @media(min-width:720px){.grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-    .card{background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));border:1px solid var(--line);border-radius:20px;padding:16px;box-shadow:0 12px 30px rgba(0,0,0,.18)}
-    .metric-label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.09em}
-    .metric-value{font-size:30px;font-weight:800;margin-top:10px}
-    .section{margin-top:18px}
-    .section h2{font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin:0 0 10px}
-    .tabs{display:flex;gap:8px;background:rgba(255,255,255,.03);padding:6px;border:1px solid var(--line);border-radius:16px;overflow:auto}
-    .tabs button{border:0;background:transparent;color:var(--muted);padding:10px 14px;border-radius:12px;font-weight:700;white-space:nowrap}
-    .tabs button.active{background:var(--panel2);color:var(--text);border:1px solid #31405f}
-    .view{display:none}.view.active{display:block}
-    .row{display:flex;gap:10px;align-items:center;justify-content:space-between}
-    .stack{display:flex;flex-direction:column;gap:12px}
-    .pill{display:inline-flex;border:1px solid var(--line);background:rgba(255,255,255,.03);border-radius:999px;padding:6px 10px;font-size:12px;color:var(--muted)}
-    .green{color:var(--green)} .red{color:var(--red)} .amber{color:var(--amber)} .blue{color:var(--blue)}
-    .trade{padding:14px;border:1px solid var(--line);border-radius:16px;background:rgba(255,255,255,.02)}
-    .trade h3{margin:0 0 6px;font-size:18px}
-    .trade small{color:var(--muted)}
-    .filters{display:flex;gap:8px;overflow:auto;padding-bottom:4px}
-    .filters button{border:1px solid var(--line);background:rgba(255,255,255,.03);color:var(--muted);padding:8px 10px;border-radius:999px;white-space:nowrap}
-    .filters button.on{border-color:#365088;color:var(--text);background:#16233f}
-    label{display:block;color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
-    input,select,textarea{width:100%;background:#0f1523;color:var(--text);border:1px solid var(--line);border-radius:14px;padding:14px 14px;font-size:16px}
-    textarea{min-height:92px;resize:vertical}
-    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .form-grid .full{grid-column:1/-1}
-    .btn{border:1px solid var(--line);background:#18233d;color:var(--text);padding:14px 16px;border-radius:14px;font-weight:800}
-    .btn.primary{background:#1d7342;border-color:#2e9659}.btn.ghost{background:transparent}
-    .bottom{position:fixed;left:0;right:0;bottom:0;padding:10px 12px calc(10px + env(safe-area-inset-bottom));background:rgba(11,15,23,.88);backdrop-filter:blur(14px);border-top:1px solid var(--line)}
-    .bottom .nav{max-width:900px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
-    .bottom button{border:1px solid var(--line);background:#121826;color:var(--muted);border-radius:14px;padding:10px 8px;font-size:12px;font-weight:700}
-    .bottom button.active{color:var(--text);background:#18233d}
-    .muted{color:var(--muted)} .small{font-size:13px}
-    .hr{height:1px;background:var(--line);margin:12px 0}
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      background: radial-gradient(1200px 500px at 50% -10%, #182959 0%, var(--bg) 50%);
+      color: var(--text);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+    }
+
+    .app {
+      min-height: 100vh;
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 18px 16px 92px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+
+    .sub { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .11em; }
+    h1 { margin: 8px 0 6px; font-size: 32px; line-height: 1.05; letter-spacing: -.02em; }
+
+    .card {
+      background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.015));
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 14px;
+    }
+
+    .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    @media (min-width: 760px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+
+    .metric-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; }
+    .metric-value { font-size: 28px; font-weight: 800; margin-top: 8px; }
+
+    .section { margin-top: 14px; }
+    .section h2 { margin: 0 0 10px; color: var(--muted); font-size: 12px; letter-spacing: .11em; text-transform: uppercase; }
+
+    .stack { display: flex; flex-direction: column; gap: 10px; }
+    .row { display: flex; gap: 10px; justify-content: space-between; align-items: center; }
+
+    .pill {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      background: rgba(255,255,255,.03);
+    }
+
+    .trade {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: rgba(255,255,255,.018);
+    }
+
+    .trade h3 { margin: 0 0 4px; font-size: 17px; }
+    .muted { color: var(--muted); }
+    .small { font-size: 13px; }
+
+    .filters { display: flex; gap: 8px; overflow: auto; }
+    .filters button {
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.03);
+      color: var(--muted);
+      border-radius: 999px;
+      padding: 7px 10px;
+      white-space: nowrap;
+    }
+    .filters button.on { background: #1a2a4e; color: var(--text); border-color: #365187; }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    label { display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; margin-bottom: 7px; letter-spacing: .08em; }
+    input, select, textarea {
+      width: 100%;
+      color: var(--text);
+      background: #0f1523;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 16px;
+    }
+    textarea { min-height: 88px; resize: vertical; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .full { grid-column: 1 / -1; }
+
+    .btn {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #19243d;
+      color: var(--text);
+      font-weight: 700;
+      padding: 12px 14px;
+    }
+    .btn.primary { background: #1f7446; border-color: #359760; }
+
+    .switch {
+      appearance: none;
+      width: 46px;
+      height: 28px;
+      border-radius: 999px;
+      background: #25314b;
+      border: 1px solid #364867;
+      position: relative;
+      cursor: pointer;
+    }
+    .switch::after {
+      content: "";
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #c9d0dd;
+      top: 3px;
+      left: 3px;
+      transition: transform .2s ease;
+    }
+    .switch:checked { background: #1f7446; border-color: #359760; }
+    .switch:checked::after { transform: translateX(18px); background: #fff; }
+
+    .bottom {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      background: rgba(10,14,22,.9);
+      border-top: 1px solid var(--line);
+      backdrop-filter: blur(12px);
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    }
+    .nav { max-width: 920px; margin: 0 auto; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+    .nav button {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      border-radius: 12px;
+      padding: 9px 6px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .nav button.active { color: var(--text); background: #1a2847; }
+
+    .green { color: var(--green); }
+    .red { color: var(--red); }
+    .amber { color: var(--amber); }
+    .divider { height: 1px; background: var(--line); margin: 8px 0; }
   </style>
 </head>
 <body>
-  <div class="app">
-    <div class="header">
+  <main class="app">
+    <header class="header">
       <div>
         <div class="sub">JY Trading Journal</div>
-        <h1>Track your edge.<br>Own your execution.</h1>
-        <div class="muted small">Static starter that deploys cleanly on Vercel. Data saves in this browser only.</div>
+        <h1>Trade cleaner.<br />Review smarter.</h1>
+        <div class="muted small">Mobile-first, dark theme shell with local mock data only.</div>
       </div>
-      <div class="tag">Hosted starter</div>
-    </div>
+      <span class="pill">Vercel-ready</span>
+    </header>
 
-    <div id="dashboard" class="view active">
+    <section id="dashboard" class="view active">
       <div class="grid">
-        <div class="card"><div class="metric-label">Total trades</div><div class="metric-value" id="mTrades">0</div></div>
-        <div class="card"><div class="metric-label">Net P&amp;L</div><div class="metric-value green" id="mPnl">$0</div></div>
-        <div class="card"><div class="metric-label">Avg Duration</div><div class="metric-value" id="mDur">—</div></div>
-        <div class="card"><div class="metric-label">Avg R</div><div class="metric-value amber" id="mR">—</div></div>
+        <article class="card"><div class="metric-label">Total trades</div><div id="mTrades" class="metric-value">0</div></article>
+        <article class="card"><div class="metric-label">Net P&amp;L</div><div id="mPnl" class="metric-value green">$0</div></article>
+        <article class="card"><div class="metric-label">Win rate</div><div id="mWin" class="metric-value amber">0%</div></article>
+        <article class="card"><div class="metric-label">Avg R</div><div id="mR" class="metric-value">0R</div></article>
       </div>
+
       <div class="section card">
-        <h2>This week</h2>
+        <h2>Weekly pulse</h2>
         <div class="stack">
-          <div class="row"><span>Best setup model</span><strong id="bestSetup">No data yet</strong></div>
-          <div class="row"><span>Most common mistake</span><strong id="topMistake">No data yet</strong></div>
-          <div class="row"><span>Rule execution</span><strong id="ruleExec">—</strong></div>
+          <div class="row"><span>Best setup model</span><strong id="bestModel">No data</strong></div>
+          <div class="row"><span>Most common mistake</span><strong id="topMistake">No data</strong></div>
+          <div class="row"><span>Focus for next week</span><strong id="focusLine">Log more trades</strong></div>
         </div>
       </div>
+
       <div class="section card">
         <h2>Recent trades</h2>
         <div id="recentTrades" class="stack muted small">No trades yet.</div>
       </div>
-    </div>
+    </section>
 
-    <div id="trades" class="view">
+    <section id="trades" class="view">
       <div class="section">
         <h2>Filters</h2>
         <div class="filters">
@@ -101,129 +227,238 @@
         <h2>Trade log</h2>
         <div id="tradeList" class="stack muted small">No trades yet.</div>
       </div>
-    </div>
+    </section>
 
-    <div id="add" class="view">
+    <section id="add" class="view">
       <div class="card">
-        <h2>New trade</h2>
+        <h2>Add trade</h2>
         <div class="form-grid">
-          <div><label>Date</label><input id="fDate" type="date"></div>
-          <div><label>Ticker</label><input id="fTicker" placeholder="MES"></div>
-          <div><label>Setup family</label><select id="fFamily"><option>Bounce</option><option>Reject</option><option>Break</option></select></div>
-          <div><label>Setup model</label><input id="fModel" placeholder="5m FVG pullback"></div>
-          <div><label>Result ($)</label><input id="fPnl" type="number" placeholder="500"></div>
-          <div><label>R multiple</label><input id="fR" type="number" step="0.1" placeholder="2"></div>
-          <div><label>Minutes in trade</label><input id="fMin" type="number" placeholder="12"></div>
-          <div><label>Top mistake tag</label><input id="fMistake" placeholder="Chased"></div>
-          <div class="full"><label>Notes</label><textarea id="fNotes" placeholder="Why this trade made sense"></textarea></div>
-          <div class="full row"><button class="btn ghost" id="seedBtn" type="button">Load sample data</button><button class="btn primary" id="saveBtn" type="button">Save trade</button></div>
+          <div><label for="fDate">Date</label><input id="fDate" type="date" /></div>
+          <div><label for="fTicker">Ticker</label><input id="fTicker" placeholder="MES" /></div>
+          <div><label for="fFamily">Setup family</label><select id="fFamily"><option>Bounce</option><option>Reject</option><option>Break</option></select></div>
+          <div><label for="fModel">Setup model</label><input id="fModel" placeholder="5m FVG pullback" /></div>
+          <div><label for="fPnl">Result ($)</label><input id="fPnl" type="number" /></div>
+          <div><label for="fR">R multiple</label><input id="fR" type="number" step="0.1" /></div>
+          <div><label for="fMin">Minutes in trade</label><input id="fMin" type="number" /></div>
+          <div><label for="fMistake">Mistake tag</label><input id="fMistake" placeholder="Entered early" /></div>
+          <div class="full"><label for="fNotes">Notes</label><textarea id="fNotes" placeholder="Why this trade made sense"></textarea></div>
+          <div class="full row">
+            <button id="seedBtn" class="btn" type="button">Load sample data</button>
+            <button id="saveBtn" class="btn primary" type="button">Save trade</button>
+          </div>
         </div>
       </div>
-    </div>
+    </section>
 
-    <div id="review" class="view">
+    <section id="review" class="view">
       <div class="card stack">
         <h2>Weekly review</h2>
-        <div class="trade"><strong>Best setup model this week — why did it work?</strong><div class="muted small" id="q1"></div></div>
-        <div class="trade"><strong>Main mistake this week — why did it keep showing up?</strong><div class="muted small" id="q2"></div></div>
-        <div class="trade"><strong>No-trade discipline — why was that the right or wrong choice?</strong><div class="muted small">Log no-trade days in the full app version.</div></div>
-        <div class="trade"><strong>Rule that hurt you most — why did you break it?</strong><div class="muted small">Rule tracking comes in the Next.js build.</div></div>
-        <div class="trade"><strong>One fix for next week — why will it matter most?</strong><div class="muted small">Pick the one repeated issue that kept costing you quality.</div></div>
+        <div class="trade"><strong>1) What setup paid best this week?</strong><div id="r1" class="muted small"></div></div>
+        <div class="trade"><strong>2) Which mistake repeated the most?</strong><div id="r2" class="muted small"></div></div>
+        <div class="trade"><strong>3) What one action will improve next week?</strong><div id="r3" class="muted small"></div></div>
       </div>
-    </div>
+    </section>
 
-    <div id="settings" class="view">
+    <section id="settings" class="view">
       <div class="card stack">
         <h2>Settings</h2>
-        <div class="row"><div><strong>Daily reminder</strong><div class="muted small">Push/SMS comes in the full app version.</div></div><span class="pill">Planned</span></div>
-        <div class="row"><div><strong>Weekly reminder</strong><div class="muted small">Choose day and time later.</div></div><span class="pill">Planned</span></div>
-        <div class="hr"></div>
-        <div class="muted small">This static starter is the easiest way to get a clean live deployment first. Next step after it works: move to the full Next.js version with auth, cloud sync, screenshots, and filters.</div>
+        <div class="row"><div><strong>Daily reminder</strong><div class="muted small">Mock local preference only.</div></div><input id="sDaily" class="switch" type="checkbox" /></div>
+        <div class="row"><div><strong>Weekly review reminder</strong><div class="muted small">Mock local preference only.</div></div><input id="sWeekly" class="switch" type="checkbox" /></div>
+        <div><label for="sRisk">Default risk per trade ($)</label><input id="sRisk" type="number" /></div>
+        <div class="divider"></div>
+        <div class="muted small">No Supabase yet by design. This baseline is static and deployable first.</div>
       </div>
-    </div>
-  </div>
+    </section>
+  </main>
 
-  <div class="bottom"><div class="nav">
-    <button class="active" data-view="dashboard">Dashboard</button>
-    <button data-view="trades">Trades</button>
-    <button data-view="add">Add</button>
-    <button data-view="review">Review</button>
-    <button data-view="settings">Settings</button>
-  </div></div>
+  <nav class="bottom">
+    <div class="nav">
+      <button class="active" data-view="dashboard">Dashboard</button>
+      <button data-view="trades">Trades</button>
+      <button data-view="add">Add</button>
+      <button data-view="review">Review</button>
+      <button data-view="settings">Settings</button>
+    </div>
+  </nav>
 
   <script>
-    const STORAGE_KEY = 'jy_static_trades';
-    const navBtns = [...document.querySelectorAll('.nav button')];
+    const STORE = {
+      trades: 'jy_trades_v1',
+      settings: 'jy_settings_v1'
+    };
+
+    const sampleTrades = [
+      { date: '2026-04-07', ticker: 'MES', family: 'Bounce', model: '5m FVG pullback', pnl: 480, r: 1.9, min: 16, mistake: '', notes: 'Waited for confirmation at VWAP.' },
+      { date: '2026-04-08', ticker: 'MNQ', family: 'Reject', model: 'Liquidity sweep reject', pnl: -120, r: -0.7, min: 6, mistake: 'Entered early', notes: 'Jumped before candle close.' },
+      { date: '2026-04-10', ticker: 'MES', family: 'Break', model: 'ORB break-retest', pnl: 260, r: 1.2, min: 14, mistake: '', notes: 'Held to target with plan.' }
+    ];
+
+    const defaultSettings = { dailyReminder: true, weeklyReminder: true, defaultRisk: 200 };
+
+    const byId = (id) => document.getElementById(id);
+    const read = (k, fallback) => {
+      try { return JSON.parse(localStorage.getItem(k)) ?? fallback; } catch { return fallback; }
+    };
+    const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+
+    const navButtons = [...document.querySelectorAll('.nav button')];
     const views = [...document.querySelectorAll('.view')];
-    navBtns.forEach(btn=>btn.onclick=()=>{
-      navBtns.forEach(b=>b.classList.remove('active')); btn.classList.add('active');
-      views.forEach(v=>v.classList.remove('active')); document.getElementById(btn.dataset.view).classList.add('active');
-      render();
+    let tradeFilter = 'all';
+
+    navButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        navButtons.forEach((b) => b.classList.remove('active'));
+        btn.classList.add('active');
+        views.forEach((v) => v.classList.remove('active'));
+        byId(btn.dataset.view).classList.add('active');
+        render();
+      });
     });
 
-    let filter = 'all';
-    document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-filter]').forEach(x=>x.classList.remove('on')); b.classList.add('on'); filter=b.dataset.filter; renderTrades();});
-
-    const read = ()=>{ try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]')}catch{return []} };
-    const write = (v)=>localStorage.setItem(STORAGE_KEY, JSON.stringify(v));
-
-    function seed(){
-      write([
-        {date:'2026-04-14',ticker:'MES',family:'Bounce',model:'5m FVG pullback',pnl:500,r:2.0,min:12,mistake:'',notes:'Waited for retrace and VWAP held.'},
-        {date:'2026-04-15',ticker:'MES',family:'Reject',model:'Liquidity sweep rejection',pnl:-150,r:-1.0,min:4,mistake:'Entered early',notes:'Anticipated before confirmation.'},
-        {date:'2026-04-16',ticker:'MNQ',family:'Break',model:'ORB break and retest',pnl:300,r:1.5,min:18,mistake:'',notes:'Clean break and follow-through.'}
-      ]);
-      render();
-      alert('Sample data loaded.');
-    }
-
-    function saveTrade(){
-      const t={
-        date: fDate.value || new Date().toISOString().slice(0,10),
-        ticker: fTicker.value || 'MES',
-        family: fFamily.value,
-        model: fModel.value || '5m FVG pullback',
-        pnl: Number(fPnl.value||0),
-        r: Number(fR.value||0),
-        min: Number(fMin.value||0),
-        mistake: fMistake.value.trim(),
-        notes: fNotes.value.trim()
-      };
-      const items = read(); items.unshift(t); write(items);
-      ['fTicker','fModel','fPnl','fR','fMin','fMistake','fNotes'].forEach(id=>document.getElementById(id).value='');
-      render();
-      navBtns.find(b=>b.dataset.view==='trades').click();
-    }
-
-    function fmtMoney(n){ const sign = n<0?'-':''; return sign+'$'+Math.abs(n).toLocaleString(); }
-
-    function renderDashboard(){
-      const items=read();
-      mTrades.textContent = items.length;
-      const total = items.reduce((a,b)=>a+Number(b.pnl||0),0); mPnl.textContent = fmtMoney(total); mPnl.className='metric-value '+(total>=0?'green':'red');
-      const mins = items.filter(x=>x.min>0).map(x=>x.min); mDur.textContent = mins.length?Math.round(mins.reduce((a,b)=>a+b,0)/mins.length)+'m':'—';
-      const rs = items.filter(x=>!isNaN(x.r)).map(x=>x.r); mR.textContent = rs.length?(Math.round((rs.reduce((a,b)=>a+b,0)/rs.length)*10)/10)+'R':'—';
-      const models = {}; items.forEach(x=>models[x.model]=(models[x.model]||0)+(x.pnl>0?1:0));
-      bestSetup.textContent = Object.keys(models).sort((a,b)=>models[b]-models[a])[0] || 'No data yet';
-      const mistakes={}; items.filter(x=>x.mistake).forEach(x=>mistakes[x.mistake]=(mistakes[x.mistake]||0)+1); topMistake.textContent = Object.keys(mistakes).sort((a,b)=>mistakes[b]-mistakes[a])[0] || 'No data yet';
-      ruleExec.textContent = items.length? 'Coming in full app' : '—';
-      recentTrades.innerHTML = items.slice(0,4).map(t=>`<div class="trade"><h3>${t.ticker} <span class="pill">${t.family}</span></h3><small>${t.date} · ${t.model}</small><div class="row" style="margin-top:8px"><span class="${t.pnl>=0?'green':'red'}">${fmtMoney(t.pnl)}</span><span class="muted">${t.min||0}m · ${t.r||0}R</span></div></div>`).join('') || 'No trades yet.';
-      q1.textContent = bestSetup.textContent==='No data yet' ? 'Log a few trades first.' : `You traded best on ${bestSetup.textContent}. Why do you think that worked best?`;
-      q2.textContent = topMistake.textContent==='No data yet' ? 'No repeated mistakes logged yet.' : `Your most common mistake was ${topMistake.textContent}. Why did it keep showing up?`;
-    }
-
-    function renderTrades(){
-      const items=read().filter(t=>{
-        if(filter==='all') return true;
-        if(filter==='win') return t.pnl>0;
-        if(filter==='loss') return t.pnl<0;
-        return t.family===filter;
+    [...document.querySelectorAll('[data-filter]')].forEach((btn) => {
+      btn.addEventListener('click', () => {
+        [...document.querySelectorAll('[data-filter]')].forEach((b) => b.classList.remove('on'));
+        btn.classList.add('on');
+        tradeFilter = btn.dataset.filter;
+        renderTrades();
       });
-      tradeList.innerHTML = items.map(t=>`<div class="trade"><div class="row"><div><h3>${t.ticker} <span class="pill">${t.family}</span></h3><small>${t.date} · ${t.model}</small></div><div style="text-align:right"><div class="${t.pnl>=0?'green':'red'}"><strong>${fmtMoney(t.pnl)}</strong></div><small>${t.min||0}m · ${t.r||0}R</small></div></div>${t.mistake?`<div class="hr"></div><div class="muted small">Mistake: ${t.mistake}</div>`:''}${t.notes?`<div class="muted small" style="margin-top:8px">${t.notes}</div>`:''}</div>`).join('') || 'No trades match this filter.';
+    });
+
+    const fmtMoney = (n) => `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString()}`;
+
+    function getTrades() { return read(STORE.trades, []); }
+    function setTrades(items) { write(STORE.trades, items); }
+    function getSettings() { return read(STORE.settings, defaultSettings); }
+    function setSettings(value) { write(STORE.settings, value); }
+
+    function seedTrades() {
+      setTrades(sampleTrades);
+      render();
+      alert('Loaded sample trades.');
     }
 
-    function render(){ renderDashboard(); renderTrades(); }
-    seedBtn.onclick = seed; saveBtn.onclick = saveTrade; render();
+    function saveTrade() {
+      const nextTrade = {
+        date: byId('fDate').value || new Date().toISOString().slice(0, 10),
+        ticker: byId('fTicker').value.trim() || 'MES',
+        family: byId('fFamily').value,
+        model: byId('fModel').value.trim() || '5m FVG pullback',
+        pnl: Number(byId('fPnl').value || 0),
+        r: Number(byId('fR').value || 0),
+        min: Number(byId('fMin').value || 0),
+        mistake: byId('fMistake').value.trim(),
+        notes: byId('fNotes').value.trim()
+      };
+      setTrades([nextTrade, ...getTrades()]);
+      ['fTicker', 'fModel', 'fPnl', 'fR', 'fMin', 'fMistake', 'fNotes'].forEach((id) => { byId(id).value = ''; });
+      navButtons.find((b) => b.dataset.view === 'trades').click();
+    }
+
+    function renderDashboard() {
+      const trades = getTrades();
+      const total = trades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+      const wins = trades.filter((t) => t.pnl > 0).length;
+      const winRate = trades.length ? Math.round((wins / trades.length) * 100) : 0;
+      const avgR = trades.length ? (trades.reduce((sum, t) => sum + Number(t.r || 0), 0) / trades.length) : 0;
+
+      byId('mTrades').textContent = trades.length;
+      byId('mPnl').textContent = fmtMoney(total);
+      byId('mPnl').className = `metric-value ${total >= 0 ? 'green' : 'red'}`;
+      byId('mWin').textContent = `${winRate}%`;
+      byId('mR').textContent = `${avgR.toFixed(1)}R`;
+
+      const modelScores = {};
+      const mistakeCounts = {};
+      trades.forEach((t) => {
+        modelScores[t.model] = (modelScores[t.model] || 0) + (t.pnl > 0 ? 1 : 0);
+        if (t.mistake) mistakeCounts[t.mistake] = (mistakeCounts[t.mistake] || 0) + 1;
+      });
+
+      const bestModel = Object.keys(modelScores).sort((a, b) => modelScores[b] - modelScores[a])[0] || 'No data';
+      const topMistake = Object.keys(mistakeCounts).sort((a, b) => mistakeCounts[b] - mistakeCounts[a])[0] || 'No data';
+
+      byId('bestModel').textContent = bestModel;
+      byId('topMistake').textContent = topMistake;
+      byId('focusLine').textContent = trades.length ? `Improve: ${topMistake === 'No data' ? 'keep execution quality high' : topMistake}` : 'Log your first three trades';
+
+      byId('recentTrades').innerHTML = trades.slice(0, 4).map((t) => `
+        <article class="trade">
+          <h3>${t.ticker} <span class="pill">${t.family}</span></h3>
+          <div class="muted small">${t.date} · ${t.model}</div>
+          <div class="row" style="margin-top:6px;">
+            <strong class="${t.pnl >= 0 ? 'green' : 'red'}">${fmtMoney(t.pnl)}</strong>
+            <span class="muted small">${t.min || 0}m · ${t.r || 0}R</span>
+          </div>
+        </article>
+      `).join('') || 'No trades yet.';
+    }
+
+    function renderTrades() {
+      const all = getTrades();
+      const filtered = all.filter((t) => {
+        if (tradeFilter === 'all') return true;
+        if (tradeFilter === 'win') return t.pnl > 0;
+        if (tradeFilter === 'loss') return t.pnl < 0;
+        return t.family === tradeFilter;
+      });
+
+      byId('tradeList').innerHTML = filtered.map((t) => `
+        <article class="trade">
+          <div class="row">
+            <div>
+              <h3>${t.ticker} <span class="pill">${t.family}</span></h3>
+              <div class="muted small">${t.date} · ${t.model}</div>
+            </div>
+            <div style="text-align:right;">
+              <strong class="${t.pnl >= 0 ? 'green' : 'red'}">${fmtMoney(t.pnl)}</strong>
+              <div class="muted small">${t.min || 0}m · ${t.r || 0}R</div>
+            </div>
+          </div>
+          ${t.mistake ? `<div class="divider"></div><div class="muted small">Mistake: ${t.mistake}</div>` : ''}
+          ${t.notes ? `<div class="muted small" style="margin-top:8px;">${t.notes}</div>` : ''}
+        </article>
+      `).join('') || 'No trades match this filter.';
+    }
+
+    function renderReview() {
+      const trades = getTrades();
+      const best = byId('bestModel').textContent;
+      const mistake = byId('topMistake').textContent;
+      byId('r1').textContent = trades.length ? `${best} produced your best outcomes. Keep screening only A+ versions.` : 'Seed mock data or add trades to generate review prompts.';
+      byId('r2').textContent = trades.length ? `${mistake === 'No data' ? 'No recurring mistake was logged yet.' : `Your recurring issue was "${mistake}".`} Build one rule to block it.` : 'No mistakes tracked yet.';
+      byId('r3').textContent = trades.length ? 'Pre-plan invalidation before entry and grade execution daily.' : 'Start with 3 sample trades and review consistency first.';
+    }
+
+    function renderSettings() {
+      const settings = getSettings();
+      byId('sDaily').checked = Boolean(settings.dailyReminder);
+      byId('sWeekly').checked = Boolean(settings.weeklyReminder);
+      byId('sRisk').value = Number(settings.defaultRisk || 0);
+    }
+
+    function bindSettingsEvents() {
+      ['sDaily', 'sWeekly', 'sRisk'].forEach((id) => {
+        byId(id).addEventListener('change', () => {
+          setSettings({
+            dailyReminder: byId('sDaily').checked,
+            weeklyReminder: byId('sWeekly').checked,
+            defaultRisk: Number(byId('sRisk').value || 0)
+          });
+        });
+      });
+    }
+
+    function render() {
+      renderDashboard();
+      renderTrades();
+      renderReview();
+      renderSettings();
+    }
+
+    byId('seedBtn').addEventListener('click', seedTrades);
+    byId('saveBtn').addEventListener('click', saveTrade);
+    bindSettingsEvents();
+    render();
   </script>
 </body>
 </html>
