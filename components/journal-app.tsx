@@ -117,6 +117,7 @@ export default function JournalApp({ userId, email }: Props) {
   const [addTradeClassification, setAddTradeClassification] = useState<TradeClassification>('Valid setup');
   const [openHelp, setOpenHelp] = useState<HelpKey | null>(null);
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [editingNoTradeId, setEditingNoTradeId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
   const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
@@ -259,15 +260,15 @@ export default function JournalApp({ userId, email }: Props) {
   }
 
   async function addNoTrade(formData: FormData) {
-    const { data, error: insertError } = await supabase
-      .from('no_trade_days')
-      .insert({
-        user_id: userId,
-        day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
-        reason: noTradeDraft.reason || 'No A+ setup'
-      })
-      .select('*')
-      .single();
+    const payload = {
+      user_id: userId,
+      day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
+      reason: noTradeDraft.reason || 'No A+ setup'
+    };
+    const upsert = editingNoTradeId
+      ? await supabase.from('no_trade_days').update(payload).eq('id', editingNoTradeId).select('*').single()
+      : await supabase.from('no_trade_days').insert(payload).select('*').single();
+    const { data, error: insertError } = upsert;
     if (insertError) {
       setError(insertError.message);
       return;
@@ -296,6 +297,7 @@ export default function JournalApp({ userId, email }: Props) {
     await loadAll();
     setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
     setNoTradeExtract(null);
+    setEditingNoTradeId(null);
     setTab('trades');
   }
 
@@ -337,6 +339,7 @@ export default function JournalApp({ userId, email }: Props) {
 
   function startEditTrade(trade: TradeRow) {
     setEditingTradeId(trade.id);
+    setEditingNoTradeId(null);
     setTab('add');
     setAddTradeClassification(trade.classification);
     setAddTradeFamily(trade.family);
@@ -356,6 +359,12 @@ export default function JournalApp({ userId, email }: Props) {
     });
   }
 
+  function startEditNoTrade(noTrade: NoTradeDayRow) {
+    setEditingNoTradeId(noTrade.id);
+    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason });
+    setTab('add');
+  }
+
   async function deleteTrade(tradeId: string) {
     if (!window.confirm('Delete this trade? This cannot be undone.')) return;
     const linked = attachments.filter((a) => a.trade_id === tradeId);
@@ -369,6 +378,25 @@ export default function JournalApp({ userId, email }: Props) {
       return;
     }
     if (detail?.kind === 'trade' && detail.id === tradeId) setDetail(null);
+    await loadAll();
+  }
+
+  async function deleteNoTrade(noTradeId: string) {
+    if (!window.confirm('Delete this no-trade day? This cannot be undone.')) return;
+    const linked = attachments.filter((a) => a.no_trade_day_id === noTradeId);
+    if (linked.length) {
+      await supabase.storage.from('attachments').remove(linked.map((a) => a.file_path));
+    }
+    const { error: deleteError } = await supabase.from('no_trade_days').delete().eq('id', noTradeId);
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+    if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
+    if (editingNoTradeId === noTradeId) {
+      setEditingNoTradeId(null);
+      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+    }
     await loadAll();
   }
 
@@ -535,10 +563,16 @@ export default function JournalApp({ userId, email }: Props) {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 6 }}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
               {calendarCells.map((cell) => (
-                <article key={cell.date} className="trade" style={{ padding: 8, minHeight: 64, background: cell.isOutside ? '#0f1724' : cell.pnl > 0 ? 'rgba(74,214,109,0.17)' : cell.pnl < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#101827' }}>
+                <article key={cell.date} className="trade" style={{ padding: 8, minHeight: 64, background: cell.isOutside ? '#0f1724' : cell.pnl > 0 ? 'rgba(74,214,109,0.17)' : cell.pnl < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#0f1622', borderColor: cell.tradeCount || cell.noTrade ? undefined : '#223045' }}>
                   <div className="small muted">{cell.day}</div>
-                  <div className="small" style={{ color: cell.pnl > 0 ? '#4ad66d' : cell.pnl < 0 ? '#ff7b7b' : '#d7e2f5' }}>${cell.pnl.toFixed(0)}</div>
-                  <div className="small muted">{cell.tradeCount} trade(s)</div>
+                  {cell.tradeCount > 0 ? (
+                    <>
+                      <div className="small" style={{ color: cell.pnl > 0 ? '#4ad66d' : cell.pnl < 0 ? '#ff7b7b' : '#d7e2f5' }}>${cell.pnl.toFixed(0)}</div>
+                      <div className="small muted">{cell.tradeCount} trade(s)</div>
+                    </>
+                  ) : cell.noTrade ? (
+                    <div className="small muted">No-trade</div>
+                  ) : null}
                 </article>
               ))}
             </div>
@@ -587,7 +621,11 @@ export default function JournalApp({ userId, email }: Props) {
               <div className="small">Reason: {n.reason}</div>
               <div className="row">
                 <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
-                <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: n.id })}>View details</button>
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: n.id })}>View</button>
+                  <button className="inline" type="button" onClick={() => startEditNoTrade(n)}>Edit</button>
+                  <button className="inline" type="button" onClick={() => void deleteNoTrade(n.id)}>Delete</button>
+                </div>
               </div>
             </article>
           ))}
@@ -779,7 +817,10 @@ export default function JournalApp({ userId, email }: Props) {
           </form>
 
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
-            <strong>No-trade day</strong>
+            <div className="row">
+              <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
+              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] }); }}>Cancel edit</button> : null}
+            </div>
             <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
             <input
@@ -843,7 +884,7 @@ export default function JournalApp({ userId, email }: Props) {
                 ) : null}
               </div>
             )}
-            <button disabled={pending}>Save no-trade day</button>
+            <button disabled={pending}>{editingNoTradeId ? 'Update no-trade day' : 'Save no-trade day'}</button>
           </form>
         </section>
       )}
