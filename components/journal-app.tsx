@@ -968,8 +968,8 @@ function parseTradeText(text: string): TradeExtractSuggestions {
     normalized.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/) ||
     normalized.match(/\b((0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])[-/.](20\d{2}))\b/);
   if (dateMatch) out.trade_date = normalizeDate(dateMatch[1]);
-  const tickerMatch = normalized.match(/\b([A-Z]{2,5})\b(?!\s*(USD|USDT|DOLLARS?))/);
-  if (tickerMatch) out.ticker = tickerMatch[1];
+  const ticker = extractTickerFromScreenshotText(normalized);
+  if (ticker) out.ticker = ticker;
   const pnlMatch =
     normalized.match(/(?:pnl|profit|loss|result|net)\s*[:=]?\s*([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)/i) ||
     normalized.match(/([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)\s*(usd|dollars?|\$)\b/i);
@@ -1021,6 +1021,58 @@ function sanitizeNumberToken(value: string): string {
   const cleaned = value.replace(/\s/g, '').replace(/\$/g, '').replace(/,/g, '');
   const match = cleaned.match(/[+-]?\d+(?:\.\d+)?/);
   return match?.[0] || '';
+}
+
+const EXCLUDED_TICKER_TOKENS = new Set([
+  'CME',
+  'CBOT',
+  'NYMEX',
+  'COMEX',
+  'NASDAQ',
+  'NYSE',
+  'USD',
+  'USDT'
+]);
+
+function extractTickerFromScreenshotText(text: string): string {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const tradingViewLine = lines.find((line) =>
+    /[·•|]/.test(line) && /(?:\b\d+\b|\b\d+[mhdw]\b)/i.test(line)
+  );
+
+  if (tradingViewLine) {
+    const fromHeader = findTickerToken(tradingViewLine, true);
+    if (fromHeader) return fromHeader;
+  }
+
+  return findTickerToken(text, false);
+}
+
+function findTickerToken(text: string, preferLeftmost: boolean): string {
+  const futuresMatches = Array.from(text.matchAll(/\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b/gi));
+  if (futuresMatches.length) return normalizeTickerToken(futuresMatches[0][0]);
+
+  const symbolMatches = Array.from(text.matchAll(/\b[A-Z]{2,6}\d*!?\b/g));
+  const ordered = preferLeftmost ? symbolMatches : [...symbolMatches];
+  for (const match of ordered) {
+    const candidate = normalizeTickerToken(match[0]);
+    if (!candidate) continue;
+    if (EXCLUDED_TICKER_TOKENS.has(candidate)) continue;
+    return candidate;
+  }
+  return '';
+}
+
+function normalizeTickerToken(raw: string): string {
+  const upper = raw.toUpperCase().replace(/[^A-Z0-9!]/g, '');
+  if (!upper) return '';
+  if (/^(MES|ES|NQ|MNQ)\d*!?$/.test(upper)) {
+    return upper.match(/^(MES|ES|NQ|MNQ)/)?.[1] || '';
+  }
+  if (/^[A-Z]{2,6}\d*!?$/.test(upper)) {
+    return upper.replace(/\d+!?$/, '');
+  }
+  return '';
 }
 
 type OcrResult = {
