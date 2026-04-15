@@ -617,7 +617,7 @@ export default function JournalApp({ userId, email }: Props) {
                   </div>
                 )}
                 {!tradeExtract.trade_date && !tradeExtract.ticker && !tradeExtract.pnl && !tradeExtract.r_multiple && !tradeExtract.minutes_in_trade && (
-                  <div className="small muted">No useful trade fields detected from uploaded file names/metadata yet.</div>
+                  <div className="small muted">No useful trade fields detected yet (filename/metadata + beta OCR).</div>
                 )}
                 {tradeExtract.hints?.length ? <div className="small muted">Hints: {tradeExtract.hints.join(', ')}</div> : null}
                 {tradeExtract.detectedText ? (
@@ -674,7 +674,7 @@ export default function JournalApp({ userId, email }: Props) {
                   </div>
                 )}
                 {!noTradeExtract.day_date && !noTradeExtract.reason && (
-                  <div className="small muted">No no-trade date/reason hints detected from uploaded file names/metadata yet.</div>
+                  <div className="small muted">No no-trade date/reason hints detected yet (filename/metadata + beta OCR).</div>
                 )}
                 {noTradeExtract.hints?.length ? <div className="small muted">Hints: {noTradeExtract.hints.join(', ')}</div> : null}
                 {noTradeExtract.detectedText ? (
@@ -887,6 +887,8 @@ async function extractTradeSuggestions(files: File[]): Promise<TradeExtractSugge
     out.minutes_in_trade = out.minutes_in_trade || parsedFromImage.minutes_in_trade;
     out.detectedText = ocrText;
     hints.push('OCR text extracted from image');
+  } else if (files.some((f) => f.type.startsWith('image/'))) {
+    hints.push('No OCR text found from image content (beta)');
   }
 
   if (hints.length) out.hints = hints;
@@ -922,6 +924,8 @@ async function extractNoTradeSuggestions(files: File[]): Promise<NoTradeExtractS
     out.reason = out.reason || parsedFromImage.reason;
     out.detectedText = ocrText;
     hints.push('OCR text extracted from image');
+  } else if (files.some((f) => f.type.startsWith('image/'))) {
+    hints.push('No OCR text found from image content (beta)');
   }
   if (hints.length) out.hints = hints;
   return out;
@@ -929,23 +933,33 @@ async function extractNoTradeSuggestions(files: File[]): Promise<NoTradeExtractS
 
 function parseTradeText(text: string): TradeExtractSuggestions {
   const out: TradeExtractSuggestions = {};
-  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
-  if (dateMatch) out.trade_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
-  const tickerMatch = text.match(/\b([A-Z]{2,5})\b/);
+  const normalized = text.replace(/\r/g, ' ');
+  const dateMatch =
+    normalized.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/) ||
+    normalized.match(/\b((0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])[-/.](20\d{2}))\b/);
+  if (dateMatch) out.trade_date = normalizeDate(dateMatch[1]);
+  const tickerMatch = normalized.match(/\b([A-Z]{2,5})\b(?!\s*(USD|USDT|DOLLARS?))/);
   if (tickerMatch) out.ticker = tickerMatch[1];
-  const pnlMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*(usd|\$|dollars?)/i);
-  if (pnlMatch) out.pnl = pnlMatch[1];
-  const rMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
+  const pnlMatch =
+    normalized.match(/(?:pnl|profit|loss|result|net)\s*[:=]?\s*([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)/i) ||
+    normalized.match(/([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)\s*(usd|dollars?|\$)\b/i);
+  if (pnlMatch) out.pnl = sanitizeNumberToken(pnlMatch[1]);
+  const rMatch = normalized.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
   if (rMatch) out.r_multiple = rMatch[1];
-  const minMatch = text.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
+  const minMatch =
+    normalized.match(/(?:time|duration|hold|minutes?(?:\s+in\s+trade)?)\s*[:=]?\s*(\d{1,4})\s*(m|min|mins|minutes)\b/i) ||
+    normalized.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
   if (minMatch) out.minutes_in_trade = minMatch[1];
   return out;
 }
 
 function parseNoTradeText(text: string): NoTradeExtractSuggestions {
   const out: NoTradeExtractSuggestions = {};
-  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
-  if (dateMatch) out.day_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+  const normalized = text.replace(/\r/g, ' ');
+  const dateMatch =
+    normalized.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/) ||
+    normalized.match(/\b((0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])[-/.](20\d{2}))\b/);
+  if (dateMatch) out.day_date = normalizeDate(dateMatch[1]);
   const reasonMap: Array<{ test: RegExp; reason: string }> = [
     { test: /news/i, reason: 'News risk' },
     { test: /chop|choppy|range/i, reason: 'Choppy session' },
@@ -953,12 +967,30 @@ function parseNoTradeText(text: string): NoTradeExtractSuggestions {
     { test: /fatigue|tired/i, reason: 'Not mentally ready' }
   ];
   for (const r of reasonMap) {
-    if (r.test.test(text)) {
+    if (r.test.test(normalized)) {
       out.reason = r.reason;
       break;
     }
   }
   return out;
+}
+
+function normalizeDate(value: string): string {
+  if (/^20\d{2}[-_./]\d{1,2}[-_./]\d{1,2}$/.test(value)) {
+    const [y, m, d] = value.split(/[-_./]/).map((v) => Number(v));
+    return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  if (/^\d{1,2}[-/.]\d{1,2}[-/.]20\d{2}$/.test(value)) {
+    const [m, d, y] = value.split(/[-/.]/).map((v) => Number(v));
+    return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  return value.replace(/[_.]/g, '-').replace(/\//g, '-');
+}
+
+function sanitizeNumberToken(value: string): string {
+  const cleaned = value.replace(/\s/g, '').replace(/\$/g, '').replace(/,/g, '');
+  const match = cleaned.match(/[+-]?\d+(?:\.\d+)?/);
+  return match?.[0] || '';
 }
 
 async function extractTextFromImages(files: File[]): Promise<string> {
