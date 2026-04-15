@@ -26,6 +26,13 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const emotionalPressureScale: Array<{ value: number; label: string }> = [
+  { value: 1, label: '1 = Level-headed' },
+  { value: 2, label: '2 = Slight tension' },
+  { value: 3, label: '3 = Pressured / hesitant' },
+  { value: 4, label: '4 = Emotional management / urge to interfere' },
+  { value: 5, label: '5 = Revenge / panic / pressure to exit' }
+];
 const forcedInvalidClassifications: TradeClassification[] = ['FOMO trade', 'Forced trade', 'No valid setup'];
 const NA_FAMILY = 'N/A / No valid setup';
 const NA_MODEL = 'N/A / None';
@@ -71,6 +78,7 @@ type TradeDraft = {
   pnl: string;
   r_multiple: string;
   minutes_in_trade: string;
+  emotional_pressure: string;
   mistake_tags: string;
   notes: string;
 };
@@ -121,6 +129,7 @@ export default function JournalApp({ userId, email }: Props) {
     pnl: '',
     r_multiple: '',
     minutes_in_trade: '',
+    emotional_pressure: '1',
     mistake_tags: '',
     notes: ''
   }));
@@ -153,6 +162,7 @@ export default function JournalApp({ userId, email }: Props) {
 
   const netPnl = trades.reduce((s, t) => s + Number(t.pnl || 0), 0);
   const wins = trades.filter((t) => t.pnl > 0).length;
+  const avgEmotionalPressure = trades.length ? (trades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / trades.length) : 0;
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -178,6 +188,7 @@ export default function JournalApp({ userId, email }: Props) {
       pnl: Number(tradeDraft.pnl || 0),
       r_multiple: Number(tradeDraft.r_multiple || 0),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
+      emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
       mistake_tags: String(tradeDraft.mistake_tags || '').split(',').map((x) => x.trim()).filter(Boolean),
       notes: String(tradeDraft.notes || '')
     };
@@ -286,6 +297,7 @@ export default function JournalApp({ userId, email }: Props) {
       pnl: '',
       r_multiple: '',
       minutes_in_trade: '',
+      emotional_pressure: '1',
       mistake_tags: '',
       notes: ''
     });
@@ -307,6 +319,7 @@ export default function JournalApp({ userId, email }: Props) {
       pnl: String(trade.pnl ?? ''),
       r_multiple: String(trade.r_multiple ?? ''),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
+      emotional_pressure: String(trade.emotional_pressure ?? 1),
       mistake_tags: (trade.mistake_tags || []).join(', '),
       notes: trade.notes || ''
     });
@@ -456,6 +469,7 @@ export default function JournalApp({ userId, email }: Props) {
             <article className="card"><div className="muted small">Net P&L</div><div>{netPnl.toFixed(2)}</div></article>
             <article className="card"><div className="muted small">Win rate</div><div>{trades.length ? Math.round((wins / trades.length) * 100) : 0}%</div></article>
             <article className="card"><div className="muted small">No-trade days</div><div>{noTrades.length}</div></article>
+            <article className="card"><div className="muted small">Avg emotional pressure</div><div>{avgEmotionalPressure.toFixed(2)} / 5</div></article>
           </div>
           <div className="card small muted">Passkeys are not implemented yet. Auth structure is now Supabase-based so passkey support can be added next via WebAuthn flows.</div>
         </section>
@@ -468,6 +482,7 @@ export default function JournalApp({ userId, email }: Props) {
               <div className="row"><strong>{t.ticker}</strong><span>{t.trade_date}</span></div>
               <div className="small muted">{t.family} · {t.model}</div>
               <div className="small">{t.classification} · ${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
+              <div className="small muted">Emotional pressure: {t.emotional_pressure}/5</div>
               <div>{t.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
               <div className="row">
                 <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === t.id).length}</div>
@@ -509,6 +524,7 @@ export default function JournalApp({ userId, email }: Props) {
                       <div className="small">Result: ${trade.pnl}</div>
                       <div className="small">R multiple: {trade.r_multiple}</div>
                       <div className="small">Minutes in trade: {trade.minutes_in_trade}</div>
+                      <div className="small">Emotional pressure: {trade.emotional_pressure}/5</div>
                       <div className="small">Mistake tags: {trade.mistake_tags?.length ? trade.mistake_tags.join(', ') : 'None'}</div>
                       <div className="small">Notes: {trade.notes || '—'}</div>
                       <AttachmentPreviewList entries={linked} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -569,6 +585,13 @@ export default function JournalApp({ userId, email }: Props) {
             <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
             <input name="r_multiple" type="number" step="0.1" placeholder="R multiple" value={tradeDraft.r_multiple} onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple: e.target.value }))} />
             <input name="minutes_in_trade" type="number" placeholder="Minutes in trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))} />
+            <label className="small muted">Emotional pressure (1-5)</label>
+            <select name="emotional_pressure" value={tradeDraft.emotional_pressure} onChange={(e) => setTradeDraft((p) => ({ ...p, emotional_pressure: e.target.value }))}>
+              {emotionalPressureScale.map((level) => (
+                <option key={level.value} value={level.value}>{level.label}</option>
+              ))}
+            </select>
+            <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
             <input name="mistake_tags" placeholder="Mistake tags (comma-separated)" value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: e.target.value }))} />
             <textarea name="notes" placeholder="Notes" value={tradeDraft.notes} onChange={(e) => setTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
             <input
@@ -758,7 +781,7 @@ export default function JournalApp({ userId, email }: Props) {
               <article key={t.id} className="trade">
                 <div className="small muted">{t.trade_date} · {t.ticker}</div>
                 <div className="small">{t.family} · {t.model} · {t.classification}</div>
-                <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
+                <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m · Emotion {t.emotional_pressure}/5</div>
                 <div>{t.mistake_tags?.map((m) => <span key={m} className="badge">{m}</span>)}</div>
               </article>
             ))}

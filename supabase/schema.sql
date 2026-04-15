@@ -22,11 +22,15 @@ create table if not exists public.trades (
   pnl numeric not null default 0,
   r_multiple numeric not null default 0,
   minutes_in_trade integer not null default 0,
+  emotional_pressure integer not null default 1 check (emotional_pressure between 1 and 5),
   mistake_tags text[] not null default '{}',
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.trades
+  add column if not exists emotional_pressure integer not null default 1 check (emotional_pressure between 1 and 5);
 
 create table if not exists public.no_trade_days (
   id uuid primary key default gen_random_uuid(),
