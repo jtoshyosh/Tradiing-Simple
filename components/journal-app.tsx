@@ -74,6 +74,8 @@ type TradeDraft = {
   mistake_tags: string;
   notes: string;
 };
+type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[] };
+type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[] };
 
 export default function JournalApp({ userId, email }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -94,6 +96,9 @@ export default function JournalApp({ userId, email }: Props) {
   const [openHelp, setOpenHelp] = useState<HelpKey | null>(null);
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
+  const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
+  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
     ticker: '',
@@ -203,8 +208,8 @@ export default function JournalApp({ userId, email }: Props) {
       .from('no_trade_days')
       .insert({
         user_id: userId,
-        day_date: String(formData.get('day_date') || new Date().toISOString().slice(0, 10)),
-        reason: String(formData.get('reason') || 'No A+ setup')
+        day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
+        reason: noTradeDraft.reason || 'No A+ setup'
       })
       .select('*')
       .single();
@@ -234,6 +239,8 @@ export default function JournalApp({ userId, email }: Props) {
     }
 
     await loadAll();
+    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+    setNoTradeExtract(null);
     setTab('trades');
   }
 
@@ -269,6 +276,7 @@ export default function JournalApp({ userId, email }: Props) {
       mistake_tags: '',
       notes: ''
     });
+    setTradeExtract(null);
   }
 
   function startEditTrade(trade: TradeRow) {
@@ -354,6 +362,54 @@ export default function JournalApp({ userId, email }: Props) {
     const resolvedModel = options.includes(addTradeModel) ? addTradeModel : options[0];
     setAddTradeModel(resolvedModel);
     setTradeDraft((prev) => ({ ...prev, family: value, model: resolvedModel }));
+  }
+
+  function runTradeExtraction(files: File[]) {
+    const next = extractTradeSuggestions(files);
+    setTradeExtract(next);
+  }
+
+  function runNoTradeExtraction(files: File[]) {
+    const next = extractNoTradeSuggestions(files);
+    setNoTradeExtract(next);
+  }
+
+  function applyTradeSuggestion<K extends keyof TradeDraft>(key: K, value: TradeDraft[K]) {
+    setTradeDraft((prev) => ({ ...prev, [key]: value }));
+    setTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function rejectTradeSuggestion(key: keyof TradeExtractSuggestions) {
+    setTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function applyNoTradeSuggestion<K extends 'day_date' | 'reason'>(key: K, value: string) {
+    setNoTradeDraft((prev) => ({ ...prev, [key]: value }));
+    setNoTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function rejectNoTradeSuggestion(key: keyof NoTradeExtractSuggestions) {
+    setNoTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
   }
 
   const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
@@ -496,16 +552,127 @@ export default function JournalApp({ userId, email }: Props) {
             <input name="minutes_in_trade" type="number" placeholder="Minutes in trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))} />
             <input name="mistake_tags" placeholder="Mistake tags (comma-separated)" value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: e.target.value }))} />
             <textarea name="notes" placeholder="Notes" value={tradeDraft.notes} onChange={(e) => setTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
-            <input name="files" type="file" accept="image/*" multiple />
+            <input
+              name="files"
+              type="file"
+              accept="image/*,.pdf,.txt,.csv"
+              multiple
+              onChange={(e) => runTradeExtraction(Array.from(e.currentTarget.files || []))}
+            />
+            <div className="row">
+              <span className="small muted">Upload-assisted autofill</span>
+              <button className="inline" type="button" onClick={(e) => {
+                const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"files\"]') as HTMLInputElement | null);
+                runTradeExtraction(Array.from(input?.files || []));
+              }}>
+                Extract from upload
+              </button>
+            </div>
+            {tradeExtract && (
+              <div className="trade">
+                <strong>Suggested from upload</strong>
+                {tradeExtract.trade_date && (
+                  <div className="row small">
+                    <span>Date: {tradeExtract.trade_date}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('trade_date', tradeExtract.trade_date!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('trade_date')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.ticker && (
+                  <div className="row small">
+                    <span>Ticker: {tradeExtract.ticker}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('ticker', tradeExtract.ticker!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('ticker')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.pnl && (
+                  <div className="row small">
+                    <span>Result: {tradeExtract.pnl}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('pnl', tradeExtract.pnl!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('pnl')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.r_multiple && (
+                  <div className="row small">
+                    <span>R multiple: {tradeExtract.r_multiple}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('r_multiple', tradeExtract.r_multiple!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('r_multiple')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.minutes_in_trade && (
+                  <div className="row small">
+                    <span>Minutes: {tradeExtract.minutes_in_trade}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('minutes_in_trade', tradeExtract.minutes_in_trade!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('minutes_in_trade')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {!tradeExtract.trade_date && !tradeExtract.ticker && !tradeExtract.pnl && !tradeExtract.r_multiple && !tradeExtract.minutes_in_trade && (
+                  <div className="small muted">No useful trade fields detected from uploaded file names/metadata yet.</div>
+                )}
+                {tradeExtract.hints?.length ? <div className="small muted">Hints: {tradeExtract.hints.join(', ')}</div> : null}
+              </div>
+            )}
             <div className="small muted">Uploads are stored attachments only. AI extraction is not implemented.</div>
             <button className="primary" disabled={pending}>{editingTradeId ? 'Update trade' : 'Save trade'}</button>
           </form>
 
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
             <strong>No-trade day</strong>
-            <input name="day_date" type="date" required />
-            <select name="reason" defaultValue={noTradeReasons[0]}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
-            <input name="no_trade_files" type="file" accept="image/*" multiple />
+            <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
+            <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
+            <input
+              name="no_trade_files"
+              type="file"
+              accept="image/*,.pdf,.txt,.csv"
+              multiple
+              onChange={(e) => runNoTradeExtraction(Array.from(e.currentTarget.files || []))}
+            />
+            <div className="row">
+              <span className="small muted">Upload-assisted autofill</span>
+              <button className="inline" type="button" onClick={(e) => {
+                const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"no_trade_files\"]') as HTMLInputElement | null);
+                runNoTradeExtraction(Array.from(input?.files || []));
+              }}>
+                Extract from upload
+              </button>
+            </div>
+            {noTradeExtract && (
+              <div className="trade no-trade">
+                <strong>Suggested from upload</strong>
+                {noTradeExtract.day_date && (
+                  <div className="row small">
+                    <span>Date: {noTradeExtract.day_date}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyNoTradeSuggestion('day_date', noTradeExtract.day_date!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectNoTradeSuggestion('day_date')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {noTradeExtract.reason && (
+                  <div className="row small">
+                    <span>Reason hint: {noTradeExtract.reason}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyNoTradeSuggestion('reason', noTradeExtract.reason!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectNoTradeSuggestion('reason')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {!noTradeExtract.day_date && !noTradeExtract.reason && (
+                  <div className="small muted">No no-trade date/reason hints detected from uploaded file names/metadata yet.</div>
+                )}
+                {noTradeExtract.hints?.length ? <div className="small muted">Hints: {noTradeExtract.hints.join(', ')}</div> : null}
+              </div>
+            )}
             <button disabled={pending}>Save no-trade day</button>
           </form>
         </section>
@@ -685,6 +852,58 @@ function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function extractTradeSuggestions(files: File[]): TradeExtractSuggestions {
+  const out: TradeExtractSuggestions = {};
+  const hints: string[] = [];
+  const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
+
+  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
+  if (dateMatch) out.trade_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+
+  const tickerMatch = text.match(/\b([A-Z]{2,5})\b/);
+  if (tickerMatch) out.ticker = tickerMatch[1];
+
+  const pnlMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*(usd|\$|dollars?)/i);
+  if (pnlMatch) out.pnl = pnlMatch[1];
+
+  const rMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
+  if (rMatch) out.r_multiple = rMatch[1];
+
+  const minMatch = text.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
+  if (minMatch) out.minutes_in_trade = minMatch[1];
+
+  if (/fomo/i.test(text)) hints.push('FOMO mention found');
+  if (/forced/i.test(text)) hints.push('Forced-trade mention found');
+  if (/news/i.test(text)) hints.push('News mention found');
+  if (hints.length) out.hints = hints;
+  return out;
+}
+
+function extractNoTradeSuggestions(files: File[]): NoTradeExtractSuggestions {
+  const out: NoTradeExtractSuggestions = {};
+  const hints: string[] = [];
+  const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
+
+  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
+  if (dateMatch) out.day_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+
+  const reasonMap: Array<{ test: RegExp; reason: string }> = [
+    { test: /news/i, reason: 'News risk' },
+    { test: /chop|choppy|range/i, reason: 'Choppy session' },
+    { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' }
+  ];
+  for (const r of reasonMap) {
+    if (r.test.test(text)) {
+      out.reason = r.reason;
+      hints.push(`Detected "${r.reason}" hint`);
+      break;
+    }
+  }
+  if (hints.length) out.hints = hints;
+  return out;
 }
 
 function currentWeekKey() {
