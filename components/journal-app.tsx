@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -606,7 +606,8 @@ export default function JournalApp({ userId, email }: Props) {
       {tab === 'trades' && (
         <section className="card stack">
           {trades.map((t) => (
-            <article key={t.id} className="trade" ref={(node) => { detailAnchors.current[`trade:${t.id}`] = node; }}>
+            <Fragment key={`trade-row-${t.id}`}>
+            <article key={`trade-card-${t.id}`} className="trade" ref={(node) => { detailAnchors.current[`trade:${t.id}`] = node; }}>
               <div className="row"><strong>{t.ticker}</strong><span>{t.trade_date}</span></div>
               <div className="small muted">{t.family} · {t.model}</div>
               <div className="small">{t.classification} · ${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
@@ -620,31 +621,33 @@ export default function JournalApp({ userId, email }: Props) {
                   <button className="inline" type="button" onClick={() => void deleteTrade(t.id)}>Delete</button>
                 </div>
               </div>
-              {detail?.kind === 'trade' && detail.id === t.id && (
-                <article className="trade" style={{ marginTop: 10 }}>
-                  <div className="row">
-                    <strong>Trade detail</strong>
-                    <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                  </div>
-                  <div className="stack">
-                    <div className="small muted">{t.trade_date} · {t.ticker}</div>
-                    <div className="small">Family: {t.family}</div>
-                    <div className="small">Model: {t.model}</div>
-                    <div className="small">Classification: {t.classification}</div>
-                    <div className="small">Result: ${t.pnl}</div>
-                    <div className="small">R multiple: {t.r_multiple}</div>
-                    <div className="small">Minutes in trade: {t.minutes_in_trade}</div>
-                    <div className="small">Emotional pressure: {t.emotional_pressure}/5</div>
-                    <div className="small">Mistake tags: {t.mistake_tags?.length ? t.mistake_tags.join(', ') : 'None'}</div>
-                    <div className="small">Notes: {t.notes || '—'}</div>
-                    <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                  </div>
-                </article>
-              )}
             </article>
+            {detail?.kind === 'trade' && detail.id === t.id && (
+              <article key={`trade-detail-${t.id}`} className="trade" style={{ marginTop: -4 }}>
+                <div className="row">
+                  <strong>Trade detail</strong>
+                  <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                </div>
+                <div className="stack">
+                  <div className="small muted">{t.trade_date} · {t.ticker}</div>
+                  <div className="small">Family: {t.family}</div>
+                  <div className="small">Model: {t.model}</div>
+                  <div className="small">Classification: {t.classification}</div>
+                  <div className="small">Result: ${t.pnl}</div>
+                  <div className="small">R multiple: {t.r_multiple}</div>
+                  <div className="small">Minutes in trade: {t.minutes_in_trade}</div>
+                  <div className="small">Emotional pressure: {t.emotional_pressure}/5</div>
+                  <div className="small">Mistake tags: {t.mistake_tags?.length ? t.mistake_tags.join(', ') : 'None'}</div>
+                  <div className="small">Notes: {t.notes || '—'}</div>
+                  <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                </div>
+              </article>
+            )}
+            </Fragment>
           ))}
           {noTrades.map((n) => (
-            <article key={n.id} className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${n.id}`] = node; }}>
+            <Fragment key={`no-trade-row-${n.id}`}>
+            <article key={`no-trade-card-${n.id}`} className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${n.id}`] = node; }}>
               <div className="row"><strong>No-trade day</strong><span>{n.day_date}</span></div>
               <div className="small">Reason: {n.reason}</div>
               <div className="row">
@@ -655,20 +658,21 @@ export default function JournalApp({ userId, email }: Props) {
                   <button className="inline" type="button" onClick={() => void deleteNoTrade(n.id)}>Delete</button>
                 </div>
               </div>
-              {detail?.kind === 'no_trade' && detail.id === n.id && (
-                <article className="trade no-trade" style={{ marginTop: 10 }}>
-                  <div className="row">
-                    <strong>No-trade detail</strong>
-                    <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                  </div>
-                  <div className="stack">
-                    <div className="small muted">{n.day_date}</div>
-                    <div className="small">Reason: {n.reason}</div>
-                    <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                  </div>
-                </article>
-              )}
             </article>
+            {detail?.kind === 'no_trade' && detail.id === n.id && (
+              <article key={`no-trade-detail-${n.id}`} className="trade no-trade" style={{ marginTop: -4 }}>
+                <div className="row">
+                  <strong>No-trade detail</strong>
+                  <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                </div>
+                <div className="stack">
+                  <div className="small muted">{n.day_date}</div>
+                  <div className="small">Reason: {n.reason}</div>
+                  <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                </div>
+              </article>
+            )}
+            </Fragment>
           ))}
         </section>
       )}
