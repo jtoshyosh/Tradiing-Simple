@@ -81,7 +81,7 @@
         <div class="filters">
           <div><label for="filterOutcome">Winner / loser</label><select id="filterOutcome"><option value="all">All</option><option value="win">Winners</option><option value="loss">Losers</option></select></div>
           <div><label for="filterFamily">Setup family</label><select id="filterFamily"><option value="all">All</option><option>Bounce</option><option>Reject</option><option>Break</option></select></div>
-          <div><label for="filterModel">Setup model contains</label><input id="filterModel" /></div>
+          <div><label for="filterModel">Setup model</label><select id="filterModel"><option value="all">All</option></select></div>
           <div><label for="filterMistake">Mistake tag contains</label><input id="filterMistake" /></div>
           <div><label for="filterHasShots">Has screenshots</label><select id="filterHasShots"><option value="all">All</option><option value="yes">Yes</option><option value="no">No</option></select></div>
           <div><label for="filterNoTrade">No-trade day</label><select id="filterNoTrade"><option value="all">Show all rows</option><option value="trades_only">Trades only</option><option value="no_trade_only">No-trade only</option></select></div>
@@ -106,7 +106,7 @@
           <div><label for="fDate">Date</label><input id="fDate" type="date" /></div>
           <div><label for="fTicker">Ticker</label><input id="fTicker" placeholder="MES" /></div>
           <div><label for="fFamily">Setup family <button id="infoFamilyBtn" class="info-btn" type="button">i</button></label><select id="fFamily"><option>Bounce</option><option>Reject</option><option>Break</option></select></div>
-          <div><label for="fModel">Setup model <button id="infoModelBtn" class="info-btn" type="button">i</button></label><input id="fModel" placeholder="5m FVG pullback" /></div>
+          <div><label for="fModel">Setup model <button id="infoModelBtn" class="info-btn" type="button">i</button></label><select id="fModel"></select></div>
           <div><label for="fPnl">Result ($)</label><input id="fPnl" type="number" /></div>
           <div><label for="fR">R multiple</label><input id="fR" type="number" step="0.1" /></div>
           <div><label for="fMin">Minutes in trade</label><input id="fMin" type="number" min="0" /></div>
@@ -166,12 +166,19 @@
       Break: 'Market breaks structure, retests, and continues in trend direction.',
       '5m FVG pullback': 'Entry on retrace into a 5-minute fair value gap with confirmation.',
       '2m inside 5m execution': 'Use 2-minute entries aligned to 5-minute structure and invalidation.',
-      'liquidity sweep rejection': 'Fade a sweep through prior highs/lows once rejection confirms.',
+      'Liquidity sweep rejection': 'Fade a sweep through prior highs/lows once rejection confirms.',
       'VWAP continuation': 'Join trend continuation after confirmed support/resistance at VWAP.',
       'VWAP rejection': 'Counter move when price strongly rejects VWAP and structure shifts.',
       'ORB break and retest': 'Trade opening-range breakout after retest confirms acceptance.',
       'HTF continuation pullback': 'Enter lower-timeframe pullback aligned with higher-timeframe trend.'
     };
+
+    const SETUP_MODELS_BY_FAMILY = {
+      Bounce: ['5m FVG pullback', '2m inside 5m execution', 'VWAP continuation', 'HTF continuation pullback'],
+      Reject: ['Liquidity sweep rejection', 'VWAP rejection', 'Failed breakout reject', 'External high/low sweep reversal'],
+      Break: ['ORB break and retest', 'Session level break and retest', 'Displacement break continuation', 'Acceptance above/below key level']
+    };
+
     const DURATION_BUCKETS = [
       { label: 'Under 1 minute', min: 0, max: 1 },
       { label: '1–5 minutes', min: 1, max: 5 },
@@ -207,6 +214,25 @@
       return monday.toISOString().slice(0, 10);
     }
 
+
+
+    function populateSetupModelOptions(selectedModel = '') {
+      const family = byId('fFamily').value;
+      const options = SETUP_MODELS_BY_FAMILY[family] || [];
+      const current = options.includes(selectedModel) ? selectedModel : options[0] || '';
+      byId('fModel').innerHTML = options.map((m) => `<option value="${m}">${m}</option>`).join('');
+      byId('fModel').value = current;
+    }
+
+    function populateFilterModelOptions() {
+      const family = byId('filterFamily').value;
+      const allModels = Object.values(SETUP_MODELS_BY_FAMILY).flat();
+      const models = family === 'all' ? allModels : (SETUP_MODELS_BY_FAMILY[family] || []);
+      const selected = byId('filterModel').value;
+      byId('filterModel').innerHTML = `<option value="all">All</option>` + models.map((m) => `<option value="${m}">${m}</option>`).join('');
+      byId('filterModel').value = models.includes(selected) ? selected : 'all';
+    }
+
     function gotoView(view) {
       state.activeView = view;
       document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === view));
@@ -215,8 +241,9 @@
     }
 
     function resetTradeForm() {
-      ['fDate', 'fTicker', 'fModel', 'fPnl', 'fR', 'fMin', 'fMistake', 'fNotes'].forEach((id) => byId(id).value = '');
+      ['fDate', 'fTicker', 'fPnl', 'fR', 'fMin', 'fMistake', 'fNotes'].forEach((id) => byId(id).value = '');
       byId('fFamily').value = 'Bounce';
+      populateSetupModelOptions();
       byId('fScreens').value = '';
       byId('formError').textContent = '';
       state.pendingScreenshots = [];
@@ -233,7 +260,7 @@
 
     function validateTradeForm() {
       if (!byId('fTicker').value.trim()) return 'Ticker is required.';
-      if (!byId('fModel').value.trim()) return 'Setup model is required.';
+      if (!byId('fModel').value) return 'Setup model is required.';
       if (Number(byId('fMin').value || 0) < 0) return 'Minutes cannot be negative.';
       return '';
     }
@@ -263,7 +290,7 @@
       byId('fDate').value = t.date;
       byId('fTicker').value = t.ticker;
       byId('fFamily').value = t.family;
-      byId('fModel').value = t.model;
+      populateSetupModelOptions(t.model);
       byId('fPnl').value = t.pnl;
       byId('fR').value = t.r;
       byId('fMin').value = t.min;
@@ -287,7 +314,7 @@
         date: byId('fDate').value || new Date().toISOString().slice(0, 10),
         ticker: byId('fTicker').value.trim().toUpperCase(),
         family: byId('fFamily').value,
-        model: byId('fModel').value.trim(),
+        model: byId('fModel').value,
         pnl: Number(byId('fPnl').value || 0),
         r: Number(byId('fR').value || 0),
         min: Number(byId('fMin').value || 0),
@@ -350,7 +377,7 @@
     function openDefinitionGroup(type) {
       const defs = type === 'family'
         ? ['Bounce','Reject','Break']
-        : ['5m FVG pullback','2m inside 5m execution','liquidity sweep rejection','VWAP continuation','VWAP rejection','ORB break and retest','HTF continuation pullback'];
+        : ['5m FVG pullback','2m inside 5m execution','Liquidity sweep rejection','VWAP continuation','VWAP rejection','ORB break and retest','HTF continuation pullback'];
       byId('defsTitle').textContent = type === 'family' ? 'Setup family definitions' : 'Setup model definitions';
       byId('defsContent').innerHTML = defs.map((k) => `<article class="trade"><strong>${k}</strong><div class="small muted" style="margin-top:6px;">${SETUP_DEFS[k]}</div></article>`).join('');
       byId('defsDialog').showModal();
@@ -365,7 +392,7 @@
       return {
         outcome: byId('filterOutcome').value,
         family: byId('filterFamily').value,
-        model: byId('filterModel').value.trim().toLowerCase(),
+        model: byId('filterModel').value,
         mistake: byId('filterMistake').value.trim().toLowerCase(),
         hasShots: byId('filterHasShots').value,
         noTrade: byId('filterNoTrade').value,
@@ -415,7 +442,7 @@
         if (filters.outcome === 'win' && !(t.pnl > 0)) return false;
         if (filters.outcome === 'loss' && !(t.pnl < 0)) return false;
         if (filters.family !== 'all' && t.family !== filters.family) return false;
-        if (filters.model && !String(t.model || '').toLowerCase().includes(filters.model)) return false;
+        if (filters.model !== 'all' && t.model !== filters.model) return false;
         if (filters.mistake && !String(t.mistake || '').toLowerCase().includes(filters.mistake)) return false;
         if (filters.hasShots === 'yes' && !(t.screenshots || []).length) return false;
         if (filters.hasShots === 'no' && (t.screenshots || []).length) return false;
@@ -500,7 +527,7 @@
       const sampleImg = 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="100%" height="100%" fill="#15284f"/><text x="50%" y="50%" fill="#dbe7ff" font-size="28" text-anchor="middle" dy=".3em">Sample Trade Screenshot</text></svg>');
       setTrades([
         { id: makeId(), date: '2026-04-07', ticker: 'MES', family: 'Bounce', model: '5m FVG pullback', pnl: 420, r: 1.8, min: 15, mistake: '', notes: 'Waited for reclaim and hold.', screenshots: [sampleImg] },
-        { id: makeId(), date: '2026-04-08', ticker: 'MNQ', family: 'Reject', model: 'liquidity sweep rejection', pnl: -130, r: -0.8, min: 6, mistake: 'Early entry', notes: 'Entered before close.', screenshots: [] },
+        { id: makeId(), date: '2026-04-08', ticker: 'MNQ', family: 'Reject', model: 'Liquidity sweep rejection', pnl: -130, r: -0.8, min: 6, mistake: 'Early entry', notes: 'Entered before close.', screenshots: [] },
         { id: makeId(), date: '2026-04-10', ticker: 'MES', family: 'Break', model: 'ORB break and retest', pnl: 300, r: 1.4, min: 13, mistake: '', notes: 'Held to target.', screenshots: [sampleImg, sampleImg] }
       ]);
       setNoTradeDays([{ id: makeId(), date: '2026-04-09', reason: 'No A+ setup' }]);
@@ -528,9 +555,11 @@
       byId('saveReviewBtn').addEventListener('click', saveReview);
       byId('resetDataBtn').addEventListener('click', clearData);
       ['sDaily', 'sWeekly', 'sRisk', 'sName'].forEach((id) => byId(id).addEventListener('change', persistSettings));
-      ['filterOutcome', 'filterFamily', 'filterModel', 'filterMistake', 'filterHasShots', 'filterNoTrade', 'sortTrades'].forEach((id) => byId(id).addEventListener('input', renderTrades));
+      ['filterOutcome', 'filterModel', 'filterMistake', 'filterHasShots', 'filterNoTrade', 'sortTrades'].forEach((id) => byId(id).addEventListener('input', renderTrades));
+      byId('filterFamily').addEventListener('input', () => { populateFilterModelOptions(); renderTrades(); });
+      byId('fFamily').addEventListener('input', () => populateSetupModelOptions(byId('fModel').value));
       byId('clearFiltersBtn').addEventListener('click', () => {
-        byId('filterOutcome').value = 'all'; byId('filterFamily').value = 'all'; byId('filterModel').value = ''; byId('filterMistake').value = ''; byId('filterHasShots').value = 'all'; byId('filterNoTrade').value = 'all'; byId('sortTrades').value = 'newest'; renderTrades();
+        byId('filterOutcome').value = 'all'; byId('filterFamily').value = 'all'; byId('filterModel').value = 'all'; byId('filterMistake').value = ''; byId('filterHasShots').value = 'all'; byId('filterNoTrade').value = 'all'; byId('sortTrades').value = 'newest'; renderTrades();
       });
       byId('seedBtn').addEventListener('click', seedSample);
       byId('closeImageDialog').addEventListener('click', () => byId('imageDialog').close());
@@ -541,6 +570,7 @@
 
     bindEvents();
     resetTradeForm();
+    populateFilterModelOptions();
     render();
   </script>
 </body>
