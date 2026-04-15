@@ -22,7 +22,7 @@ create table if not exists public.trades (
   pnl numeric not null default 0,
   r_multiple numeric not null default 0,
   minutes_in_trade integer not null default 0,
-  emotional_pressure integer not null default 1 check (emotional_pressure between 1 and 5),
+  emotional_pressure integer check (emotional_pressure between 1 and 5),
   mistake_tags text[] not null default '{}',
   notes text,
   created_at timestamptz not null default now(),
@@ -30,7 +30,20 @@ create table if not exists public.trades (
 );
 
 alter table public.trades
-  add column if not exists emotional_pressure integer not null default 1 check (emotional_pressure between 1 and 5);
+  add column if not exists emotional_pressure integer;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'trades_emotional_pressure_range'
+      and conrelid = 'public.trades'::regclass
+  ) then
+    alter table public.trades
+      add constraint trades_emotional_pressure_range
+      check (emotional_pressure is null or emotional_pressure between 1 and 5);
+  end if;
+end $$;
 
 create table if not exists public.no_trade_days (
   id uuid primary key default gen_random_uuid(),

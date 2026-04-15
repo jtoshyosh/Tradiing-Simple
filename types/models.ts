@@ -17,7 +17,7 @@ export type TradeRow = {
   pnl: number;
   r_multiple: number;
   minutes_in_trade: number;
-  emotional_pressure: number;
+  emotional_pressure: number | null;
   mistake_tags: string[];
   notes: string | null;
 };

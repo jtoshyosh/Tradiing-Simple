@@ -155,7 +155,7 @@ export default function JournalApp({ userId, email }: Props) {
       supabase.from('attachments').select('*').order('created_at', { ascending: false })
     ]);
     if (t.error || n.error || r.error || s.error || a.error) {
-      setError(t.error?.message || n.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed');
+      setError(normalizeSupabaseError(t.error?.message || n.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed'));
       return;
     }
     setTrades((t.data || []) as TradeRow[]);
@@ -231,7 +231,7 @@ export default function JournalApp({ userId, email }: Props) {
       : await supabase.from('trades').insert(payload).select('*').single();
     const { data, error: upsertError } = tradeResult;
     if (upsertError) {
-      setError(upsertError.message);
+      setError(normalizeSupabaseError(upsertError.message));
       return;
     }
 
@@ -241,7 +241,7 @@ export default function JournalApp({ userId, email }: Props) {
       const filePath = `${userId}/${data.id}/${crypto.randomUUID()}_${file.name}`;
       const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
       if (uploadError) {
-        setError(uploadError.message);
+        setError(normalizeSupabaseError(uploadError.message));
         continue;
       }
       await supabase.from('attachments').insert({
@@ -271,7 +271,7 @@ export default function JournalApp({ userId, email }: Props) {
       : await supabase.from('no_trade_days').insert(payload).select('*').single();
     const { data, error: insertError } = upsert;
     if (insertError) {
-      setError(insertError.message);
+      setError(normalizeSupabaseError(insertError.message));
       return;
     }
 
@@ -281,7 +281,7 @@ export default function JournalApp({ userId, email }: Props) {
       const filePath = `${userId}/no-trade/${data.id}/${crypto.randomUUID()}_${file.name}`;
       const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
       if (uploadError) {
-        setError(uploadError.message);
+        setError(normalizeSupabaseError(uploadError.message));
         continue;
       }
       await supabase.from('attachments').insert({
@@ -307,13 +307,13 @@ export default function JournalApp({ userId, email }: Props) {
     const { error: upsertError } = await supabase
       .from('weekly_reviews')
       .upsert(payload, { onConflict: 'user_id,week_key' });
-    if (upsertError) setError(upsertError.message);
+    if (upsertError) setError(normalizeSupabaseError(upsertError.message));
     else await loadAll();
   }
 
   async function saveSettings(next: SettingsRow) {
     const { error: upsertError } = await supabase.from('user_settings').upsert(next, { onConflict: 'user_id' });
-    if (upsertError) setError(upsertError.message);
+    if (upsertError) setError(normalizeSupabaseError(upsertError.message));
     else setSettings(next);
   }
 
@@ -375,7 +375,7 @@ export default function JournalApp({ userId, email }: Props) {
     }
     const { error: deleteError } = await supabase.from('trades').delete().eq('id', tradeId);
     if (deleteError) {
-      setError(deleteError.message);
+      setError(normalizeSupabaseError(deleteError.message));
       return;
     }
     if (detail?.kind === 'trade' && detail.id === tradeId) setDetail(null);
@@ -390,7 +390,7 @@ export default function JournalApp({ userId, email }: Props) {
     }
     const { error: deleteError } = await supabase.from('no_trade_days').delete().eq('id', noTradeId);
     if (deleteError) {
-      setError(deleteError.message);
+      setError(normalizeSupabaseError(deleteError.message));
       return;
     }
     if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
@@ -423,7 +423,7 @@ export default function JournalApp({ userId, email }: Props) {
     const filePaths = linkedAttachments.map((a) => a.file_path);
     const { data, error: signError } = await supabase.storage.from('attachments').createSignedUrls(filePaths, 60 * 60);
     if (signError) {
-      setError(signError.message);
+      setError(normalizeSupabaseError(signError.message));
       setSignedUrls({});
       return;
     }
@@ -1724,6 +1724,14 @@ function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string,
   if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
   if (period === 'annual') return String(anchor.getUTCFullYear());
   return `Year to date · ${anchor.getUTCFullYear()}`;
+}
+
+function normalizeSupabaseError(message: string) {
+  const text = String(message || '');
+  if (/could not find .*emotional_pressure.*schema cache/i.test(text)) {
+    return 'Your database schema is missing the emotional pressure field. Please run the latest Supabase migration and refresh.';
+  }
+  return text;
 }
 
 function currentWeekKey() {
