@@ -74,8 +74,14 @@ type TradeDraft = {
   mistake_tags: string;
   notes: string;
 };
-type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string };
-type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string };
+type OcrDebugState = {
+  ocrStatus?: 'idle' | 'image_loaded' | 'running' | 'succeeded' | 'no_text' | 'failed' | 'no_images';
+  ocrCharCount?: number;
+  ocrError?: string;
+  ocrSteps?: string[];
+};
+type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
+type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 
 export default function JournalApp({ userId, email }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -365,12 +371,18 @@ export default function JournalApp({ userId, email }: Props) {
   }
 
   async function runTradeExtraction(files: File[]) {
-    const next = await extractTradeSuggestions(files);
+    setTradeExtract({ ocrStatus: 'idle', ocrSteps: ['Waiting for extraction request...'] });
+    const next = await extractTradeSuggestions(files, (debug) => {
+      setTradeExtract((prev) => ({ ...(prev || {}), ...debug }));
+    });
     setTradeExtract(next || null);
   }
 
   async function runNoTradeExtraction(files: File[]) {
-    const next = await extractNoTradeSuggestions(files);
+    setNoTradeExtract({ ocrStatus: 'idle', ocrSteps: ['Waiting for extraction request...'] });
+    const next = await extractNoTradeSuggestions(files, (debug) => {
+      setNoTradeExtract((prev) => ({ ...(prev || {}), ...debug }));
+    });
     setNoTradeExtract(next || null);
   }
 
@@ -620,9 +632,13 @@ export default function JournalApp({ userId, email }: Props) {
                   <div className="small muted">No useful trade fields detected yet (filename/metadata + beta OCR).</div>
                 )}
                 {tradeExtract.hints?.length ? <div className="small muted">Hints: {tradeExtract.hints.join(', ')}</div> : null}
+                <div className="small muted">OCR status: {formatOcrStatus(tradeExtract.ocrStatus)}</div>
+                <div className="small muted">OCR character count: {tradeExtract.ocrCharCount ?? 0}</div>
+                {tradeExtract.ocrError ? <div className="small muted">OCR error: {tradeExtract.ocrError}</div> : null}
                 {tradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
+                    {tradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {tradeExtract.ocrSteps.join(' → ')}</div> : null}
                     <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{tradeExtract.detectedText}</pre>
                   </details>
                 ) : null}
@@ -677,9 +693,13 @@ export default function JournalApp({ userId, email }: Props) {
                   <div className="small muted">No no-trade date/reason hints detected yet (filename/metadata + beta OCR).</div>
                 )}
                 {noTradeExtract.hints?.length ? <div className="small muted">Hints: {noTradeExtract.hints.join(', ')}</div> : null}
+                <div className="small muted">OCR status: {formatOcrStatus(noTradeExtract.ocrStatus)}</div>
+                <div className="small muted">OCR character count: {noTradeExtract.ocrCharCount ?? 0}</div>
+                {noTradeExtract.ocrError ? <div className="small muted">OCR error: {noTradeExtract.ocrError}</div> : null}
                 {noTradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
+                    {noTradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {noTradeExtract.ocrSteps.join(' → ')}</div> : null}
                     <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{noTradeExtract.detectedText}</pre>
                   </details>
                 ) : null}
@@ -866,7 +886,7 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-async function extractTradeSuggestions(files: File[]): Promise<TradeExtractSuggestions> {
+async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDebugState) => void): Promise<TradeExtractSuggestions> {
   const out: TradeExtractSuggestions = {};
   const hints: string[] = [];
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
@@ -877,7 +897,12 @@ async function extractTradeSuggestions(files: File[]): Promise<TradeExtractSugge
   if (/forced/i.test(text)) hints.push('Forced-trade mention found');
   if (/news/i.test(text)) hints.push('News mention found');
 
-  const ocrText = await extractTextFromImages(files);
+  const ocrResult = await extractTextFromImages(files, onOcrDebug);
+  out.ocrStatus = ocrResult.status;
+  out.ocrCharCount = ocrResult.charCount;
+  out.ocrError = ocrResult.error;
+  out.ocrSteps = ocrResult.steps;
+  const ocrText = ocrResult.text;
   if (ocrText) {
     const parsedFromImage = parseTradeText(ocrText);
     out.trade_date = out.trade_date || parsedFromImage.trade_date;
@@ -895,7 +920,7 @@ async function extractTradeSuggestions(files: File[]): Promise<TradeExtractSugge
   return out;
 }
 
-async function extractNoTradeSuggestions(files: File[]): Promise<NoTradeExtractSuggestions> {
+async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDebugState) => void): Promise<NoTradeExtractSuggestions> {
   const out: NoTradeExtractSuggestions = {};
   const hints: string[] = [];
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
@@ -917,7 +942,12 @@ async function extractNoTradeSuggestions(files: File[]): Promise<NoTradeExtractS
       break;
     }
   }
-  const ocrText = await extractTextFromImages(files);
+  const ocrResult = await extractTextFromImages(files, onOcrDebug);
+  out.ocrStatus = ocrResult.status;
+  out.ocrCharCount = ocrResult.charCount;
+  out.ocrError = ocrResult.error;
+  out.ocrSteps = ocrResult.steps;
+  const ocrText = ocrResult.text;
   if (ocrText) {
     const parsedFromImage = parseNoTradeText(ocrText);
     out.day_date = out.day_date || parsedFromImage.day_date;
@@ -993,25 +1023,93 @@ function sanitizeNumberToken(value: string): string {
   return match?.[0] || '';
 }
 
-async function extractTextFromImages(files: File[]): Promise<string> {
+type OcrResult = {
+  status: OcrDebugState['ocrStatus'];
+  text: string;
+  charCount: number;
+  error?: string;
+  steps: string[];
+};
+
+async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugState) => void): Promise<OcrResult> {
   const imageFiles = files.filter((f) => f.type.startsWith('image/'));
-  if (!imageFiles.length) return '';
-  const detector = (globalThis as { TextDetector?: new () => { detect: (input: ImageBitmap) => Promise<Array<{ rawValue?: string }>> } }).TextDetector;
-  if (!detector) return '';
-  const instance = new detector();
-  const chunks: string[] = [];
-  for (const file of imageFiles) {
-    try {
-      const bitmap = await createImageBitmap(file);
-      const blocks = await instance.detect(bitmap);
-      bitmap.close();
-      const text = blocks.map((b) => b.rawValue || '').join('\n').trim();
-      if (text) chunks.push(text);
-    } catch {
-      // ignore OCR failures per file and keep fallback heuristics
-    }
+  const steps: string[] = [];
+  if (!imageFiles.length) {
+    const result: OcrResult = { status: 'no_images', text: '', charCount: 0, steps: ['No image files found'] };
+    onDebug?.({ ocrStatus: result.status, ocrCharCount: 0, ocrSteps: result.steps });
+    return result;
   }
-  return chunks.join('\n').trim();
+  try {
+    const tesseract = await import('tesseract.js');
+    const chunks: string[] = [];
+    for (const file of imageFiles) {
+      steps.push(`image loaded: ${file.name}`);
+      onDebug?.({ ocrStatus: 'image_loaded', ocrSteps: [...steps] });
+      const prepared = await preprocessImageForOcr(file);
+      steps.push(`ocr running: ${file.name}`);
+      onDebug?.({ ocrStatus: 'running', ocrSteps: [...steps] });
+      const result = await tesseract.recognize(prepared, 'eng');
+      const text = String(result?.data?.text || '').trim();
+      if (text) {
+        chunks.push(text);
+        steps.push(`ocr succeeded: ${file.name}`);
+        onDebug?.({ ocrStatus: 'succeeded', ocrCharCount: chunks.join('\n').length, ocrSteps: [...steps] });
+      } else {
+        steps.push(`ocr returned no text: ${file.name}`);
+        onDebug?.({ ocrStatus: 'no_text', ocrCharCount: chunks.join('\n').length, ocrSteps: [...steps] });
+      }
+    }
+    const text = chunks.join('\n').trim();
+    const charCount = text.length;
+    return { status: text ? 'succeeded' : 'no_text', text, charCount, steps };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    steps.push(`ocr failed: ${message}`);
+    onDebug?.({ ocrStatus: 'failed', ocrError: message, ocrCharCount: 0, ocrSteps: [...steps] });
+    return { status: 'failed', text: '', charCount: 0, error: message, steps };
+  }
+}
+
+async function preprocessImageForOcr(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  const scale = 1.5;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    bitmap.close();
+    throw new Error('Failed to initialize canvas context for OCR preprocessing.');
+  }
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    const contrastBoost = gray > 140 ? 255 : 0;
+    data[i] = contrastBoost;
+    data[i + 1] = contrastBoost;
+    data[i + 2] = contrastBoost;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function formatOcrStatus(status: OcrDebugState['ocrStatus']) {
+  if (!status) return 'Idle';
+  if (status === 'image_loaded') return 'Image loaded';
+  if (status === 'running') return 'OCR running';
+  if (status === 'succeeded') return 'OCR succeeded';
+  if (status === 'no_text') return 'OCR returned no text';
+  if (status === 'failed') return 'OCR failed';
+  if (status === 'no_images') return 'No image files found';
+  return 'Idle';
 }
 
 function currentWeekKey() {
