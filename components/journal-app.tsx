@@ -6,6 +6,8 @@ import type { AttachmentRow, NoTradeDayRow, SettingsRow, TradeRow, WeeklyReviewR
 
 const tabs = ['dashboard', 'trades', 'add', 'review', 'settings'] as const;
 type Tab = (typeof tabs)[number];
+type HelpKey = 'classification' | 'family' | 'model';
+type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
   'Valid setup',
@@ -24,9 +26,54 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const forcedInvalidClassifications: TradeClassification[] = ['FOMO trade', 'Forced trade', 'No valid setup'];
+const NA_FAMILY = 'N/A / No valid setup';
+const NA_MODEL = 'N/A / None';
+
+const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
+  family: [
+    ['Bounce', 'Price reclaims a key level, then confirms continuation after pullback.'],
+    ['Reject', 'Price sweeps liquidity, fails to hold, then rotates back.'],
+    ['Break', 'Market breaks structure, retests, and continues in trend direction.'],
+    ['N/A / No valid setup', 'Use when there was no valid setup to classify.']
+  ],
+  model: [
+    ['5m FVG pullback', 'Entry on retrace into a 5-minute fair value gap with confirmation.'],
+    ['2m inside 5m execution', 'Use 2-minute entries aligned to 5-minute structure.'],
+    ['Liquidity sweep rejection', 'Fade a sweep through prior highs/lows once rejection confirms.'],
+    ['VWAP continuation', 'Join continuation after VWAP support/resistance confirms.'],
+    ['VWAP rejection', 'Counter move when VWAP rejection is clear.'],
+    ['ORB break and retest', 'Trade opening-range breakout after retest confirms acceptance.'],
+    ['HTF continuation pullback', 'Enter pullback aligned with higher timeframe trend.'],
+    ['N/A / None', 'Use when trade is intentionally marked with no valid setup.']
+  ],
+  classification: [
+    ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
+    ['Valid setup, poor execution', 'Use this when setup was valid but execution quality was poor.'],
+    ['FOMO trade', 'Use this when fear of missing out drove the trade.'],
+    ['Forced trade', 'Use this when trade quality was not there but you took it anyway.'],
+    ['Experimental trade', 'Use this for intentional tests outside your normal playbook.'],
+    ['No valid setup', 'Use this when there was no real setup by your rules.']
+  ]
+};
+
+const helpNote =
+  'FOMO / Forced / No valid setup trades do not need to be forced into Bounce / Reject / Break. Use N/A / No valid setup + N/A / None when appropriate.';
 
 type Props = { userId: string; email?: string };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | null;
+type TradeDraft = {
+  trade_date: string;
+  ticker: string;
+  classification: TradeClassification;
+  family: string;
+  model: string;
+  pnl: string;
+  r_multiple: string;
+  minutes_in_trade: string;
+  mistake_tags: string;
+  notes: string;
+};
 
 export default function JournalApp({ userId, email }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -41,6 +88,23 @@ export default function JournalApp({ userId, email }: Props) {
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '' });
   const [detail, setDetail] = useState<DetailState>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [addTradeFamily, setAddTradeFamily] = useState<string>('Bounce');
+  const [addTradeModel, setAddTradeModel] = useState<string>(familyModels.Bounce[0]);
+  const [addTradeClassification, setAddTradeClassification] = useState<TradeClassification>('Valid setup');
+  const [openHelp, setOpenHelp] = useState<HelpKey | null>(null);
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
+    trade_date: new Date().toISOString().slice(0, 10),
+    ticker: '',
+    classification: 'Valid setup',
+    family: 'Bounce',
+    model: familyModels.Bounce[0],
+    pnl: '',
+    r_multiple: '',
+    minutes_in_trade: '',
+    mistake_tags: '',
+    notes: ''
+  }));
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -82,25 +146,29 @@ export default function JournalApp({ userId, email }: Props) {
 
   async function addTrade(formData: FormData) {
     setError('');
-    const family = String(formData.get('family') || 'Bounce');
-    const classification = String(formData.get('classification') || 'Valid setup') as TradeClassification;
-    const isInvalid = ['FOMO trade', 'Forced trade', 'No valid setup'].includes(classification);
+    const family = tradeDraft.family || 'Bounce';
+    const classification = tradeDraft.classification;
+    const isInvalid = forcedInvalidClassifications.includes(classification);
     const payload = {
       user_id: userId,
-      trade_date: String(formData.get('trade_date') || new Date().toISOString().slice(0, 10)),
-      ticker: String(formData.get('ticker') || '').toUpperCase(),
-      family: isInvalid ? 'N/A / No valid setup' : family,
-      model: isInvalid ? 'N/A / None' : String(formData.get('model') || familyModels[family][0]),
+      trade_date: tradeDraft.trade_date || new Date().toISOString().slice(0, 10),
+      ticker: String(tradeDraft.ticker || '').toUpperCase(),
+      family: isInvalid ? NA_FAMILY : family,
+      model: isInvalid ? NA_MODEL : String(tradeDraft.model || familyModels[family][0]),
       classification,
-      pnl: Number(formData.get('pnl') || 0),
-      r_multiple: Number(formData.get('r_multiple') || 0),
-      minutes_in_trade: Number(formData.get('minutes_in_trade') || 0),
-      mistake_tags: String(formData.get('mistake_tags') || '').split(',').map((x) => x.trim()).filter(Boolean),
-      notes: String(formData.get('notes') || '')
+      pnl: Number(tradeDraft.pnl || 0),
+      r_multiple: Number(tradeDraft.r_multiple || 0),
+      minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
+      mistake_tags: String(tradeDraft.mistake_tags || '').split(',').map((x) => x.trim()).filter(Boolean),
+      notes: String(tradeDraft.notes || '')
     };
-    const { data, error: insertError } = await supabase.from('trades').insert(payload).select('*').single();
-    if (insertError) {
-      setError(insertError.message);
+
+    const tradeResult = editingTradeId
+      ? await supabase.from('trades').update(payload).eq('id', editingTradeId).select('*').single()
+      : await supabase.from('trades').insert(payload).select('*').single();
+    const { data, error: upsertError } = tradeResult;
+    if (upsertError) {
+      setError(upsertError.message);
       return;
     }
 
@@ -125,6 +193,7 @@ export default function JournalApp({ userId, email }: Props) {
     }
 
     await loadAll();
+    resetTradeDraft();
     setTab('trades');
   }
 
@@ -182,6 +251,61 @@ export default function JournalApp({ userId, email }: Props) {
     else setSettings(next);
   }
 
+  function resetTradeDraft() {
+    setEditingTradeId(null);
+    setAddTradeClassification('Valid setup');
+    setAddTradeFamily('Bounce');
+    setAddTradeModel(familyModels.Bounce[0]);
+    setTradeDraft({
+      trade_date: new Date().toISOString().slice(0, 10),
+      ticker: '',
+      classification: 'Valid setup',
+      family: 'Bounce',
+      model: familyModels.Bounce[0],
+      pnl: '',
+      r_multiple: '',
+      minutes_in_trade: '',
+      mistake_tags: '',
+      notes: ''
+    });
+  }
+
+  function startEditTrade(trade: TradeRow) {
+    setEditingTradeId(trade.id);
+    setTab('add');
+    setAddTradeClassification(trade.classification);
+    setAddTradeFamily(trade.family);
+    setAddTradeModel(trade.model);
+    setTradeDraft({
+      trade_date: trade.trade_date,
+      ticker: trade.ticker,
+      classification: trade.classification,
+      family: trade.family,
+      model: trade.model,
+      pnl: String(trade.pnl ?? ''),
+      r_multiple: String(trade.r_multiple ?? ''),
+      minutes_in_trade: String(trade.minutes_in_trade ?? ''),
+      mistake_tags: (trade.mistake_tags || []).join(', '),
+      notes: trade.notes || ''
+    });
+  }
+
+  async function deleteTrade(tradeId: string) {
+    if (!window.confirm('Delete this trade? This cannot be undone.')) return;
+    const linked = attachments.filter((a) => a.trade_id === tradeId);
+    if (linked.length) {
+      const paths = linked.map((a) => a.file_path);
+      await supabase.storage.from('attachments').remove(paths);
+    }
+    const { error: deleteError } = await supabase.from('trades').delete().eq('id', tradeId);
+    if (deleteError) {
+      setError(deleteError.message);
+      return;
+    }
+    if (detail?.kind === 'trade' && detail.id === tradeId) setDetail(null);
+    await loadAll();
+  }
+
   async function openEntryDetail(nextDetail: DetailState) {
     if (!nextDetail) return;
     setDetail(nextDetail);
@@ -212,7 +336,28 @@ export default function JournalApp({ userId, email }: Props) {
     setSignedUrls(nextUrls);
   }
 
+  function onChangeClassification(value: string) {
+    const next = value as TradeClassification;
+    setAddTradeClassification(next);
+    setTradeDraft((prev) => ({ ...prev, classification: next }));
+    if (forcedInvalidClassifications.includes(next)) {
+      setAddTradeFamily(NA_FAMILY);
+      setAddTradeModel(NA_MODEL);
+      setTradeDraft((prev) => ({ ...prev, family: NA_FAMILY, model: NA_MODEL }));
+    }
+  }
+
+  function onChangeFamily(value: string) {
+    setAddTradeFamily(value);
+    const options = familyModels[value] || [NA_MODEL];
+    const resolvedModel = options.includes(addTradeModel) ? addTradeModel : options[0];
+    setAddTradeModel(resolvedModel);
+    setTradeDraft((prev) => ({ ...prev, family: value, model: resolvedModel }));
+  }
+
   const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
+  const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
+  const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
 
   return (
     <main className="app">
@@ -250,7 +395,11 @@ export default function JournalApp({ userId, email }: Props) {
               <div>{t.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
               <div className="row">
                 <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === t.id).length}</div>
-                <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: t.id })}>View details</button>
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: t.id })}>View</button>
+                  <button className="inline" type="button" onClick={() => startEditTrade(t)}>Edit</button>
+                  <button className="inline" type="button" onClick={() => void deleteTrade(t.id)}>Delete</button>
+                </div>
               </div>
             </article>
           ))}
@@ -312,20 +461,43 @@ export default function JournalApp({ userId, email }: Props) {
       {tab === 'add' && (
         <section className="stack">
           <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
-            <strong>Add trade</strong>
-            <input name="trade_date" type="date" required />
-            <input name="ticker" placeholder="Ticker" required />
-            <select name="classification" defaultValue="Valid setup">{classifications.map((c) => <option key={c}>{c}</option>)}</select>
-            <select name="family" defaultValue="Bounce">{Object.keys(familyModels).map((f) => <option key={f}>{f}</option>)}</select>
-            <input name="model" placeholder="Setup model" />
-            <input name="pnl" type="number" step="0.01" placeholder="Result ($)" />
-            <input name="r_multiple" type="number" step="0.1" placeholder="R multiple" />
-            <input name="minutes_in_trade" type="number" placeholder="Minutes in trade" />
-            <input name="mistake_tags" placeholder="Mistake tags (comma-separated)" />
-            <textarea name="notes" placeholder="Notes" />
+            <div className="row">
+              <strong>{editingTradeId ? 'Edit trade' : 'Add trade'}</strong>
+              {editingTradeId && <button className="inline" type="button" onClick={resetTradeDraft}>Cancel edit</button>}
+            </div>
+            <label className="small muted">Date</label>
+            <input name="trade_date" type="date" required value={tradeDraft.trade_date} onChange={(e) => setTradeDraft((p) => ({ ...p, trade_date: e.target.value }))} />
+            <label className="small muted">Ticker</label>
+            <input name="ticker" placeholder="Ticker" required value={tradeDraft.ticker} onChange={(e) => setTradeDraft((p) => ({ ...p, ticker: e.target.value.toUpperCase() }))} />
+            <div className="row">
+              <label className="small muted">Trade classification</label>
+              <button className="info-btn" aria-label="Trade classification help" type="button" onClick={() => setOpenHelp('classification')}>i</button>
+            </div>
+            <select name="classification" value={addTradeClassification} onChange={(e) => onChangeClassification(e.target.value)}>
+              {classifications.map((c) => <option key={c}>{c}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">Setup family</label>
+              <button className="info-btn" aria-label="Setup family help" type="button" onClick={() => setOpenHelp('family')}>i</button>
+            </div>
+            <select name="family" value={addTradeFamily} onChange={(e) => onChangeFamily(e.target.value)} disabled={classificationLocksSetup}>
+              {Object.keys(familyModels).map((f) => <option key={f}>{f}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">Setup model</label>
+              <button className="info-btn" aria-label="Setup model help" type="button" onClick={() => setOpenHelp('model')}>i</button>
+            </div>
+            <select name="model" value={addTradeModel} onChange={(e) => { setAddTradeModel(e.target.value); setTradeDraft((p) => ({ ...p, model: e.target.value })); }} disabled={classificationLocksSetup}>
+              {(familyModels[addTradeFamily] || [NA_MODEL]).map((m) => <option key={m}>{m}</option>)}
+            </select>
+            <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
+            <input name="r_multiple" type="number" step="0.1" placeholder="R multiple" value={tradeDraft.r_multiple} onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple: e.target.value }))} />
+            <input name="minutes_in_trade" type="number" placeholder="Minutes in trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))} />
+            <input name="mistake_tags" placeholder="Mistake tags (comma-separated)" value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: e.target.value }))} />
+            <textarea name="notes" placeholder="Notes" value={tradeDraft.notes} onChange={(e) => setTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
             <input name="files" type="file" accept="image/*" multiple />
             <div className="small muted">Uploads are stored attachments only. AI extraction is not implemented.</div>
-            <button className="primary" disabled={pending}>Save trade</button>
+            <button className="primary" disabled={pending}>{editingTradeId ? 'Update trade' : 'Save trade'}</button>
           </form>
 
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
@@ -387,6 +559,36 @@ export default function JournalApp({ userId, email }: Props) {
           <button onClick={() => settings && saveSettings(settings)}>Save settings</button>
           <div className="small muted">Passkeys: prepared next. Use Supabase auth; add WebAuthn/passkey provider in next milestone.</div>
         </section>
+      )}
+
+      {openHelp && (
+        <>
+          <button className="help-backdrop" aria-label="Close help" type="button" onClick={() => setOpenHelp(null)} />
+          <section className="card stack help-modal">
+          <div className="row">
+            <strong>
+              {openHelp === 'classification'
+                ? 'Trade classification definitions'
+                : openHelp === 'family'
+                  ? 'Setup family definitions'
+                  : 'Setup model definitions'}
+            </strong>
+            <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
+          </div>
+          {activeHelpItems.map(([title, text]) => (
+            <article key={title} className="trade">
+              <strong>{title}</strong>
+              <div className="small muted" style={{ marginTop: 6 }}>{text}</div>
+            </article>
+          ))}
+          {openHelp === 'classification' && (
+            <article className="trade" style={{ borderColor: '#4f6ea6' }}>
+              <strong>When to use N/A</strong>
+              <div className="small muted" style={{ marginTop: 6 }}>{helpNote}</div>
+            </article>
+          )}
+          </section>
+        </>
       )}
 
       {error ? <div className="error">{error}</div> : null}
