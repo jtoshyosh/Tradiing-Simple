@@ -526,19 +526,20 @@ export default function JournalApp({ userId, email }: Props) {
           <section className="card stack">
             <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
               <strong>Analytics period</strong>
-              <span className="chip">{formatRangeLabel(periodRange.start, periodRange.end)}</span>
+              <span className="small muted">Type + navigator</span>
             </div>
             <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
               {(['weekly', 'monthly', 'quarterly', 'annual', 'ytd'] as DashboardPeriod[]).map((p) => (
                 <button key={p} className={dashboardPeriod === p ? 'chip' : 'inline'} type="button" onClick={() => setDashboardPeriod(p)}>
-                  {titleCase(p)}
+                  {periodTypeLabel(p)}
                 </button>
               ))}
             </div>
-            <div className="row">
-              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>← Previous</button>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
+              <span className="chip" style={{ flex: 1, textAlign: 'center' }}>{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</span>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
-              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next →</button>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next</button>
             </div>
           </section>
           <div className="grid">
@@ -558,8 +559,12 @@ export default function JournalApp({ userId, email }: Props) {
           </section>
 
           <section className="card stack">
-            <strong>Calendar month view</strong>
-            <div className="small muted">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
+            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Anchor month calendar'}</strong>
+            <div className="small muted">
+              {dashboardPeriod === 'monthly'
+                ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} for context while period metrics use ${periodTypeLabel(dashboardPeriod)}.`}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 6 }}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
               {calendarCells.map((cell) => (
@@ -1682,7 +1687,11 @@ function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTr
   const start = new Date(monthStart);
   const offset = start.getUTCDay();
   start.setUTCDate(start.getUTCDate() - offset);
-  return Array.from({ length: 42 }, (_, idx) => {
+  const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+  const end = new Date(monthEnd);
+  end.setUTCDate(monthEnd.getUTCDate() + (6 - monthEnd.getUTCDay()));
+  const days = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  return Array.from({ length: days }, (_, idx) => {
     const dt = new Date(start);
     dt.setUTCDate(start.getUTCDate() + idx);
     const date = dt.toISOString().slice(0, 10);
@@ -1700,8 +1709,24 @@ function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTr
   });
 }
 
-function formatRangeLabel(start: string, end: string) {
-  return `${start} → ${end}`;
+function periodTypeLabel(period: DashboardPeriod) {
+  if (period === 'weekly') return 'Week';
+  if (period === 'monthly') return 'Month';
+  if (period === 'quarterly') return 'Quarter';
+  if (period === 'annual') return 'Year';
+  return 'YTD';
+}
+
+function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string, end: string) {
+  if (period === 'weekly') {
+    const startDate = new Date(`${start}T00:00:00Z`);
+    const endDate = new Date(`${end}T00:00:00Z`);
+    return `${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}–${endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`;
+  }
+  if (period === 'monthly') return anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
+  if (period === 'annual') return String(anchor.getUTCFullYear());
+  return `Year to date · ${anchor.getUTCFullYear()}`;
 }
 
 function currentWeekKey() {
