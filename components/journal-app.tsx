@@ -93,6 +93,7 @@ export default function JournalApp({ userId, email }: Props) {
   const [addTradeClassification, setAddTradeClassification] = useState<TradeClassification>('Valid setup');
   const [openHelp, setOpenHelp] = useState<HelpKey | null>(null);
   const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
     ticker: '',
@@ -435,7 +436,7 @@ export default function JournalApp({ userId, email }: Props) {
                       <div className="small">Minutes in trade: {trade.minutes_in_trade}</div>
                       <div className="small">Mistake tags: {trade.mistake_tags?.length ? trade.mistake_tags.join(', ') : 'None'}</div>
                       <div className="small">Notes: {trade.notes || '—'}</div>
-                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} />
+                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   );
                 })()
@@ -448,7 +449,7 @@ export default function JournalApp({ userId, email }: Props) {
                     <div className="stack">
                       <div className="small muted">{noTrade.day_date}</div>
                       <div className="small">Reason: {noTrade.reason}</div>
-                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} />
+                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   );
                 })()
@@ -591,6 +592,27 @@ export default function JournalApp({ userId, email }: Props) {
         </>
       )}
 
+      {lightbox && (
+        <>
+          <button className="help-backdrop" aria-label="Close image preview" type="button" onClick={() => setLightbox(null)} />
+          <section className="card stack help-modal" style={{ maxWidth: 900 }}>
+            <div className="row">
+              <strong>{lightbox.name}</strong>
+              <button className="inline" type="button" onClick={() => setLightbox(null)}>Close</button>
+            </div>
+            <img src={lightbox.url} alt={lightbox.name} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 12 }} />
+            <div className="row">
+              <a href={lightbox.url} target="_blank" rel="noreferrer">
+                <span className="chip">Open full image</span>
+              </a>
+              <a href={lightbox.url} download={lightbox.name}>
+                <span className="chip">Download</span>
+              </a>
+            </div>
+          </section>
+        </>
+      )}
+
       {error ? <div className="error">{error}</div> : null}
 
       <nav className="bottom">
@@ -604,7 +626,7 @@ export default function JournalApp({ userId, email }: Props) {
   );
 }
 
-function AttachmentPreviewList({ entries, signedUrls }: { entries: AttachmentRow[]; signedUrls: Record<string, string> }) {
+function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: AttachmentRow[]; signedUrls: Record<string, string>; onOpenImage: (url: string, name: string) => void }) {
   if (!entries.length) {
     return <div className="small muted">No attachments saved for this entry.</div>;
   }
@@ -622,13 +644,26 @@ function AttachmentPreviewList({ entries, signedUrls }: { entries: AttachmentRow
             {!url ? (
               <div className="small muted">Preparing secure link...</div>
             ) : image ? (
-              <a href={url} target="_blank" rel="noreferrer">
-                <img src={url} alt={file.file_name} style={{ width: '100%', borderRadius: 10, marginTop: 8 }} />
-              </a>
+              <div className="stack" style={{ marginTop: 8 }}>
+                <button type="button" style={{ padding: 0, border: 0, background: 'transparent' }} onClick={() => onOpenImage(url, file.file_name)}>
+                  <img src={url} alt={file.file_name} style={{ width: '100%', borderRadius: 10 }} />
+                </button>
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => onOpenImage(url, file.file_name)}>View image</button>
+                  <a href={url} download={file.file_name}>
+                    <span className="chip">Download</span>
+                  </a>
+                </div>
+              </div>
             ) : (
-              <a href={url} target="_blank" rel="noreferrer">
-                <span className="chip" style={{ marginTop: 8, display: 'inline-flex' }}>Open attachment</span>
-              </a>
+              <div className="row" style={{ marginTop: 8 }}>
+                <a href={url} target="_blank" rel="noreferrer">
+                  <span className="chip">Open attachment</span>
+                </a>
+                <a href={url} download={file.file_name}>
+                  <span className="chip">Download</span>
+                </a>
+              </div>
             )}
           </article>
         );
