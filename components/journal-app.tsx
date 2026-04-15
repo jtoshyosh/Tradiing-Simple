@@ -74,8 +74,8 @@ type TradeDraft = {
   mistake_tags: string;
   notes: string;
 };
-type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[] };
-type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[] };
+type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string };
+type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string };
 
 export default function JournalApp({ userId, email }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -364,14 +364,14 @@ export default function JournalApp({ userId, email }: Props) {
     setTradeDraft((prev) => ({ ...prev, family: value, model: resolvedModel }));
   }
 
-  function runTradeExtraction(files: File[]) {
-    const next = extractTradeSuggestions(files);
-    setTradeExtract(next);
+  async function runTradeExtraction(files: File[]) {
+    const next = await extractTradeSuggestions(files);
+    setTradeExtract(next || null);
   }
 
-  function runNoTradeExtraction(files: File[]) {
-    const next = extractNoTradeSuggestions(files);
-    setNoTradeExtract(next);
+  async function runNoTradeExtraction(files: File[]) {
+    const next = await extractNoTradeSuggestions(files);
+    setNoTradeExtract(next || null);
   }
 
   function applyTradeSuggestion<K extends keyof TradeDraft>(key: K, value: TradeDraft[K]) {
@@ -557,13 +557,13 @@ export default function JournalApp({ userId, email }: Props) {
               type="file"
               accept="image/*,.pdf,.txt,.csv"
               multiple
-              onChange={(e) => runTradeExtraction(Array.from(e.currentTarget.files || []))}
+              onChange={(e) => void runTradeExtraction(Array.from(e.currentTarget.files || []))}
             />
             <div className="row">
               <span className="small muted">Upload-assisted autofill</span>
               <button className="inline" type="button" onClick={(e) => {
                 const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"files\"]') as HTMLInputElement | null);
-                runTradeExtraction(Array.from(input?.files || []));
+                void runTradeExtraction(Array.from(input?.files || []));
               }}>
                 Extract from upload
               </button>
@@ -620,6 +620,12 @@ export default function JournalApp({ userId, email }: Props) {
                   <div className="small muted">No useful trade fields detected from uploaded file names/metadata yet.</div>
                 )}
                 {tradeExtract.hints?.length ? <div className="small muted">Hints: {tradeExtract.hints.join(', ')}</div> : null}
+                {tradeExtract.detectedText ? (
+                  <details>
+                    <summary className="small muted">Detected text (beta OCR)</summary>
+                    <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{tradeExtract.detectedText}</pre>
+                  </details>
+                ) : null}
               </div>
             )}
             <div className="small muted">Uploads are stored attachments only. AI extraction is not implemented.</div>
@@ -635,13 +641,13 @@ export default function JournalApp({ userId, email }: Props) {
               type="file"
               accept="image/*,.pdf,.txt,.csv"
               multiple
-              onChange={(e) => runNoTradeExtraction(Array.from(e.currentTarget.files || []))}
+              onChange={(e) => void runNoTradeExtraction(Array.from(e.currentTarget.files || []))}
             />
             <div className="row">
               <span className="small muted">Upload-assisted autofill</span>
               <button className="inline" type="button" onClick={(e) => {
                 const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"no_trade_files\"]') as HTMLInputElement | null);
-                runNoTradeExtraction(Array.from(input?.files || []));
+                void runNoTradeExtraction(Array.from(input?.files || []));
               }}>
                 Extract from upload
               </button>
@@ -671,6 +677,12 @@ export default function JournalApp({ userId, email }: Props) {
                   <div className="small muted">No no-trade date/reason hints detected from uploaded file names/metadata yet.</div>
                 )}
                 {noTradeExtract.hints?.length ? <div className="small muted">Hints: {noTradeExtract.hints.join(', ')}</div> : null}
+                {noTradeExtract.detectedText ? (
+                  <details>
+                    <summary className="small muted">Detected text (beta OCR)</summary>
+                    <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{noTradeExtract.detectedText}</pre>
+                  </details>
+                ) : null}
               </div>
             )}
             <button disabled={pending}>Save no-trade day</button>
@@ -854,40 +866,41 @@ function formatFileSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function extractTradeSuggestions(files: File[]): TradeExtractSuggestions {
+async function extractTradeSuggestions(files: File[]): Promise<TradeExtractSuggestions> {
   const out: TradeExtractSuggestions = {};
   const hints: string[] = [];
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
 
-  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
-  if (dateMatch) out.trade_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
-
-  const tickerMatch = text.match(/\b([A-Z]{2,5})\b/);
-  if (tickerMatch) out.ticker = tickerMatch[1];
-
-  const pnlMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*(usd|\$|dollars?)/i);
-  if (pnlMatch) out.pnl = pnlMatch[1];
-
-  const rMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
-  if (rMatch) out.r_multiple = rMatch[1];
-
-  const minMatch = text.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
-  if (minMatch) out.minutes_in_trade = minMatch[1];
+  Object.assign(out, parseTradeText(text));
 
   if (/fomo/i.test(text)) hints.push('FOMO mention found');
   if (/forced/i.test(text)) hints.push('Forced-trade mention found');
   if (/news/i.test(text)) hints.push('News mention found');
+
+  const ocrText = await extractTextFromImages(files);
+  if (ocrText) {
+    const parsedFromImage = parseTradeText(ocrText);
+    out.trade_date = out.trade_date || parsedFromImage.trade_date;
+    out.ticker = out.ticker || parsedFromImage.ticker;
+    out.pnl = out.pnl || parsedFromImage.pnl;
+    out.r_multiple = out.r_multiple || parsedFromImage.r_multiple;
+    out.minutes_in_trade = out.minutes_in_trade || parsedFromImage.minutes_in_trade;
+    out.detectedText = ocrText;
+    hints.push('OCR text extracted from image');
+  }
+
   if (hints.length) out.hints = hints;
   return out;
 }
 
-function extractNoTradeSuggestions(files: File[]): NoTradeExtractSuggestions {
+async function extractNoTradeSuggestions(files: File[]): Promise<NoTradeExtractSuggestions> {
   const out: NoTradeExtractSuggestions = {};
   const hints: string[] = [];
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
 
-  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
-  if (dateMatch) out.day_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+  const fromMeta = parseNoTradeText(text);
+  out.day_date = fromMeta.day_date;
+  out.reason = fromMeta.reason;
 
   const reasonMap: Array<{ test: RegExp; reason: string }> = [
     { test: /news/i, reason: 'News risk' },
@@ -902,8 +915,71 @@ function extractNoTradeSuggestions(files: File[]): NoTradeExtractSuggestions {
       break;
     }
   }
+  const ocrText = await extractTextFromImages(files);
+  if (ocrText) {
+    const parsedFromImage = parseNoTradeText(ocrText);
+    out.day_date = out.day_date || parsedFromImage.day_date;
+    out.reason = out.reason || parsedFromImage.reason;
+    out.detectedText = ocrText;
+    hints.push('OCR text extracted from image');
+  }
   if (hints.length) out.hints = hints;
   return out;
+}
+
+function parseTradeText(text: string): TradeExtractSuggestions {
+  const out: TradeExtractSuggestions = {};
+  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
+  if (dateMatch) out.trade_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+  const tickerMatch = text.match(/\b([A-Z]{2,5})\b/);
+  if (tickerMatch) out.ticker = tickerMatch[1];
+  const pnlMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*(usd|\$|dollars?)/i);
+  if (pnlMatch) out.pnl = pnlMatch[1];
+  const rMatch = text.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
+  if (rMatch) out.r_multiple = rMatch[1];
+  const minMatch = text.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
+  if (minMatch) out.minutes_in_trade = minMatch[1];
+  return out;
+}
+
+function parseNoTradeText(text: string): NoTradeExtractSuggestions {
+  const out: NoTradeExtractSuggestions = {};
+  const dateMatch = text.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/);
+  if (dateMatch) out.day_date = dateMatch[1].replace(/[_.]/g, '-').replace(/\//g, '-');
+  const reasonMap: Array<{ test: RegExp; reason: string }> = [
+    { test: /news/i, reason: 'News risk' },
+    { test: /chop|choppy|range/i, reason: 'Choppy session' },
+    { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' }
+  ];
+  for (const r of reasonMap) {
+    if (r.test.test(text)) {
+      out.reason = r.reason;
+      break;
+    }
+  }
+  return out;
+}
+
+async function extractTextFromImages(files: File[]): Promise<string> {
+  const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+  if (!imageFiles.length) return '';
+  const detector = (globalThis as { TextDetector?: new () => { detect: (input: ImageBitmap) => Promise<Array<{ rawValue?: string }>> } }).TextDetector;
+  if (!detector) return '';
+  const instance = new detector();
+  const chunks: string[] = [];
+  for (const file of imageFiles) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const blocks = await instance.detect(bitmap);
+      bitmap.close();
+      const text = blocks.map((b) => b.rawValue || '').join('\n').trim();
+      if (text) chunks.push(text);
+    } catch {
+      // ignore OCR failures per file and keep fallback heuristics
+    }
+  }
+  return chunks.join('\n').trim();
 }
 
 function currentWeekKey() {
