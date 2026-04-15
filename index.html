@@ -8,7 +8,7 @@
   <style>
     :root { --bg:#0b0f17; --panel:#121b2d; --line:#2f3e5d; --text:#eef3ff; --muted:#9eaac4; --green:#5dd7a2; --red:#ff8a8a; --amber:#ffc96d; --blue:#79aeff; }
     *{box-sizing:border-box} html,body{margin:0;min-height:100%;color:var(--text);font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:radial-gradient(1000px 520px at 50% -12%, #1c3172 0%, var(--bg) 56%)}
-    body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)} .app{min-height:100vh;max-width:940px;margin:0 auto;padding:18px 14px 102px}@media(min-width:768px){.app{padding:24px 22px 112px}}
+    body{padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)} .app{min-height:100vh;max-width:940px;margin:0 auto;padding:18px 14px calc(130px + env(safe-area-inset-bottom))}@media(min-width:768px){.app{padding:24px 22px calc(128px + env(safe-area-inset-bottom))}}
     .header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}.sub{color:var(--muted);font-size:12px;letter-spacing:.12em;text-transform:uppercase}h1{margin:8px 0 6px;font-size:34px;line-height:1.03;letter-spacing:-.02em}
     .chip,.pill{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:999px;background:rgba(255,255,255,.03);color:var(--muted);padding:6px 10px;font-size:12px}.version{background:#17386f;color:#d8e6ff;border-color:#4568ad;font-weight:700}
     .view{display:none}.view.active{display:block}.section{margin-top:14px}.section h2{margin:0 0 10px;color:var(--muted);font-size:12px;letter-spacing:.11em;text-transform:uppercase}
@@ -18,15 +18,18 @@
     .stack{display:flex;flex-direction:column;gap:10px}.row{display:flex;align-items:center;justify-content:space-between;gap:10px}
     .trade{border:1px solid var(--line);border-radius:14px;padding:12px;background:rgba(255,255,255,.02)}.trade h3{margin:0 0 4px;font-size:17px}.divider{height:1px;background:var(--line);margin:9px 0}
     .small{font-size:13px}.muted{color:var(--muted)}.green{color:var(--green)}.red{color:var(--red)}
-    .filters{display:grid;grid-template-columns:1fr 1fr;gap:10px}.filters .full{grid-column:1/-1}
-    label{display:block;margin-bottom:7px;color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+    .filters{display:grid;grid-template-columns:1fr;gap:10px}.filters .full{grid-column:1/-1}@media(min-width:780px){.filters{grid-template-columns:1fr 1fr}}
+    label{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;color:var(--muted);font-size:12px;letter-spacing:.08em;text-transform:uppercase}
     input,select,textarea{width:100%;border:1px solid var(--line);border-radius:12px;background:#0d1627;color:var(--text);padding:12px;font-size:16px}textarea{min-height:88px;resize:vertical}select[multiple]{min-height:120px}
-    .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.full{grid-column:1/-1}
-    .btn{border:1px solid var(--line);border-radius:12px;background:#1b2945;color:var(--text);font-weight:700;padding:11px 13px;cursor:pointer}.btn.primary{background:#1f7446;border-color:#32915a}.btn.warn{background:#552328;border-color:#8d3b46}.btn.inline{padding:7px 10px;font-size:12px}
+    .form-grid{display:grid;grid-template-columns:1fr;gap:12px}.full{grid-column:1/-1}@media(min-width:780px){.form-grid{grid-template-columns:1fr 1fr}}
+    .btn{border:1px solid var(--line);border-radius:12px;background:#1b2945;color:var(--text);font-weight:700;padding:13px 15px;cursor:pointer;min-height:44px}.btn.primary{background:#1f7446;border-color:#32915a}.btn.warn{background:#552328;border-color:#8d3b46}.btn.inline{padding:7px 10px;font-size:12px}
     .info-btn{width:24px;height:24px;border-radius:50%;border:1px solid #49629b;background:#162b56;color:#dce9ff;cursor:pointer;font-weight:700;padding:0}
     .switch{appearance:none;width:46px;height:28px;border-radius:999px;border:1px solid #3d4d71;background:#2a3652;position:relative;cursor:pointer}.switch:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#d6deec;transition:transform .2s ease}.switch:checked{background:#1f7446;border-color:#32915a}.switch:checked:after{transform:translateX(18px);background:#fff}
     .thumb-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.thumb-grid img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:10px;border:1px solid var(--line);cursor:pointer}
     .hero-image{width:100%;border-radius:12px;border:1px solid var(--line);margin-top:8px}.badge{display:inline-block;border:1px solid var(--line);border-radius:999px;padding:4px 8px;font-size:12px;color:#dbe7ff;background:#1a2f5d;margin:2px}
+    .inline-add{display:grid;grid-template-columns:1fr;gap:8px}@media(min-width:780px){.inline-add{grid-template-columns:1fr auto}}
+    .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+
     .bottom{position:fixed;left:0;right:0;bottom:0;z-index:20;background:rgba(10,15,24,.9);border-top:1px solid var(--line);backdrop-filter:blur(14px);padding:10px 10px calc(10px + env(safe-area-inset-bottom))}
     .nav{max-width:940px;margin:0 auto;display:grid;grid-template-columns:repeat(5,1fr);gap:7px}.nav button{border:1px solid var(--line);border-radius:12px;background:var(--panel);color:var(--muted);font-size:12px;font-weight:700;padding:9px 6px;cursor:pointer}.nav button.active{background:#1b2f5d;color:var(--text)}
     .empty{border:1px dashed #3d4f73;border-radius:12px;color:var(--muted);font-size:13px;text-align:center;padding:14px;background:rgba(255,255,255,.02)}.error{color:#ffb0b0;font-size:12px}
@@ -35,7 +38,7 @@
 </head>
 <body>
   <main class="app">
-    <header class="header"><div><div class="sub">JY Trading Journal</div><h1>Own your process.<br/>Build consistency.</h1><div class="muted small">Local-only static prototype for clean Vercel deploys.</div></div><div class="stack" style="align-items:flex-end;"><span class="chip">Vercel-ready</span><span class="chip version">v0.5</span></div></header>
+    <header class="header"><div><div class="sub">JY Trading Journal</div><h1>Own your process.<br/>Build consistency.</h1><div class="muted small">Local-only static prototype for clean Vercel deploys.</div></div><div class="stack" style="align-items:flex-end;"><span class="chip">Vercel-ready</span><span class="chip version">v0.6</span></div></header>
 
     <section id="dashboard" class="view active">
       <div class="grid"><article class="card"><div class="metric-label">Total trades</div><div id="mTrades" class="metric-value">0</div></article><article class="card"><div class="metric-label">Net P&L</div><div id="mPnl" class="metric-value">$0</div></article><article class="card"><div class="metric-label">Win rate</div><div id="mWin" class="metric-value">0%</div></article><article class="card"><div class="metric-label">No-trade days</div><div id="mNoTrade" class="metric-value">0</div></article></div>
@@ -60,14 +63,14 @@
         <div><label for="fPnl">Result ($)</label><input id="fPnl" type="number" /></div>
         <div><label for="fR">R multiple</label><input id="fR" type="number" step="0.1" /></div>
         <div><label for="fMin">Minutes in trade</label><input id="fMin" type="number" min="0" /></div>
-        <div class="full"><label for="fMistakes">Mistake tags (multi-select)</label><select id="fMistakes" multiple></select><div class="row" style="margin-top:8px;"><input id="newMistakeTag" placeholder="Add new mistake tag" /><button id="addMistakeTagBtn" class="btn inline" type="button">Add</button></div></div>
+        <div class="full"><label for="fMistakes">Mistake tags (multi-select)</label><select id="fMistakes" multiple></select><div id="selectedMistakeChips" class="chips"></div><div class="inline-add" style="margin-top:8px;"><input id="newMistakeTag" placeholder="Add new mistake tag" /><button id="addMistakeTagBtn" class="btn inline" type="button">Add tag</button></div></div>
         <div class="full"><label for="fNotes">Notes</label><textarea id="fNotes"></textarea></div>
         <div class="full"><label for="fScreens">Screenshots (local browser only)</label><input id="fScreens" type="file" accept="image/*" multiple /></div>
         <div id="pendingShots" class="full thumb-grid"></div>
         <div id="formError" class="full error"></div>
         <div class="full row"><button id="seedBtn" class="btn" type="button">Load sample</button><button id="saveTradeBtn" class="btn primary" type="button">Save trade</button></div>
       </div></div>
-      <div class="section card"><h2>No-trade day log</h2><div class="form-grid"><div><label for="ntDate">Date</label><input id="ntDate" type="date" /></div><div><label for="ntReason">No-trade reason</label><select id="ntReason"></select></div><div class="full row"><input id="newNoTradeReason" placeholder="Add new no-trade reason" /><button id="addNoTradeReasonBtn" class="btn inline" type="button">Add</button></div><div class="full row"><button id="saveNoTradeBtn" class="btn" type="button">Save no-trade day</button></div></div><div id="noTradeList" class="stack section"></div></div>
+      <div class="section card"><h2>No-trade day log</h2><div class="form-grid"><div><label for="ntDate">Date</label><input id="ntDate" type="date" /></div><div><label for="ntReason">No-trade reason</label><select id="ntReason"></select></div><div class="full inline-add"><input id="newNoTradeReason" placeholder="Add new no-trade reason" /><button id="addNoTradeReasonBtn" class="btn inline" type="button">Add reason</button></div><div class="full row"><button id="saveNoTradeBtn" class="btn" type="button">Save no-trade day</button></div></div><div id="noTradeList" class="stack section"></div></div>
     </section>
 
     <section id="review" class="view"><div class="card stack"><h2>Weekly review</h2><div id="reviewStats" class="trade small muted"></div><div class="trade"><strong id="q1Prompt"></strong><textarea id="q1Answer"></textarea></div><div class="trade"><strong id="q2Prompt"></strong><textarea id="q2Answer"></textarea></div><div class="trade"><strong id="q3Prompt"></strong><textarea id="q3Answer"></textarea></div><div class="row"><span id="reviewSavedState" class="small muted">Not saved yet.</span><button id="saveReviewBtn" class="btn primary" type="button">Save review</button></div></div></section>
@@ -214,10 +217,18 @@
       byId('filterModel').value = models.includes(selected) ? selected : 'all';
     }
 
+
+
+    function renderSelectedMistakeChips() {
+      const tags = [...byId('fMistakes').selectedOptions].map((o) => o.value);
+      byId('selectedMistakeChips').innerHTML = tags.map((t) => `<span class="badge">${t}</span>`).join('') || '<span class="small muted">No tags selected.</span>';
+    }
+
     function populateMistakeSelect(selected = []) {
       const options = getMistakeOptions();
       byId('fMistakes').innerHTML = options.map((m) => `<option value="${m}">${m}</option>`).join('');
       Array.from(byId('fMistakes').options).forEach((opt) => { opt.selected = selected.includes(opt.value); });
+      renderSelectedMistakeChips();
       byId('filterMistakeTag').innerHTML = `<option value="all">All</option>` + options.map((m) => `<option value="${m}">${m}</option>`).join('');
     }
 
@@ -276,7 +287,7 @@
     function persistSettings(){ setSettings({dailyReminder:byId('sDaily').checked,weeklyReminder:byId('sWeekly').checked,defaultRisk:Number(byId('sRisk').value||0),displayName:(byId('sName').value||'JY').trim()}); }
     function clearData(){ if(!confirm('Reset all local data? This cannot be undone.')) return; Object.values(STORE).forEach((k)=>localStorage.removeItem(k)); resetTradeForm(); populateMistakeSelect([]); populateNoTradeReasonSelect(); render(); }
 
-    function addMistakeTag(){ const val=byId('newMistakeTag').value.trim(); if(!val) return; const options=getMistakeOptions(); if(!options.includes(val)){ options.push(val); setMistakeOptions(options);} byId('newMistakeTag').value=''; populateMistakeSelect(selectedMistakes().concat([val])); }
+    function addMistakeTag(){ const val=byId('newMistakeTag').value.trim(); if(!val) return; const options=getMistakeOptions(); if(!options.includes(val)){ options.push(val); setMistakeOptions(options);} byId('newMistakeTag').value=''; populateMistakeSelect(selectedMistakes().concat([val])); renderSelectedMistakeChips(); }
     function addNoTradeReason(){ const val=byId('newNoTradeReason').value.trim(); if(!val) return; const options=getNoTradeReasons(); if(!options.includes(val)){ options.push(val); setNoTradeReasons(options);} byId('newNoTradeReason').value=''; populateNoTradeReasonSelect(); byId('ntReason').value=val; }
 
     function openDefinitionGroup(type){
@@ -338,7 +349,8 @@
 
     function render(){ renderDashboard(); renderTrades(); renderNoTradeList(); renderReview(); renderSettings(); if(state.activeView==='detail')renderDetail(); }
 
-    function bindEvents(){ document.querySelectorAll('.nav button').forEach((b)=>b.addEventListener('click',()=>gotoView(b.dataset.view))); byId('backToTradesBtn').addEventListener('click',()=>gotoView('trades')); byId('saveTradeBtn').addEventListener('click',saveTrade); byId('cancelEditBtn').addEventListener('click',resetTradeForm); byId('fScreens').addEventListener('change',handleScreenshotsChange); byId('saveNoTradeBtn').addEventListener('click',saveNoTradeDay); byId('saveReviewBtn').addEventListener('click',saveReview); byId('resetDataBtn').addEventListener('click',clearData); byId('addMistakeTagBtn').addEventListener('click',addMistakeTag); byId('addNoTradeReasonBtn').addEventListener('click',addNoTradeReason); ['sDaily','sWeekly','sRisk','sName'].forEach((id)=>byId(id).addEventListener('change',persistSettings)); ['filterOutcome','filterModel','filterClassification','filterMistakeTag','filterHasShots','filterNoTrade','sortTrades'].forEach((id)=>byId(id).addEventListener('input',renderTrades)); byId('filterFamily').addEventListener('input',()=>{populateFilterModelOptions(); renderTrades();}); byId('fFamily').addEventListener('input',()=>populateSetupModelOptions(byId('fModel').value)); byId('fClassification').addEventListener('input',()=>{ if(['FOMO trade','Forced trade','No valid setup'].includes(byId('fClassification').value)){ byId('fFamily').value='N/A / No valid setup'; populateSetupModelOptions('N/A / None'); }}); byId('clearFiltersBtn').addEventListener('click',()=>{ byId('filterOutcome').value='all'; byId('filterFamily').value='all'; populateFilterModelOptions(); byId('filterModel').value='all'; byId('filterClassification').value='all'; byId('filterMistakeTag').value='all'; byId('filterHasShots').value='all'; byId('filterNoTrade').value='all'; byId('sortTrades').value='newest'; renderTrades();}); byId('seedBtn').addEventListener('click',seedSample); byId('closeImageDialog').addEventListener('click',()=>byId('imageDialog').close()); byId('infoFamilyBtn').addEventListener('click',()=>openDefinitionGroup('family')); byId('infoModelBtn').addEventListener('click',()=>openDefinitionGroup('model')); byId('infoClassBtn').addEventListener('click',()=>openDefinitionGroup('classification')); byId('closeDefsDialog').addEventListener('click',()=>byId('defsDialog').close()); }
+    function bindEvents(){ document.querySelectorAll('.nav button').forEach((b)=>b.addEventListener('click',()=>gotoView(b.dataset.view))); byId('backToTradesBtn').addEventListener('click',()=>gotoView('trades')); byId('saveTradeBtn').addEventListener('click',saveTrade); byId('cancelEditBtn').addEventListener('click',resetTradeForm); byId('fScreens').addEventListener('change',handleScreenshotsChange); byId('saveNoTradeBtn').addEventListener('click',saveNoTradeDay); byId('saveReviewBtn').addEventListener('click',saveReview); byId('resetDataBtn').addEventListener('click',clearData); byId('addMistakeTagBtn').addEventListener('click',addMistakeTag);
+      byId('fMistakes').addEventListener('change', renderSelectedMistakeChips); byId('addNoTradeReasonBtn').addEventListener('click',addNoTradeReason); ['sDaily','sWeekly','sRisk','sName'].forEach((id)=>byId(id).addEventListener('change',persistSettings)); ['filterOutcome','filterModel','filterClassification','filterMistakeTag','filterHasShots','filterNoTrade','sortTrades'].forEach((id)=>byId(id).addEventListener('input',renderTrades)); byId('filterFamily').addEventListener('input',()=>{populateFilterModelOptions(); renderTrades();}); byId('fFamily').addEventListener('input',()=>populateSetupModelOptions(byId('fModel').value)); byId('fClassification').addEventListener('input',()=>{ if(['FOMO trade','Forced trade','No valid setup'].includes(byId('fClassification').value)){ byId('fFamily').value='N/A / No valid setup'; populateSetupModelOptions('N/A / None'); }}); byId('clearFiltersBtn').addEventListener('click',()=>{ byId('filterOutcome').value='all'; byId('filterFamily').value='all'; populateFilterModelOptions(); byId('filterModel').value='all'; byId('filterClassification').value='all'; byId('filterMistakeTag').value='all'; byId('filterHasShots').value='all'; byId('filterNoTrade').value='all'; byId('sortTrades').value='newest'; renderTrades();}); byId('seedBtn').addEventListener('click',seedSample); byId('closeImageDialog').addEventListener('click',()=>byId('imageDialog').close()); byId('infoFamilyBtn').addEventListener('click',()=>openDefinitionGroup('family')); byId('infoModelBtn').addEventListener('click',()=>openDefinitionGroup('model')); byId('infoClassBtn').addEventListener('click',()=>openDefinitionGroup('classification')); byId('closeDefsDialog').addEventListener('click',()=>byId('defsDialog').close()); }
 
     migrateLegacyData();
     populateFamilyOptions();
