@@ -529,20 +529,17 @@ export default function JournalApp({ userId, email }: Props) {
       {tab === 'dashboard' && (
         <section className="stack">
           <section className="card stack">
-            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-              <strong>Analytics period</strong>
-              <span className="small muted">Type + navigator</span>
-            </div>
-            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
-              {(['weekly', 'monthly', 'quarterly', 'annual', 'ytd'] as DashboardPeriod[]).map((p) => (
-                <button key={p} className={dashboardPeriod === p ? 'chip' : 'inline'} type="button" onClick={() => setDashboardPeriod(p)}>
-                  {periodTypeLabel(p)}
-                </button>
-              ))}
-            </div>
-            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <label className="small muted" htmlFor="period-type">Period type</label>
+            <select id="period-type" value={dashboardPeriod} onChange={(e) => setDashboardPeriod(e.target.value as DashboardPeriod)}>
+              <option value="weekly">Week</option>
+              <option value="monthly">Month</option>
+              <option value="quarterly">Quarter</option>
+              <option value="annual">Year</option>
+              <option value="ytd">YTD</option>
+            </select>
+            <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
-              <span className="chip" style={{ flex: 1, textAlign: 'center' }}>{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</span>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next</button>
             </div>
