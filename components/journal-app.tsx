@@ -26,6 +26,7 @@ const familyModels: Record<string, string[]> = {
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
 
 type Props = { userId: string; email?: string };
+type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | null;
 
 export default function JournalApp({ userId, email }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -38,6 +39,8 @@ export default function JournalApp({ userId, email }: Props) {
   const [error, setError] = useState('');
   const [weekInput, setWeekInput] = useState(currentWeekInput());
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '' });
+  const [detail, setDetail] = useState<DetailState>(null);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -179,6 +182,36 @@ export default function JournalApp({ userId, email }: Props) {
     else setSettings(next);
   }
 
+  async function openEntryDetail(nextDetail: DetailState) {
+    if (!nextDetail) return;
+    setDetail(nextDetail);
+    setError('');
+
+    const linkedAttachments =
+      nextDetail.kind === 'trade'
+        ? attachments.filter((a) => a.trade_id === nextDetail.id)
+        : attachments.filter((a) => a.no_trade_day_id === nextDetail.id);
+
+    if (!linkedAttachments.length) {
+      setSignedUrls({});
+      return;
+    }
+
+    const filePaths = linkedAttachments.map((a) => a.file_path);
+    const { data, error: signError } = await supabase.storage.from('attachments').createSignedUrls(filePaths, 60 * 60);
+    if (signError) {
+      setError(signError.message);
+      setSignedUrls({});
+      return;
+    }
+
+    const nextUrls: Record<string, string> = {};
+    (data || []).forEach((item, idx) => {
+      if (item?.signedUrl) nextUrls[filePaths[idx]] = item.signedUrl;
+    });
+    setSignedUrls(nextUrls);
+  }
+
   const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
 
   return (
@@ -215,16 +248,64 @@ export default function JournalApp({ userId, email }: Props) {
               <div className="small muted">{t.family} · {t.model}</div>
               <div className="small">{t.classification} · ${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
               <div>{t.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
-              <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === t.id).length}</div>
+              <div className="row">
+                <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === t.id).length}</div>
+                <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: t.id })}>View details</button>
+              </div>
             </article>
           ))}
           {noTrades.map((n) => (
             <article key={n.id} className="trade no-trade">
               <div className="row"><strong>No-trade day</strong><span>{n.day_date}</span></div>
               <div className="small">Reason: {n.reason}</div>
-              <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
+              <div className="row">
+                <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
+                <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: n.id })}>View details</button>
+              </div>
             </article>
           ))}
+          {detail && (
+            <article className={`trade ${detail.kind === 'no_trade' ? 'no-trade' : ''}`}>
+              <div className="row">
+                <strong>{detail.kind === 'trade' ? 'Trade detail' : 'No-trade detail'}</strong>
+                <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+              </div>
+              {detail.kind === 'trade' ? (
+                (() => {
+                  const trade = trades.find((t) => t.id === detail.id);
+                  const linked = attachments.filter((a) => a.trade_id === detail.id);
+                  if (!trade) return <div className="small muted">Trade not found.</div>;
+                  return (
+                    <div className="stack">
+                      <div className="small muted">{trade.trade_date} · {trade.ticker}</div>
+                      <div className="small">Family: {trade.family}</div>
+                      <div className="small">Model: {trade.model}</div>
+                      <div className="small">Classification: {trade.classification}</div>
+                      <div className="small">Result: ${trade.pnl}</div>
+                      <div className="small">R multiple: {trade.r_multiple}</div>
+                      <div className="small">Minutes in trade: {trade.minutes_in_trade}</div>
+                      <div className="small">Mistake tags: {trade.mistake_tags?.length ? trade.mistake_tags.join(', ') : 'None'}</div>
+                      <div className="small">Notes: {trade.notes || '—'}</div>
+                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} />
+                    </div>
+                  );
+                })()
+              ) : (
+                (() => {
+                  const noTrade = noTrades.find((n) => n.id === detail.id);
+                  const linked = attachments.filter((a) => a.no_trade_day_id === detail.id);
+                  if (!noTrade) return <div className="small muted">No-trade entry not found.</div>;
+                  return (
+                    <div className="stack">
+                      <div className="small muted">{noTrade.day_date}</div>
+                      <div className="small">Reason: {noTrade.reason}</div>
+                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} />
+                    </div>
+                  );
+                })()
+              )}
+            </article>
+          )}
         </section>
       )}
 
@@ -321,8 +402,52 @@ export default function JournalApp({ userId, email }: Props) {
   );
 }
 
+function AttachmentPreviewList({ entries, signedUrls }: { entries: AttachmentRow[]; signedUrls: Record<string, string> }) {
+  if (!entries.length) {
+    return <div className="small muted">No attachments saved for this entry.</div>;
+  }
+
+  return (
+    <div className="stack">
+      <div className="small muted">Attachments</div>
+      {entries.map((file) => {
+        const url = signedUrls[file.file_path];
+        const image = isImageFile(file);
+        return (
+          <article key={file.id} className="trade">
+            <div className="small">{file.file_name}</div>
+            <div className="small muted">{file.mime_type} · {formatFileSize(file.byte_size)}</div>
+            {!url ? (
+              <div className="small muted">Preparing secure link...</div>
+            ) : image ? (
+              <a href={url} target="_blank" rel="noreferrer">
+                <img src={url} alt={file.file_name} style={{ width: '100%', borderRadius: 10, marginTop: 8 }} />
+              </a>
+            ) : (
+              <a href={url} target="_blank" rel="noreferrer">
+                <span className="chip" style={{ marginTop: 8, display: 'inline-flex' }}>Open attachment</span>
+              </a>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
 function titleCase(v: string) {
   return v[0].toUpperCase() + v.slice(1);
+}
+
+function isImageFile(file: AttachmentRow) {
+  return file.mime_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.file_name);
+}
+
+function formatFileSize(bytes: number) {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function currentWeekKey() {
