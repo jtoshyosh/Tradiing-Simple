@@ -24,10 +24,15 @@ export default function Home() {
   }, [supabase]);
 
   async function signInWithGoogle() {
+    const isDev = process.env.NODE_ENV !== 'production';
+    const siteURL =
+      (process.env.NEXT_PUBLIC_SITE_URL ||
+        (isDev ? 'http://localhost:3000' : window.location.origin)).replace(/\/$/, '');
+
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}`
+        redirectTo: `${siteURL}/auth/callback`
       }
     });
   }
