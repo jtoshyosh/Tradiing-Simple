@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -138,6 +138,7 @@ export default function JournalApp({ userId, email }: Props) {
     notes: ''
   }));
   const [pending, startTransition] = useTransition();
+  const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
 
   useEffect(() => {
     void loadAll();
@@ -404,6 +405,10 @@ export default function JournalApp({ userId, email }: Props) {
     if (!nextDetail) return;
     setDetail(nextDetail);
     setError('');
+    requestAnimationFrame(() => {
+      const key = `${nextDetail.kind}:${nextDetail.id}`;
+      detailAnchors.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
 
     const linkedAttachments =
       nextDetail.kind === 'trade'
@@ -604,7 +609,7 @@ export default function JournalApp({ userId, email }: Props) {
       {tab === 'trades' && (
         <section className="card stack">
           {trades.map((t) => (
-            <article key={t.id} className="trade">
+            <article key={t.id} className="trade" ref={(node) => { detailAnchors.current[`trade:${t.id}`] = node; }}>
               <div className="row"><strong>{t.ticker}</strong><span>{t.trade_date}</span></div>
               <div className="small muted">{t.family} · {t.model}</div>
               <div className="small">{t.classification} · ${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
@@ -618,10 +623,31 @@ export default function JournalApp({ userId, email }: Props) {
                   <button className="inline" type="button" onClick={() => void deleteTrade(t.id)}>Delete</button>
                 </div>
               </div>
+              {detail?.kind === 'trade' && detail.id === t.id && (
+                <article className="trade" style={{ marginTop: 10 }}>
+                  <div className="row">
+                    <strong>Trade detail</strong>
+                    <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                  </div>
+                  <div className="stack">
+                    <div className="small muted">{t.trade_date} · {t.ticker}</div>
+                    <div className="small">Family: {t.family}</div>
+                    <div className="small">Model: {t.model}</div>
+                    <div className="small">Classification: {t.classification}</div>
+                    <div className="small">Result: ${t.pnl}</div>
+                    <div className="small">R multiple: {t.r_multiple}</div>
+                    <div className="small">Minutes in trade: {t.minutes_in_trade}</div>
+                    <div className="small">Emotional pressure: {t.emotional_pressure}/5</div>
+                    <div className="small">Mistake tags: {t.mistake_tags?.length ? t.mistake_tags.join(', ') : 'None'}</div>
+                    <div className="small">Notes: {t.notes || '—'}</div>
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </div>
+                </article>
+              )}
             </article>
           ))}
           {noTrades.map((n) => (
-            <article key={n.id} className="trade no-trade">
+            <article key={n.id} className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${n.id}`] = node; }}>
               <div className="row"><strong>No-trade day</strong><span>{n.day_date}</span></div>
               <div className="small">Reason: {n.reason}</div>
               <div className="row">
@@ -632,51 +658,21 @@ export default function JournalApp({ userId, email }: Props) {
                   <button className="inline" type="button" onClick={() => void deleteNoTrade(n.id)}>Delete</button>
                 </div>
               </div>
-            </article>
-          ))}
-          {detail && (
-            <article className={`trade ${detail.kind === 'no_trade' ? 'no-trade' : ''}`}>
-              <div className="row">
-                <strong>{detail.kind === 'trade' ? 'Trade detail' : 'No-trade detail'}</strong>
-                <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-              </div>
-              {detail.kind === 'trade' ? (
-                (() => {
-                  const trade = trades.find((t) => t.id === detail.id);
-                  const linked = attachments.filter((a) => a.trade_id === detail.id);
-                  if (!trade) return <div className="small muted">Trade not found.</div>;
-                  return (
-                    <div className="stack">
-                      <div className="small muted">{trade.trade_date} · {trade.ticker}</div>
-                      <div className="small">Family: {trade.family}</div>
-                      <div className="small">Model: {trade.model}</div>
-                      <div className="small">Classification: {trade.classification}</div>
-                      <div className="small">Result: ${trade.pnl}</div>
-                      <div className="small">R multiple: {trade.r_multiple}</div>
-                      <div className="small">Minutes in trade: {trade.minutes_in_trade}</div>
-                      <div className="small">Emotional pressure: {trade.emotional_pressure}/5</div>
-                      <div className="small">Mistake tags: {trade.mistake_tags?.length ? trade.mistake_tags.join(', ') : 'None'}</div>
-                      <div className="small">Notes: {trade.notes || '—'}</div>
-                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                    </div>
-                  );
-                })()
-              ) : (
-                (() => {
-                  const noTrade = noTrades.find((n) => n.id === detail.id);
-                  const linked = attachments.filter((a) => a.no_trade_day_id === detail.id);
-                  if (!noTrade) return <div className="small muted">No-trade entry not found.</div>;
-                  return (
-                    <div className="stack">
-                      <div className="small muted">{noTrade.day_date}</div>
-                      <div className="small">Reason: {noTrade.reason}</div>
-                      <AttachmentPreviewList entries={linked} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                    </div>
-                  );
-                })()
+              {detail?.kind === 'no_trade' && detail.id === n.id && (
+                <article className="trade no-trade" style={{ marginTop: 10 }}>
+                  <div className="row">
+                    <strong>No-trade detail</strong>
+                    <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                  </div>
+                  <div className="stack">
+                    <div className="small muted">{n.day_date}</div>
+                    <div className="small">Reason: {n.reason}</div>
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </div>
+                </article>
               )}
             </article>
-          )}
+          ))}
         </section>
       )}
 
