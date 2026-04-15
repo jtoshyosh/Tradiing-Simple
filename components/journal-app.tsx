@@ -79,6 +79,8 @@ type OcrDebugState = {
   ocrCharCount?: number;
   ocrError?: string;
   ocrSteps?: string[];
+  parsedHeaderLine?: string;
+  tickerRejectReason?: string;
 };
 type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
@@ -635,6 +637,8 @@ export default function JournalApp({ userId, email }: Props) {
                 <div className="small muted">OCR status: {formatOcrStatus(tradeExtract.ocrStatus)}</div>
                 <div className="small muted">OCR character count: {tradeExtract.ocrCharCount ?? 0}</div>
                 {tradeExtract.ocrError ? <div className="small muted">OCR error: {tradeExtract.ocrError}</div> : null}
+                {tradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {tradeExtract.parsedHeaderLine}</div> : null}
+                {tradeExtract.tickerRejectReason ? <div className="small muted">Ticker rejection: {tradeExtract.tickerRejectReason}</div> : null}
                 {tradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
@@ -696,6 +700,7 @@ export default function JournalApp({ userId, email }: Props) {
                 <div className="small muted">OCR status: {formatOcrStatus(noTradeExtract.ocrStatus)}</div>
                 <div className="small muted">OCR character count: {noTradeExtract.ocrCharCount ?? 0}</div>
                 {noTradeExtract.ocrError ? <div className="small muted">OCR error: {noTradeExtract.ocrError}</div> : null}
+                {noTradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {noTradeExtract.parsedHeaderLine}</div> : null}
                 {noTradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
@@ -892,6 +897,7 @@ async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDe
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
 
   Object.assign(out, parseTradeText(text));
+  hints.push(...extractContextHints(text));
 
   if (/fomo/i.test(text)) hints.push('FOMO mention found');
   if (/forced/i.test(text)) hints.push('Forced-trade mention found');
@@ -910,7 +916,10 @@ async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDe
     out.pnl = out.pnl || parsedFromImage.pnl;
     out.r_multiple = out.r_multiple || parsedFromImage.r_multiple;
     out.minutes_in_trade = out.minutes_in_trade || parsedFromImage.minutes_in_trade;
+    out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
+    out.tickerRejectReason = out.ticker ? undefined : (parsedFromImage.tickerRejectReason || out.tickerRejectReason);
     out.detectedText = ocrText;
+    hints.push(...extractContextHints(ocrText));
     hints.push('OCR text extracted from image');
   } else if (files.some((f) => f.type.startsWith('image/'))) {
     hints.push('No OCR text found from image content (beta)');
@@ -928,12 +937,18 @@ async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: Ocr
   const fromMeta = parseNoTradeText(text);
   out.day_date = fromMeta.day_date;
   out.reason = fromMeta.reason;
+  out.parsedHeaderLine = fromMeta.parsedHeaderLine;
 
   const reasonMap: Array<{ test: RegExp; reason: string }> = [
     { test: /news/i, reason: 'News risk' },
     { test: /chop|choppy|range/i, reason: 'Choppy session' },
     { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
-    { test: /fatigue|tired/i, reason: 'Not mentally ready' }
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' },
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, reason: 'No trade taken' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, reason: 'News risk' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, reason: 'Session over / too late' },
+    { test: /not\s*clean|no\s*displacement/i, reason: 'No clear displacement' },
+    { test: /didn[’']?t\s*force/i, reason: 'No force trade discipline' }
   ];
   for (const r of reasonMap) {
     if (r.test.test(text)) {
@@ -952,7 +967,9 @@ async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: Ocr
     const parsedFromImage = parseNoTradeText(ocrText);
     out.day_date = out.day_date || parsedFromImage.day_date;
     out.reason = out.reason || parsedFromImage.reason;
+    out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
     out.detectedText = ocrText;
+    hints.push(...extractContextHints(ocrText));
     hints.push('OCR text extracted from image');
   } else if (files.some((f) => f.type.startsWith('image/'))) {
     hints.push('No OCR text found from image content (beta)');
@@ -964,12 +981,13 @@ async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: Ocr
 function parseTradeText(text: string): TradeExtractSuggestions {
   const out: TradeExtractSuggestions = {};
   const normalized = text.replace(/\r/g, ' ');
-  const dateMatch =
-    normalized.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/) ||
-    normalized.match(/\b((0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])[-/.](20\d{2}))\b/);
-  if (dateMatch) out.trade_date = normalizeDate(dateMatch[1]);
-  const ticker = extractTickerFromScreenshotText(normalized);
-  if (ticker) out.ticker = ticker;
+  const tickerResult = extractTickerFromScreenshotText(normalized);
+  if (tickerResult.headerLine) out.parsedHeaderLine = tickerResult.headerLine;
+  if (tickerResult.ticker) out.ticker = tickerResult.ticker;
+  if (!tickerResult.ticker && tickerResult.rejectReason) out.tickerRejectReason = tickerResult.rejectReason;
+  const dateResult = extractDateFromText(normalized, tickerResult.headerLine);
+  if (dateResult.date) out.trade_date = dateResult.date;
+  if (!out.parsedHeaderLine && dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
   const pnlMatch =
     normalized.match(/(?:pnl|profit|loss|result|net)\s*[:=]?\s*([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)/i) ||
     normalized.match(/([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)\s*(usd|dollars?|\$)\b/i);
@@ -986,15 +1004,19 @@ function parseTradeText(text: string): TradeExtractSuggestions {
 function parseNoTradeText(text: string): NoTradeExtractSuggestions {
   const out: NoTradeExtractSuggestions = {};
   const normalized = text.replace(/\r/g, ' ');
-  const dateMatch =
-    normalized.match(/\b(20\d{2}[-_./](0[1-9]|1[0-2])[-_./](0[1-9]|[12]\d|3[01]))\b/) ||
-    normalized.match(/\b((0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])[-/.](20\d{2}))\b/);
-  if (dateMatch) out.day_date = normalizeDate(dateMatch[1]);
+  const dateResult = extractDateFromText(normalized);
+  if (dateResult.date) out.day_date = dateResult.date;
+  if (dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
   const reasonMap: Array<{ test: RegExp; reason: string }> = [
     { test: /news/i, reason: 'News risk' },
     { test: /chop|choppy|range/i, reason: 'Choppy session' },
     { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
-    { test: /fatigue|tired/i, reason: 'Not mentally ready' }
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' },
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, reason: 'No trade taken' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, reason: 'News risk' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, reason: 'Session over / too late' },
+    { test: /not\s*clean|no\s*displacement/i, reason: 'No clear displacement' },
+    { test: /didn[’']?t\s*force/i, reason: 'No force trade discipline' }
   ];
   for (const r of reasonMap) {
     if (r.test.test(normalized)) {
@@ -1034,45 +1056,120 @@ const EXCLUDED_TICKER_TOKENS = new Set([
   'USDT'
 ]);
 
-function extractTickerFromScreenshotText(text: string): string {
+const REJECTED_SHORT_TICKERS = new Set(['EA', 'CE', 'ME', 'US', 'TO', 'ON', 'AT', 'IN', 'OF', 'AN', 'OR', 'ET']);
+
+type TickerParseResult = {
+  ticker?: string;
+  headerLine?: string;
+  rejectReason?: string;
+};
+
+function extractTickerFromScreenshotText(text: string): TickerParseResult {
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
   const tradingViewLine = lines.find((line) =>
-    /[·•|]/.test(line) && /(?:\b\d+\b|\b\d+[mhdw]\b)/i.test(line)
+    /[·•|]/.test(line) && /(?:\b\d+\b|\b\d+[mhdw]\b|\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b)/i.test(line)
   );
 
   if (tradingViewLine) {
     const fromHeader = findTickerToken(tradingViewLine, true);
-    if (fromHeader) return fromHeader;
+    if (fromHeader.ticker) return { ...fromHeader, headerLine: tradingViewLine };
+    if (fromHeader.rejectReason) return { ...fromHeader, headerLine: tradingViewLine };
   }
 
   return findTickerToken(text, false);
 }
 
-function findTickerToken(text: string, preferLeftmost: boolean): string {
+function findTickerToken(text: string, preferLeftmost: boolean): TickerParseResult {
   const futuresMatches = Array.from(text.matchAll(/\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b/gi));
-  if (futuresMatches.length) return normalizeTickerToken(futuresMatches[0][0]);
+  if (futuresMatches.length) {
+    const normalized = normalizeTickerToken(futuresMatches[0][0]);
+    return normalized ? { ticker: normalized } : { rejectReason: `Rejected futures token "${futuresMatches[0][0]}".` };
+  }
 
   const symbolMatches = Array.from(text.matchAll(/\b[A-Z]{2,6}\d*!?\b/g));
   const ordered = preferLeftmost ? symbolMatches : [...symbolMatches];
   for (const match of ordered) {
     const candidate = normalizeTickerToken(match[0]);
     if (!candidate) continue;
-    if (EXCLUDED_TICKER_TOKENS.has(candidate)) continue;
-    return candidate;
+    if (EXCLUDED_TICKER_TOKENS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it is an exchange/source/currency token.` };
+    }
+    if (candidate.length < 2 || REJECTED_SHORT_TICKERS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it looks like OCR junk/short token.` };
+    }
+    if (!/^[A-Z]{2,5}$/.test(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it failed symbol validation.` };
+    }
+    return { ticker: candidate };
   }
-  return '';
+  return { rejectReason: 'No strong ticker candidate found.' };
 }
 
 function normalizeTickerToken(raw: string): string {
   const upper = raw.toUpperCase().replace(/[^A-Z0-9!]/g, '');
   if (!upper) return '';
-  if (/^(MES|ES|NQ|MNQ)\d*!?$/.test(upper)) {
-    return upper.match(/^(MES|ES|NQ|MNQ)/)?.[1] || '';
+  if (/^(MES|ES|NQ|MNQ|CL|GC)\d*!?$/.test(upper)) {
+    return upper.match(/^(MES|ES|NQ|MNQ|CL|GC)/)?.[1] || '';
   }
   if (/^[A-Z]{2,6}\d*!?$/.test(upper)) {
     return upper.replace(/\d+!?$/, '');
   }
   return '';
+}
+
+type DateParseResult = {
+  date?: string;
+  headerLine?: string;
+};
+
+function extractDateFromText(text: string, preferredHeaderLine?: string): DateParseResult {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const headerLine = preferredHeaderLine || lines.find((line) =>
+    /[·•|]/.test(line) && /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})/i.test(line)
+  );
+  const combined = [headerLine || '', text].join('\n');
+  const inferredYear = inferYearFromText(combined) || new Date().getFullYear();
+  const dateToken = findDateToken(combined, inferredYear);
+  return { date: dateToken, headerLine };
+}
+
+function inferYearFromText(text: string): number | null {
+  const yearMatch = text.match(/\b(20\d{2})\b/);
+  if (!yearMatch) return null;
+  const y = Number(yearMatch[1]);
+  return Number.isFinite(y) ? y : null;
+}
+
+function findDateToken(text: string, fallbackYear: number): string {
+  const iso = text.match(/\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b/);
+  if (iso) return normalizeDate(`${iso[1]}-${iso[2]}-${iso[3]}`);
+  const slash = text.match(/\b(0?[1-9]|1[0-2])[\/-](0?[1-9]|[12]\d|3[01])[\/-](20\d{2})\b/);
+  if (slash) return normalizeDate(`${slash[3]}-${slash[1]}-${slash[2]}`);
+
+  const monthMap: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+  };
+  const named = text.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i);
+  if (named) {
+    const month = monthMap[named[1].slice(0, 3).toLowerCase()];
+    const day = Number(named[2]);
+    const year = Number(named[3] || fallbackYear);
+    return normalizeDate(`${year}-${month}-${day}`);
+  }
+  return '';
+}
+
+function extractContextHints(text: string): string[] {
+  const hintRules: Array<{ test: RegExp; hint: string }> = [
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, hint: 'No-trade note found' },
+    { test: /no\s*a\+\s*setup|no\s*setup/i, hint: 'No A+ setup note found' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, hint: 'News event caution note found' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, hint: 'Session over / too late note found' },
+    { test: /choppy|not\s*clean|no\s*displacement/i, hint: 'Choppy / no displacement note found' },
+    { test: /didn[’']?t\s*force|no\s*force/i, hint: 'Discipline note: did not force trade' }
+  ];
+  return hintRules.filter((rule) => rule.test.test(text)).map((rule) => rule.hint);
 }
 
 type OcrResult = {
@@ -1092,7 +1189,7 @@ async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugSt
     return result;
   }
   try {
-    const tesseract = await import('tesseract.js');
+    const tesseract = await loadTesseractRuntime();
     const chunks: string[] = [];
     for (const file of imageFiles) {
       steps.push(`image loaded: ${file.name}`);
@@ -1120,6 +1217,43 @@ async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugSt
     onDebug?.({ ocrStatus: 'failed', ocrError: message, ocrCharCount: 0, ocrSteps: [...steps] });
     return { status: 'failed', text: '', charCount: 0, error: message, steps };
   }
+}
+
+type TesseractLike = {
+  recognize: (image: HTMLCanvasElement, language: string) => Promise<{ data?: { text?: string } }>;
+};
+
+async function loadTesseractRuntime(): Promise<TesseractLike> {
+  const globalWithTesseract = globalThis as typeof globalThis & { Tesseract?: TesseractLike };
+  if (globalWithTesseract.Tesseract?.recognize) return globalWithTesseract.Tesseract;
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js');
+  if (globalWithTesseract.Tesseract?.recognize) return globalWithTesseract.Tesseract;
+  throw new Error('Tesseract runtime failed to load from CDN.');
+}
+
+function loadScriptOnce(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-ocr-runtime="${src}"]`) as HTMLScriptElement | null;
+    if (existing?.dataset.loaded === 'true') {
+      resolve();
+      return;
+    }
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('OCR runtime script failed to load.')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.dataset.ocrRuntime = src;
+    script.addEventListener('load', () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error('OCR runtime script failed to load.')), { once: true });
+    document.head.appendChild(script);
+  });
 }
 
 async function preprocessImageForOcr(file: File): Promise<HTMLCanvasElement> {
