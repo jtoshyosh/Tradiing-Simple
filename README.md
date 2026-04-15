@@ -26,3 +26,4 @@ Next.js + Supabase connected architecture for auth, database persistence, and at
 - Uploads are stored attachments only.
 - Auth is wired through Supabase OAuth (Google).
 - Passkeys are not implemented yet, but auth structure is prepared for a next passkey/WebAuthn milestone.
+Trigger new deployment
