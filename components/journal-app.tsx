@@ -81,6 +81,8 @@ type OcrDebugState = {
   ocrSteps?: string[];
   parsedHeaderLine?: string;
   tickerRejectReason?: string;
+  headerOcrText?: string;
+  tickerSource?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
 };
 type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
@@ -638,11 +640,19 @@ export default function JournalApp({ userId, email }: Props) {
                 <div className="small muted">OCR character count: {tradeExtract.ocrCharCount ?? 0}</div>
                 {tradeExtract.ocrError ? <div className="small muted">OCR error: {tradeExtract.ocrError}</div> : null}
                 {tradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {tradeExtract.parsedHeaderLine}</div> : null}
+                <div className="small muted">Ticker source: {tradeExtract.tickerSource || 'none'}</div>
                 {tradeExtract.tickerRejectReason ? <div className="small muted">Ticker rejection: {tradeExtract.tickerRejectReason}</div> : null}
                 {tradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
                     {tradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {tradeExtract.ocrSteps.join(' → ')}</div> : null}
+                    {tradeExtract.headerOcrText ? (
+                      <>
+                        <div className="small muted" style={{ marginTop: 8 }}>Cropped header OCR text</div>
+                        <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{tradeExtract.headerOcrText}</pre>
+                      </>
+                    ) : null}
+                    <div className="small muted" style={{ marginTop: 8 }}>Full-image OCR text</div>
                     <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{tradeExtract.detectedText}</pre>
                   </details>
                 ) : null}
@@ -705,6 +715,13 @@ export default function JournalApp({ userId, email }: Props) {
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
                     {noTradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {noTradeExtract.ocrSteps.join(' → ')}</div> : null}
+                    {noTradeExtract.headerOcrText ? (
+                      <>
+                        <div className="small muted" style={{ marginTop: 8 }}>Cropped header OCR text</div>
+                        <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{noTradeExtract.headerOcrText}</pre>
+                      </>
+                    ) : null}
+                    <div className="small muted" style={{ marginTop: 8 }}>Full-image OCR text</div>
                     <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{noTradeExtract.detectedText}</pre>
                   </details>
                 ) : null}
@@ -897,6 +914,7 @@ async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDe
   const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
 
   Object.assign(out, parseTradeText(text));
+  if (out.ticker && !out.tickerSource) out.tickerSource = 'metadata';
   hints.push(...extractContextHints(text));
 
   if (/fomo/i.test(text)) hints.push('FOMO mention found');
@@ -908,9 +926,11 @@ async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDe
   out.ocrCharCount = ocrResult.charCount;
   out.ocrError = ocrResult.error;
   out.ocrSteps = ocrResult.steps;
+  out.headerOcrText = ocrResult.headerText;
   const ocrText = ocrResult.text;
-  if (ocrText) {
-    const parsedFromImage = parseTradeText(ocrText);
+  const combinedOcrText = [ocrResult.headerText, ocrText].filter(Boolean).join('\n');
+  if (combinedOcrText) {
+    const parsedFromImage = parseTradeText(combinedOcrText, ocrResult.headerText);
     out.trade_date = out.trade_date || parsedFromImage.trade_date;
     out.ticker = out.ticker || parsedFromImage.ticker;
     out.pnl = out.pnl || parsedFromImage.pnl;
@@ -918,8 +938,9 @@ async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDe
     out.minutes_in_trade = out.minutes_in_trade || parsedFromImage.minutes_in_trade;
     out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
     out.tickerRejectReason = out.ticker ? undefined : (parsedFromImage.tickerRejectReason || out.tickerRejectReason);
+    out.tickerSource = out.ticker ? (parsedFromImage.tickerSource || 'full_ocr') : 'none';
     out.detectedText = ocrText;
-    hints.push(...extractContextHints(ocrText));
+    hints.push(...extractContextHints(combinedOcrText));
     hints.push('OCR text extracted from image');
   } else if (files.some((f) => f.type.startsWith('image/'))) {
     hints.push('No OCR text found from image content (beta)');
@@ -962,14 +983,16 @@ async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: Ocr
   out.ocrCharCount = ocrResult.charCount;
   out.ocrError = ocrResult.error;
   out.ocrSteps = ocrResult.steps;
+  out.headerOcrText = ocrResult.headerText;
   const ocrText = ocrResult.text;
-  if (ocrText) {
-    const parsedFromImage = parseNoTradeText(ocrText);
+  const combinedOcrText = [ocrResult.headerText, ocrText].filter(Boolean).join('\n');
+  if (combinedOcrText) {
+    const parsedFromImage = parseNoTradeText(combinedOcrText);
     out.day_date = out.day_date || parsedFromImage.day_date;
     out.reason = out.reason || parsedFromImage.reason;
     out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
     out.detectedText = ocrText;
-    hints.push(...extractContextHints(ocrText));
+    hints.push(...extractContextHints(combinedOcrText));
     hints.push('OCR text extracted from image');
   } else if (files.some((f) => f.type.startsWith('image/'))) {
     hints.push('No OCR text found from image content (beta)');
@@ -978,13 +1001,14 @@ async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: Ocr
   return out;
 }
 
-function parseTradeText(text: string): TradeExtractSuggestions {
+function parseTradeText(text: string, headerOcrText?: string): TradeExtractSuggestions {
   const out: TradeExtractSuggestions = {};
   const normalized = text.replace(/\r/g, ' ');
-  const tickerResult = extractTickerFromScreenshotText(normalized);
+  const tickerResult = extractTickerFromScreenshotText(normalized, headerOcrText);
   if (tickerResult.headerLine) out.parsedHeaderLine = tickerResult.headerLine;
   if (tickerResult.ticker) out.ticker = tickerResult.ticker;
   if (!tickerResult.ticker && tickerResult.rejectReason) out.tickerRejectReason = tickerResult.rejectReason;
+  out.tickerSource = tickerResult.source || 'none';
   const dateResult = extractDateFromText(normalized, tickerResult.headerLine);
   if (dateResult.date) out.trade_date = dateResult.date;
   if (!out.parsedHeaderLine && dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
@@ -1062,9 +1086,14 @@ type TickerParseResult = {
   ticker?: string;
   headerLine?: string;
   rejectReason?: string;
+  source?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
 };
 
-function extractTickerFromScreenshotText(text: string): TickerParseResult {
+function extractTickerFromScreenshotText(text: string, headerOcrText?: string): TickerParseResult {
+  if (headerOcrText?.trim()) {
+    const fromCrop = findTickerToken(headerOcrText, true);
+    if (fromCrop.ticker) return { ...fromCrop, source: 'header_ocr', headerLine: headerOcrText.split('\n')[0]?.trim() || headerOcrText.trim() };
+  }
   const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
   const tradingViewLine = lines.find((line) =>
     /[·•|]/.test(line) && /(?:\b\d+\b|\b\d+[mhdw]\b|\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b)/i.test(line)
@@ -1072,18 +1101,22 @@ function extractTickerFromScreenshotText(text: string): TickerParseResult {
 
   if (tradingViewLine) {
     const fromHeader = findTickerToken(tradingViewLine, true);
-    if (fromHeader.ticker) return { ...fromHeader, headerLine: tradingViewLine };
-    if (fromHeader.rejectReason) return { ...fromHeader, headerLine: tradingViewLine };
+    if (fromHeader.ticker) return { ...fromHeader, headerLine: tradingViewLine, source: 'full_ocr' };
+    if (fromHeader.rejectReason) return { ...fromHeader, headerLine: tradingViewLine, source: 'none' };
   }
 
-  return findTickerToken(text, false);
+  const generic = findTickerToken(text, false);
+  if (generic.ticker) return { ...generic, source: 'full_ocr' };
+  return { ...generic, source: 'none' };
 }
 
 function findTickerToken(text: string, preferLeftmost: boolean): TickerParseResult {
-  const futuresMatches = Array.from(text.matchAll(/\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b/gi));
+  const futuresMatches = Array.from(text.matchAll(/\b([A-Z0-9!]{2,6})\b/gi));
   if (futuresMatches.length) {
-    const normalized = normalizeTickerToken(futuresMatches[0][0]);
-    return normalized ? { ticker: normalized } : { rejectReason: `Rejected futures token "${futuresMatches[0][0]}".` };
+    for (const m of futuresMatches) {
+      const recovered = recoverFuturesTicker(m[1]);
+      if (recovered) return { ticker: recovered };
+    }
   }
 
   const symbolMatches = Array.from(text.matchAll(/\b[A-Z]{2,6}\d*!?\b/g));
@@ -1096,6 +1129,9 @@ function findTickerToken(text: string, preferLeftmost: boolean): TickerParseResu
     }
     if (candidate.length < 2 || REJECTED_SHORT_TICKERS.has(candidate)) {
       return { rejectReason: `Rejected "${candidate}" because it looks like OCR junk/short token.` };
+    }
+    if (candidate.length === 2 && !SUPPORTED_SHORT_TICKERS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because short tickers require stronger confidence.` };
     }
     if (!/^[A-Z]{2,5}$/.test(candidate)) {
       return { rejectReason: `Rejected "${candidate}" because it failed symbol validation.` };
@@ -1115,6 +1151,38 @@ function normalizeTickerToken(raw: string): string {
     return upper.replace(/\d+!?$/, '');
   }
   return '';
+}
+
+const FUTURES_BASE_TICKERS = ['MES', 'ES', 'NQ', 'MNQ', 'CL', 'GC'] as const;
+const SUPPORTED_SHORT_TICKERS = new Set(['ES', 'NQ', 'CL', 'GC']);
+
+function recoverFuturesTicker(raw: string): string {
+  const upper = raw.toUpperCase().replace(/[^A-Z0-9!]/g, '');
+  if (!upper) return '';
+  const cleaned = upper.replace(/[!|]/g, '').replace(/1$/, '').replace(/0/g, 'O').replace(/5/g, 'S').replace(/8/g, 'B');
+  for (const ticker of FUTURES_BASE_TICKERS) {
+    if (cleaned === ticker) return ticker;
+    if (levenshteinDistance(cleaned, ticker) <= 1) return ticker;
+    if (cleaned.endsWith(ticker)) return ticker;
+  }
+  return '';
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[a.length][b.length];
 }
 
 type DateParseResult = {
@@ -1175,6 +1243,7 @@ function extractContextHints(text: string): string[] {
 type OcrResult = {
   status: OcrDebugState['ocrStatus'];
   text: string;
+  headerText: string;
   charCount: number;
   error?: string;
   steps: string[];
@@ -1184,21 +1253,25 @@ async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugSt
   const imageFiles = files.filter((f) => f.type.startsWith('image/'));
   const steps: string[] = [];
   if (!imageFiles.length) {
-    const result: OcrResult = { status: 'no_images', text: '', charCount: 0, steps: ['No image files found'] };
+    const result: OcrResult = { status: 'no_images', text: '', headerText: '', charCount: 0, steps: ['No image files found'] };
     onDebug?.({ ocrStatus: result.status, ocrCharCount: 0, ocrSteps: result.steps });
     return result;
   }
   try {
     const tesseract = await loadTesseractRuntime();
     const chunks: string[] = [];
+    const headerChunks: string[] = [];
     for (const file of imageFiles) {
       steps.push(`image loaded: ${file.name}`);
       onDebug?.({ ocrStatus: 'image_loaded', ocrSteps: [...steps] });
       const prepared = await preprocessImageForOcr(file);
+      const preparedHeader = await preprocessHeaderCropForOcr(file);
       steps.push(`ocr running: ${file.name}`);
       onDebug?.({ ocrStatus: 'running', ocrSteps: [...steps] });
       const result = await tesseract.recognize(prepared, 'eng');
+      const headerResult = await tesseract.recognize(preparedHeader, 'eng');
       const text = String(result?.data?.text || '').trim();
+      const headerText = String(headerResult?.data?.text || '').trim();
       if (text) {
         chunks.push(text);
         steps.push(`ocr succeeded: ${file.name}`);
@@ -1207,15 +1280,17 @@ async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugSt
         steps.push(`ocr returned no text: ${file.name}`);
         onDebug?.({ ocrStatus: 'no_text', ocrCharCount: chunks.join('\n').length, ocrSteps: [...steps] });
       }
+      if (headerText) headerChunks.push(headerText);
     }
     const text = chunks.join('\n').trim();
+    const headerText = headerChunks.join('\n').trim();
     const charCount = text.length;
-    return { status: text ? 'succeeded' : 'no_text', text, charCount, steps };
+    return { status: text || headerText ? 'succeeded' : 'no_text', text, headerText, charCount, steps };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     steps.push(`ocr failed: ${message}`);
     onDebug?.({ ocrStatus: 'failed', ocrError: message, ocrCharCount: 0, ocrSteps: [...steps] });
-    return { status: 'failed', text: '', charCount: 0, error: message, steps };
+    return { status: 'failed', text: '', headerText: '', charCount: 0, error: message, steps };
   }
 }
 
@@ -1272,6 +1347,36 @@ async function preprocessImageForOcr(file: File): Promise<HTMLCanvasElement> {
   ctx.drawImage(bitmap, 0, 0, width, height);
   bitmap.close();
   const imageData = ctx.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    const contrastBoost = gray > 140 ? 255 : 0;
+    data[i] = contrastBoost;
+    data[i + 1] = contrastBoost;
+    data[i + 2] = contrastBoost;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+async function preprocessHeaderCropForOcr(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  const cropWidth = Math.max(1, Math.round(bitmap.width * 0.6));
+  const cropHeight = Math.max(1, Math.round(bitmap.height * 0.22));
+  const canvas = document.createElement('canvas');
+  canvas.width = cropWidth;
+  canvas.height = cropHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    bitmap.close();
+    throw new Error('Failed to initialize canvas context for header OCR preprocessing.');
+  }
+  ctx.drawImage(bitmap, 0, 0, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, cropWidth, cropHeight);
   const { data } = imageData;
   for (let i = 0; i < data.length; i += 4) {
     const r = data[i];
