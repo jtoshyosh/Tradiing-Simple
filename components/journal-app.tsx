@@ -6,6 +6,7 @@ import type { AttachmentRow, NoTradeDayRow, SettingsRow, TradeRow, WeeklyReviewR
 
 const tabs = ['dashboard', 'trades', 'add', 'review', 'settings'] as const;
 type Tab = (typeof tabs)[number];
+type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd';
 type HelpKey = 'classification' | 'family' | 'model';
 type HelpItem = readonly [string, string];
 
@@ -120,6 +121,8 @@ export default function JournalApp({ userId, email }: Props) {
   const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
   const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
   const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+  const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
+  const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
     ticker: '',
@@ -163,6 +166,34 @@ export default function JournalApp({ userId, email }: Props) {
   const netPnl = trades.reduce((s, t) => s + Number(t.pnl || 0), 0);
   const wins = trades.filter((t) => t.pnl > 0).length;
   const avgEmotionalPressure = trades.length ? (trades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / trades.length) : 0;
+  const periodRange = getPeriodRange(dashboardPeriod, dashboardAnchor);
+  const periodTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
+  const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
+  const periodNetPnl = periodTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const periodWinRate = periodTrades.length ? (periodWins / periodTrades.length) * 100 : 0;
+  const periodAvgR = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0) / periodTrades.length : 0;
+  const periodAvgEmotion = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length : 0;
+  const pressureBuckets = [1, 2, 3, 4, 5].map((level) => ({
+    level,
+    count: periodTrades.filter((t) => Number(t.emotional_pressure || 0) === level).length
+  }));
+  const highPressureTrades = periodTrades.filter((t) => Number(t.emotional_pressure || 0) >= 4);
+  const lowPressureTrades = periodTrades.filter((t) => Number(t.emotional_pressure || 0) <= 2);
+  const highPressureAvgPnl = highPressureTrades.length ? highPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / highPressureTrades.length : 0;
+  const lowPressureAvgPnl = lowPressureTrades.length ? lowPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / lowPressureTrades.length : 0;
+  const mistakeTagCounts = countItems(periodTrades.flatMap((t) => t.mistake_tags || []));
+  const topMistakes = Object.entries(mistakeTagCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const familyStats = computeGroupStats(periodTrades, (t) => t.family);
+  const modelStats = computeGroupStats(periodTrades, (t) => t.model);
+  const bestFamily = familyStats.length ? familyStats[0] : null;
+  const worstFamily = familyStats.length ? familyStats[familyStats.length - 1] : null;
+  const bestModel = modelStats.length ? modelStats[0] : null;
+  const worstModel = modelStats.length ? modelStats[modelStats.length - 1] : null;
+  const topWinFamilies = [...familyStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+  const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+  const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
+  const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -464,13 +495,69 @@ export default function JournalApp({ userId, email }: Props) {
 
       {tab === 'dashboard' && (
         <section className="stack">
+          <section className="card stack">
+            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+              <strong>Analytics period</strong>
+              <span className="chip">{formatRangeLabel(periodRange.start, periodRange.end)}</span>
+            </div>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 8 }}>
+              {(['weekly', 'monthly', 'quarterly', 'annual', 'ytd'] as DashboardPeriod[]).map((p) => (
+                <button key={p} className={dashboardPeriod === p ? 'chip' : 'inline'} type="button" onClick={() => setDashboardPeriod(p)}>
+                  {titleCase(p)}
+                </button>
+              ))}
+            </div>
+            <div className="row">
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>← Previous</button>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next →</button>
+            </div>
+          </section>
           <div className="grid">
             <article className="card"><div className="muted small">Total trades</div><div>{trades.length}</div></article>
-            <article className="card"><div className="muted small">Net P&L</div><div>{netPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Win rate</div><div>{trades.length ? Math.round((wins / trades.length) * 100) : 0}%</div></article>
+            <article className="card"><div className="muted small">Net P&L</div><div style={{ color: netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{netPnl.toFixed(2)}</div></article>
+            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (trades.length ? (wins / trades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{trades.length ? Math.round((wins / trades.length) * 100) : 0}%</div></article>
             <article className="card"><div className="muted small">No-trade days</div><div>{noTrades.length}</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{avgEmotionalPressure.toFixed(2)} / 5</div></article>
           </div>
+          <section className="grid">
+            <article className="card"><div className="muted small">Period Net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
+            <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
+            <article className="card"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
+            <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
+            <article className="card"><div className="muted small">Avg R</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+            <article className="card"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+          </section>
+
+          <section className="card stack">
+            <strong>Calendar month view</strong>
+            <div className="small muted">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 6 }}>
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
+              {calendarCells.map((cell) => (
+                <article key={cell.date} className="trade" style={{ padding: 8, minHeight: 64, background: cell.isOutside ? '#0f1724' : cell.pnl > 0 ? 'rgba(74,214,109,0.17)' : cell.pnl < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#101827' }}>
+                  <div className="small muted">{cell.day}</div>
+                  <div className="small" style={{ color: cell.pnl > 0 ? '#4ad66d' : cell.pnl < 0 ? '#ff7b7b' : '#d7e2f5' }}>${cell.pnl.toFixed(0)}</div>
+                  <div className="small muted">{cell.tradeCount} trade(s)</div>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Selected period insights</strong>
+            <div className="small muted">Most common mistakes: {topMistakes.length ? topMistakes.map(([tag, count]) => `${tag} (${count})`).join(', ') : 'None'}</div>
+            <div className="small muted">Best setup family: {bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted">Best setup model: {bestModel ? `${bestModel.key} (${bestModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted">Worst setup family: {worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted">Worst setup model: {worstModel ? `${worstModel.key} (${worstModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted">Highest win-rate families: {topWinFamilies.length ? topWinFamilies.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
+            <div className="small muted">Highest win-rate models: {topWinModels.length ? topWinModels.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
+            <div className="small muted">Emotional pressure distribution: {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
+            <div className="small muted">High pressure (4-5) avg P&L: <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span></div>
+            <div className="small muted">Low pressure (1-2) avg P&L: <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
+          </section>
+
           <div className="card small muted">Passkeys are not implemented yet. Auth structure is now Supabase-based so passkey support can be added next via WebAuthn flows.</div>
         </section>
       )}
@@ -1480,6 +1567,100 @@ function formatOcrStatus(status: OcrDebugState['ocrStatus']) {
   if (status === 'failed') return 'OCR failed';
   if (status === 'no_images') return 'No image files found';
   return 'Idle';
+}
+
+function getPeriodRange(period: DashboardPeriod, anchor: Date): { start: string; end: string } {
+  const y = anchor.getUTCFullYear();
+  const m = anchor.getUTCMonth();
+  const d = anchor.getUTCDate();
+  if (period === 'weekly') {
+    const dt = new Date(Date.UTC(y, m, d));
+    const day = dt.getUTCDay();
+    dt.setUTCDate(dt.getUTCDate() - day);
+    const end = new Date(dt);
+    end.setUTCDate(dt.getUTCDate() + 6);
+    return { start: dt.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'monthly') {
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'quarterly') {
+    const qStartMonth = Math.floor(m / 3) * 3;
+    const start = new Date(Date.UTC(y, qStartMonth, 1));
+    const end = new Date(Date.UTC(y, qStartMonth + 3, 0));
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'annual') {
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }
+  return { start: `${y}-01-01`, end: new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10) };
+}
+
+function shiftPeriod(anchor: Date, period: DashboardPeriod, direction: number): Date {
+  const next = new Date(anchor);
+  if (period === 'weekly') next.setUTCDate(next.getUTCDate() + 7 * direction);
+  else if (period === 'monthly') next.setUTCMonth(next.getUTCMonth() + direction);
+  else if (period === 'quarterly') next.setUTCMonth(next.getUTCMonth() + 3 * direction);
+  else next.setUTCFullYear(next.getUTCFullYear() + direction);
+  return next;
+}
+
+function inDateRange(dateStr: string, start: string, end: string) {
+  return dateStr >= start && dateStr <= end;
+}
+
+function countItems(items: string[]) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const key = String(item || '').trim();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function computeGroupStats(rows: TradeRow[], getKey: (trade: TradeRow) => string) {
+  const grouped = rows.reduce<Record<string, { trades: number; wins: number; pnl: number }>>((acc, trade) => {
+    const key = getKey(trade) || 'Unknown';
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0 };
+    acc[key].trades += 1;
+    if (Number(trade.pnl || 0) > 0) acc[key].wins += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    return acc;
+  }, {});
+  return Object.entries(grouped).map(([key, v]) => ({
+    key,
+    trades: v.trades,
+    winRate: v.trades ? (v.wins / v.trades) * 100 : 0,
+    netPnl: v.pnl
+  })).sort((a, b) => b.netPnl - a.netPnl);
+}
+
+function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
+  const start = new Date(monthStart);
+  const offset = start.getUTCDay();
+  start.setUTCDate(start.getUTCDate() - offset);
+  return Array.from({ length: 42 }, (_, idx) => {
+    const dt = new Date(start);
+    dt.setUTCDate(start.getUTCDate() + idx);
+    const date = dt.toISOString().slice(0, 10);
+    const dayTrades = trades.filter((t) => t.trade_date === date);
+    const pnl = dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+    const noTrade = noTrades.some((n) => n.day_date === date);
+    return {
+      date,
+      day: dt.getUTCDate(),
+      pnl,
+      tradeCount: dayTrades.length,
+      noTrade,
+      isOutside: dt.getUTCMonth() !== monthStart.getUTCMonth()
+    };
+  });
+}
+
+function formatRangeLabel(start: string, end: string) {
+  return `${start} → ${end}`;
 }
 
 function currentWeekKey() {
