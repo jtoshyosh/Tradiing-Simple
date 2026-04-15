@@ -83,6 +83,9 @@ type OcrDebugState = {
   tickerRejectReason?: string;
   headerOcrText?: string;
   tickerSource?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
+  microResolutionRule?: string;
+  minutesRejectReason?: string;
+  timeframeRejected?: boolean;
 };
 type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
@@ -641,7 +644,10 @@ export default function JournalApp({ userId, email }: Props) {
                 {tradeExtract.ocrError ? <div className="small muted">OCR error: {tradeExtract.ocrError}</div> : null}
                 {tradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {tradeExtract.parsedHeaderLine}</div> : null}
                 <div className="small muted">Ticker source: {tradeExtract.tickerSource || 'none'}</div>
+                {tradeExtract.microResolutionRule ? <div className="small muted">Micro/standard resolution: {tradeExtract.microResolutionRule}</div> : null}
                 {tradeExtract.tickerRejectReason ? <div className="small muted">Ticker rejection: {tradeExtract.tickerRejectReason}</div> : null}
+                {tradeExtract.minutesRejectReason ? <div className="small muted">Minutes decision: {tradeExtract.minutesRejectReason}</div> : null}
+                {tradeExtract.timeframeRejected ? <div className="small muted">Minutes rejected as chart timeframe token.</div> : null}
                 {tradeExtract.detectedText ? (
                   <details>
                     <summary className="small muted">Detected text (beta OCR)</summary>
@@ -1009,6 +1015,7 @@ function parseTradeText(text: string, headerOcrText?: string): TradeExtractSugge
   if (tickerResult.ticker) out.ticker = tickerResult.ticker;
   if (!tickerResult.ticker && tickerResult.rejectReason) out.tickerRejectReason = tickerResult.rejectReason;
   out.tickerSource = tickerResult.source || 'none';
+  if (tickerResult.microResolutionRule) out.microResolutionRule = tickerResult.microResolutionRule;
   const dateResult = extractDateFromText(normalized, tickerResult.headerLine);
   if (dateResult.date) out.trade_date = dateResult.date;
   if (!out.parsedHeaderLine && dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
@@ -1018,10 +1025,10 @@ function parseTradeText(text: string, headerOcrText?: string): TradeExtractSugge
   if (pnlMatch) out.pnl = sanitizeNumberToken(pnlMatch[1]);
   const rMatch = normalized.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
   if (rMatch) out.r_multiple = rMatch[1];
-  const minMatch =
-    normalized.match(/(?:time|duration|hold|minutes?(?:\s+in\s+trade)?)\s*[:=]?\s*(\d{1,4})\s*(m|min|mins|minutes)\b/i) ||
-    normalized.match(/(\d{1,4})\s*(m|min|mins|minutes)\b/i);
-  if (minMatch) out.minutes_in_trade = minMatch[1];
+  const minutesResult = extractMinutesSuggestion(normalized);
+  if (minutesResult.value) out.minutes_in_trade = minutesResult.value;
+  if (minutesResult.reason) out.minutesRejectReason = minutesResult.reason;
+  if (minutesResult.timeframeRejected) out.timeframeRejected = true;
   return out;
 }
 
@@ -1087,9 +1094,19 @@ type TickerParseResult = {
   headerLine?: string;
   rejectReason?: string;
   source?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
+  microResolutionRule?: string;
 };
 
 function extractTickerFromScreenshotText(text: string, headerOcrText?: string): TickerParseResult {
+  const familyResolution = resolveFuturesFamily([headerOcrText || '', text].join('\n'));
+  if (familyResolution.ticker) {
+    return {
+      ticker: familyResolution.ticker,
+      source: headerOcrText?.trim() ? 'header_ocr' : 'full_ocr',
+      headerLine: headerOcrText?.split('\n')[0]?.trim(),
+      microResolutionRule: familyResolution.rule
+    };
+  }
   if (headerOcrText?.trim()) {
     const fromCrop = findTickerToken(headerOcrText, true);
     if (fromCrop.ticker) return { ...fromCrop, source: 'header_ocr', headerLine: headerOcrText.split('\n')[0]?.trim() || headerOcrText.trim() };
@@ -1168,6 +1185,22 @@ function recoverFuturesTicker(raw: string): string {
   return '';
 }
 
+function resolveFuturesFamily(text: string): { ticker?: string; rule?: string } {
+  const tokens = Array.from(text.toUpperCase().matchAll(/\b([A-Z0-9!]{2,8})\b/g)).map((m) => m[1]);
+  const recovered = new Set<string>();
+  for (const token of tokens) {
+    const next = recoverFuturesTicker(token);
+    if (next) recovered.add(next);
+  }
+  if (recovered.has('MES')) return { ticker: 'MES', rule: 'Micro contract precedence: MES preferred over ES.' };
+  if (recovered.has('MNQ')) return { ticker: 'MNQ', rule: 'Micro contract precedence: MNQ preferred over NQ.' };
+  if (recovered.has('ES')) return { ticker: 'ES', rule: 'Standard contract selected (no micro evidence detected).' };
+  if (recovered.has('NQ')) return { ticker: 'NQ', rule: 'Standard contract selected (no micro evidence detected).' };
+  if (recovered.has('CL')) return { ticker: 'CL', rule: 'Futures normalization applied.' };
+  if (recovered.has('GC')) return { ticker: 'GC', rule: 'Futures normalization applied.' };
+  return {};
+}
+
 function levenshteinDistance(a: string, b: string): number {
   const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
   for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
@@ -1226,6 +1259,29 @@ function findDateToken(text: string, fallbackYear: number): string {
     return normalizeDate(`${year}-${month}-${day}`);
   }
   return '';
+}
+
+function extractMinutesSuggestion(text: string): { value?: string; reason?: string; timeframeRejected?: boolean } {
+  const strongPatterns = [
+    /minutes?\s+in\s+trade\s*[:=]?\s*(\d{1,4})\b/i,
+    /held\s+for\s+(\d{1,4})\s*(?:m|min|mins|minutes)\b/i,
+    /duration\s*[:=]?\s*(\d{1,4})\s*(?:m|min|mins|minutes)\b/i,
+    /time\s+in\s+trade\s*[:=]?\s*(\d{1,4})\s*(?:m|min|mins|minutes)\b/i
+  ];
+  for (const pattern of strongPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return { value: match[1], reason: `Accepted minutes from explicit duration phrase "${match[0]}".` };
+    }
+  }
+
+  const anyMinuteToken = text.match(/\b(\d{1,3})\s*(m|min|mins|minutes)\b/i);
+  if (!anyMinuteToken) return {};
+  const timeframeLike = /\b(1|2|3|5|10|15|30|45|60|120|240)\s*(m|min|mins)\b/i.test(anyMinuteToken[0]);
+  if (timeframeLike) {
+    return { timeframeRejected: true, reason: `Rejected "${anyMinuteToken[0]}" because it matches a chart timeframe token.` };
+  }
+  return { reason: `Rejected "${anyMinuteToken[0]}" because no explicit duration wording was found.` };
 }
 
 function extractContextHints(text: string): string[] {
