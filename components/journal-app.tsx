@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -1176,7 +1176,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
                       <div className="small">Emotional pressure: {item.trade.emotional_pressure}/5</div>
                       <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
-                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.trade.notes || '—'}</div>
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
@@ -1205,7 +1206,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="stack">
                       <div className="small muted">{item.noTrade.day_date}</div>
                       <div className="small">Reason: {item.noTrade.reason}</div>
-                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.noTrade.notes || '—'}</div>
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={item.noTrade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
@@ -1247,7 +1249,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
                       <div className="small">Duration: {item.session.duration_minutes} minutes</div>
-                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.session.notes || '—'}</div>
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
                     </div>
                   </article>
                 )}
@@ -1387,7 +1390,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 setNewMistakeTag('');
               }}>Add</button>
             </div>
-            <textarea name="notes" placeholder="Notes" value={tradeDraft.notes} onChange={(e) => setTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
+            <RichTextEditor
+              label="Trade notes"
+              value={tradeDraft.notes}
+              onChange={(next) => setTradeDraft((p) => ({ ...p, notes: next }))}
+              placeholder="Capture execution thoughts, context, and lessons."
+              minRows={5}
+            />
             <input
               name="files"
               type="file"
@@ -1494,7 +1503,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
             <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
-            <textarea name="no_trade_notes" placeholder="No-trade notes" value={noTradeDraft.notes} onChange={(e) => setNoTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
+            <RichTextEditor
+              label="No-trade notes"
+              value={noTradeDraft.notes}
+              onChange={(next) => setNoTradeDraft((p) => ({ ...p, notes: next }))}
+              placeholder="Describe why you stayed flat and what confirmed discipline."
+              minRows={4}
+            />
             <input
               name="no_trade_files"
               type="file"
@@ -1627,7 +1642,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <div className="small">{t.family} · {t.model} · {t.classification}</div>
                 <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m · Emotion {t.emotional_pressure}/5</div>
                 <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {t.notes || '—'}</div>
+                <div className="small">Notes:</div>
+                <RichTextContent value={t.notes || ''} emptyLabel="—" />
                 <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
               </article>
             ))}
@@ -1635,7 +1651,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article key={n.id} className="trade no-trade">
                 <div className="small muted">{n.day_date}</div>
                 <div className="small">Reason: {n.reason}</div>
-                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {n.notes || '—'}</div>
+                <div className="small">Notes:</div>
+                <RichTextContent value={n.notes || ''} emptyLabel="—" />
                 <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
               </article>
             ))}
@@ -1647,12 +1664,27 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ))}
             {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
           </div>
-          <label className="small muted">1) Reflection on mistakes</label>
-          <textarea value={reviewAnswers.q1} onChange={(e) => setReviewAnswers((s) => ({ ...s, q1: e.target.value }))} />
-          <label className="small muted">2) Reflection on no-trade choices</label>
-          <textarea value={reviewAnswers.q2} onChange={(e) => setReviewAnswers((s) => ({ ...s, q2: e.target.value }))} />
-          <label className="small muted">3) Rule for next week</label>
-          <textarea value={reviewAnswers.q3} onChange={(e) => setReviewAnswers((s) => ({ ...s, q3: e.target.value }))} />
+          <RichTextEditor
+            label="1) Reflection on mistakes"
+            value={reviewAnswers.q1}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q1: next }))}
+            placeholder="What patterns drove mistakes this week?"
+            minRows={5}
+          />
+          <RichTextEditor
+            label="2) Reflection on no-trade choices"
+            value={reviewAnswers.q2}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q2: next }))}
+            placeholder="Which no-trade decisions protected your edge?"
+            minRows={5}
+          />
+          <RichTextEditor
+            label="3) Rule for next week"
+            value={reviewAnswers.q3}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q3: next }))}
+            placeholder="Write one process rule you will enforce next week."
+            minRows={5}
+          />
           <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
         </section>
       )}
@@ -1719,6 +1751,124 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       </nav>
     </main>
   );
+}
+
+function RichTextEditor({
+  label,
+  value,
+  onChange,
+  placeholder,
+  minRows = 4
+}: {
+  label: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  minRows?: number;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function withSelection(transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number }) {
+    const node = textareaRef.current;
+    if (!node) return;
+    const start = node.selectionStart ?? 0;
+    const end = node.selectionEnd ?? 0;
+    const next = transform(value || '', start, end);
+    onChange(next.text);
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return;
+      const focusStart = next.nextStart ?? start;
+      const focusEnd = next.nextEnd ?? end;
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(focusStart, focusEnd);
+    });
+  }
+
+  const controls: Array<{ key: string; label: string; onPress: () => void }> = [
+    { key: 'bold', label: 'B', onPress: () => withSelection((source, start, end) => wrapWithToken(source, start, end, '**')) },
+    { key: 'underline', label: 'U', onPress: () => withSelection((source, start, end) => wrapWithToken(source, start, end, '__')) },
+    { key: 'bullet', label: '• List', onPress: () => withSelection((source, start, end) => prefixLines(source, start, end, '- ')) },
+    { key: 'number', label: '1. List', onPress: () => withSelection((source, start, end) => prefixNumberedLines(source, start, end)) },
+    { key: 'indent', label: 'Indent', onPress: () => withSelection((source, start, end) => indentLines(source, start, end, 2)) },
+    { key: 'outdent', label: 'Outdent', onPress: () => withSelection((source, start, end) => indentLines(source, start, end, -2)) }
+  ];
+
+  return (
+    <div className="stack">
+      <label className="small muted">{label}</label>
+      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+        {controls.map((control) => (
+          <button key={control.key} className="inline" type="button" onClick={control.onPress} style={{ width: 'auto', minWidth: 58 }}>
+            {control.label}
+          </button>
+        ))}
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={minRows}
+        style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
+      />
+      <div className="small muted">Tip: use toolbar actions for formatting. Plain text is still supported.</div>
+      <article className="trade stack">
+        <div className="small muted">Preview</div>
+        <RichTextContent value={value} emptyLabel="Nothing written yet." />
+      </article>
+    </div>
+  );
+}
+
+function RichTextContent({ value, emptyLabel = '—' }: { value: string; emptyLabel?: string }) {
+  const normalized = String(value || '').replace(/\r/g, '');
+  if (!normalized.trim()) return <div className="small muted">{emptyLabel}</div>;
+  const lines = normalized.split('\n');
+  const blocks: ReactNode[] = [];
+  let currentListType: 'ul' | 'ol' | null = null;
+  let listItems: Array<{ text: string; indent: number }> = [];
+
+  const flushList = () => {
+    if (!currentListType || !listItems.length) return;
+    const Tag = currentListType;
+    blocks.push(
+      <Tag key={`list-${blocks.length}`} style={{ margin: '4px 0 6px', paddingLeft: 20 }}>
+        {listItems.map((item, idx) => (
+          <li key={`${item.text}-${idx}`} style={{ marginLeft: `${item.indent * 10}px` }}>
+            {renderInlineRichText(item.text)}
+          </li>
+        ))}
+      </Tag>
+    );
+    currentListType = null;
+    listItems = [];
+  };
+
+  lines.forEach((line, idx) => {
+    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const numbered = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (bullet) {
+      if (currentListType !== 'ul') flushList();
+      currentListType = 'ul';
+      listItems.push({ text: bullet[2], indent: Math.floor((bullet[1] || '').length / 2) });
+      return;
+    }
+    if (numbered) {
+      if (currentListType !== 'ol') flushList();
+      currentListType = 'ol';
+      listItems.push({ text: numbered[2], indent: Math.floor((numbered[1] || '').length / 2) });
+      return;
+    }
+    flushList();
+    if (!line.trim()) {
+      blocks.push(<div key={`space-${idx}`} style={{ height: 8 }} />);
+      return;
+    }
+    blocks.push(<p key={`line-${idx}`} style={{ margin: '0 0 6px' }}>{renderInlineRichText(line)}</p>);
+  });
+  flushList();
+
+  return <div className="small">{blocks}</div>;
 }
 
 function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: AttachmentRow[]; signedUrls: Record<string, string>; onOpenImage: (url: string, name: string) => void }) {
@@ -2906,6 +3056,73 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   const negative = wholeRaw === '-0' || wholePart < 0;
   const signed = negative ? -magnitude : magnitude;
   return Number(signed.toFixed(2));
+}
+
+function wrapWithToken(source: string, start: number, end: number, token: string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const selected = source.slice(from, to) || 'text';
+  const wrapped = `${token}${selected}${token}`;
+  const text = `${source.slice(0, from)}${wrapped}${source.slice(to)}`;
+  const nextStart = from + token.length;
+  const nextEnd = nextStart + selected.length;
+  return { text, nextStart, nextEnd };
+}
+
+function prefixLines(source: string, start: number, end: number, prefix: string) {
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    if (line.trimStart().startsWith(prefix.trim())) return line;
+    return `${prefix}${line}`;
+  });
+}
+
+function prefixNumberedLines(source: string, start: number, end: number) {
+  let count = 1;
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const cleaned = line.replace(/^\s*\d+\.\s+/, '');
+    const next = `${count}. ${cleaned}`;
+    count += 1;
+    return next;
+  });
+}
+
+function indentLines(source: string, start: number, end: number, delta: number) {
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const leading = line.match(/^\s*/)?.[0] || '';
+    const updated = Math.max(0, leading.length + delta);
+    return `${' '.repeat(updated)}${line.trimStart()}`;
+  });
+}
+
+function mutateLines(source: string, start: number, end: number, transform: (line: string) => string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const lineStart = source.lastIndexOf('\n', from - 1) + 1;
+  const nextBreak = source.indexOf('\n', to);
+  const lineEnd = nextBreak === -1 ? source.length : nextBreak;
+  const segment = source.slice(lineStart, lineEnd);
+  const lines = segment.split('\n');
+  const updatedLines = lines.map(transform);
+  const updated = updatedLines.join('\n');
+  const text = `${source.slice(0, lineStart)}${updated}${source.slice(lineEnd)}`;
+  return { text, nextStart: lineStart, nextEnd: lineStart + updated.length };
+}
+
+function renderInlineRichText(rawText: string): ReactNode[] {
+  const text = String(rawText || '');
+  const tokens = text.split(/(\*\*[^*]+\*\*|__[^_]+__)/g).filter(Boolean);
+  return tokens.map((token, idx) => {
+    if (token.startsWith('**') && token.endsWith('**')) {
+      return <strong key={`bold-${idx}`}>{token.slice(2, -2)}</strong>;
+    }
+    if (token.startsWith('__') && token.endsWith('__')) {
+      return <u key={`under-${idx}`}>{token.slice(2, -2)}</u>;
+    }
+    return <Fragment key={`plain-${idx}`}>{token}</Fragment>;
+  });
 }
 
 function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
