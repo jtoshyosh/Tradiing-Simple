@@ -260,6 +260,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const worstModel = modelStats.length ? modelStats[modelStats.length - 1] : null;
   const topWinFamilies = [...familyStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
   const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+  const periodExpectancyPnl = periodTrades.length ? periodNetPnl / periodTrades.length : 0;
+  const periodExpectancyR = periodTrades.length ? periodNetR / periodTrades.length : 0;
+  const allTimeStreaks = computeStreaks(trades);
+  const periodStreaks = computeStreaks(periodTrades);
+  const mistakeImpact = computeMistakeImpact(periodTrades);
+  const familyBreakdown = computePerformanceBreakdown(periodTrades, (trade) => trade.family);
+  const modelBreakdown = computePerformanceBreakdown(periodTrades, (trade) => trade.model);
+  const emotionBreakdown = computePerformanceBreakdown(
+    periodTrades.filter((trade) => Number(trade.emotional_pressure || 0) >= 1 && Number(trade.emotional_pressure || 0) <= 5),
+    (trade) => `Level ${Math.min(5, Math.max(1, Number(trade.emotional_pressure || 1)))}`
+  );
+  const emotionalInsight = getEmotionalInsight(periodTrades);
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
@@ -827,6 +839,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <article className="card"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
             <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
             <article className="card"><div className="muted small">Avg R</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+            <article className="card"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
+            <article className="card"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
             <article className="card"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
             <article className="card"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
@@ -918,6 +932,110 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small muted">Emotional pressure distribution: {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
             <div className="small muted">High pressure (4-5) avg P&L: <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span></div>
             <div className="small muted">Low pressure (1-2) avg P&L: <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
+          </section>
+
+          <section className="card stack">
+            <div className="row">
+              <strong>Intelligence insights</strong>
+              <span className="small muted">Based on {periodTrades.length} trade(s) in selected period</span>
+            </div>
+
+            <details open>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Mistake impact</strong></summary>
+              {mistakeImpact.length ? (
+                <div className="stack" style={{ marginTop: 8 }}>
+                  {mistakeImpact.map((row) => (
+                    <article key={row.key} className="trade">
+                      <div className="row">
+                        <strong>{row.key}</strong>
+                        <span className="small muted">{row.trades} trade(s)</span>
+                      </div>
+                      <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Win rate: {row.winRate.toFixed(1)}%</div>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="small muted" style={{ marginTop: 8 }}>No mistake tags logged in this period.</div>}
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong></summary>
+              <div className="stack" style={{ marginTop: 8 }}>
+                <div className="small muted"><strong>By setup family</strong></div>
+                {familyBreakdown.length ? familyBreakdown.map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Win rate: {row.winRate.toFixed(1)}% · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Total P&L: <span style={{ color: row.netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.netPnl.toFixed(2)}</span></div>
+                  </article>
+                )) : <div className="small muted">No setup families in this period.</div>}
+                <div className="small muted"><strong>By setup model</strong></div>
+                {modelBreakdown.length ? modelBreakdown.slice(0, 8).map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Win rate: {row.winRate.toFixed(1)}% · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Total P&L: <span style={{ color: row.netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.netPnl.toFixed(2)}</span></div>
+                  </article>
+                )) : <div className="small muted">No setup models in this period.</div>}
+              </div>
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong></summary>
+              <div className="stack" style={{ marginTop: 8 }}>
+                {emotionBreakdown.length ? emotionBreakdown.map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span></div>
+                  </article>
+                )) : <div className="small muted">No emotional pressure data logged in this period.</div>}
+                {emotionalInsight ? <div className="small muted">{emotionalInsight}</div> : null}
+              </div>
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong></summary>
+              <div className="grid" style={{ marginTop: 8 }}>
+                <article className="trade">
+                  <div className="small muted">Current win streak</div>
+                  <div>{allTimeStreaks.currentWin}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Current loss streak</div>
+                  <div>{allTimeStreaks.currentLoss}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Longest win streak</div>
+                  <div>{allTimeStreaks.longestWin}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Longest loss streak</div>
+                  <div>{allTimeStreaks.longestLoss}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Period win streak</div>
+                  <div>{periodStreaks.currentWin}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Period loss streak</div>
+                  <div>{periodStreaks.currentLoss}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Expectancy / trade ($)</div>
+                  <div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Expectancy / trade (R)</div>
+                  <div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div>
+                </article>
+              </div>
+            </details>
           </section>
 
           <div className="card small muted">Passkeys are not implemented yet. Auth structure is now Supabase-based so passkey support can be added next via WebAuthn flows.</div>
@@ -2472,6 +2590,69 @@ function countItems(items: string[]) {
   }, {});
 }
 
+type PerformanceBreakdownRow = {
+  key: string;
+  trades: number;
+  winRate: number;
+  netPnl: number;
+  avgPnl: number;
+  avgR: number;
+};
+
+function computePerformanceBreakdown(rows: TradeRow[], getKey: (trade: TradeRow) => string): PerformanceBreakdownRow[] {
+  const grouped = rows.reduce<Record<string, { trades: number; wins: number; pnl: number; r: number }>>((acc, trade) => {
+    const key = String(getKey(trade) || 'Unknown').trim() || 'Unknown';
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0, r: 0 };
+    acc[key].trades += 1;
+    if (Number(trade.pnl || 0) > 0) acc[key].wins += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    acc[key].r += Number(trade.r_multiple || 0);
+    return acc;
+  }, {});
+  return Object.entries(grouped)
+    .map(([key, value]) => ({
+      key,
+      trades: value.trades,
+      winRate: value.trades ? (value.wins / value.trades) * 100 : 0,
+      netPnl: value.pnl,
+      avgPnl: value.trades ? value.pnl / value.trades : 0,
+      avgR: value.trades ? value.r / value.trades : 0
+    }))
+    .sort((a, b) => b.trades - a.trades || b.netPnl - a.netPnl);
+}
+
+function computeMistakeImpact(rows: TradeRow[]): PerformanceBreakdownRow[] {
+  const expanded = rows.flatMap((trade) => {
+    const tags = normalizeMistakeTags(trade.mistake_tags);
+    return tags.map((tag) => ({
+      tag,
+      pnl: Number(trade.pnl || 0),
+      rMultiple: Number(trade.r_multiple || 0),
+      win: Number(trade.pnl || 0) > 0
+    }));
+  });
+  const grouped = expanded.reduce<Record<string, { trades: number; wins: number; pnl: number; r: number }>>((acc, trade) => {
+    const key = String(trade.tag || '').trim();
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0, r: 0 };
+    acc[key].trades += 1;
+    if (trade.win) acc[key].wins += 1;
+    acc[key].pnl += trade.pnl;
+    acc[key].r += trade.rMultiple;
+    return acc;
+  }, {});
+  return Object.entries(grouped)
+    .map(([key, value]) => ({
+      key,
+      trades: value.trades,
+      winRate: value.trades ? (value.wins / value.trades) * 100 : 0,
+      netPnl: value.pnl,
+      avgPnl: value.trades ? value.pnl / value.trades : 0,
+      avgR: value.trades ? value.r / value.trades : 0
+    }))
+    .sort((a, b) => b.trades - a.trades || a.avgPnl - b.avgPnl);
+}
+
 function computeGroupStats(rows: TradeRow[], getKey: (trade: TradeRow) => string) {
   const grouped = rows.reduce<Record<string, { trades: number; wins: number; pnl: number }>>((acc, trade) => {
     const key = getKey(trade) || 'Unknown';
@@ -2487,6 +2668,56 @@ function computeGroupStats(rows: TradeRow[], getKey: (trade: TradeRow) => string
     winRate: v.trades ? (v.wins / v.trades) * 100 : 0,
     netPnl: v.pnl
   })).sort((a, b) => b.netPnl - a.netPnl);
+}
+
+function computeStreaks(rows: TradeRow[]) {
+  const sorted = [...rows].sort((a, b) => {
+    const byDate = a.trade_date.localeCompare(b.trade_date);
+    if (byDate !== 0) return byDate;
+    return a.id.localeCompare(b.id);
+  });
+  let currentWin = 0;
+  let currentLoss = 0;
+  let longestWin = 0;
+  let longestLoss = 0;
+  let runningWin = 0;
+  let runningLoss = 0;
+
+  sorted.forEach((trade) => {
+    const pnl = Number(trade.pnl || 0);
+    if (pnl > 0) {
+      runningWin += 1;
+      runningLoss = 0;
+    } else if (pnl < 0) {
+      runningLoss += 1;
+      runningWin = 0;
+    } else {
+      runningWin = 0;
+      runningLoss = 0;
+    }
+    longestWin = Math.max(longestWin, runningWin);
+    longestLoss = Math.max(longestLoss, runningLoss);
+  });
+
+  for (let idx = sorted.length - 1; idx >= 0; idx -= 1) {
+    const pnl = Number(sorted[idx].pnl || 0);
+    if (pnl > 0 && currentLoss === 0) currentWin += 1;
+    else if (pnl < 0 && currentWin === 0) currentLoss += 1;
+    else break;
+  }
+
+  return { currentWin, currentLoss, longestWin, longestLoss };
+}
+
+function getEmotionalInsight(rows: TradeRow[]) {
+  const low = rows.filter((trade) => Number(trade.emotional_pressure || 0) <= 2);
+  const high = rows.filter((trade) => Number(trade.emotional_pressure || 0) >= 4);
+  if (low.length < 2 || high.length < 2) return '';
+  const lowAvg = low.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / low.length;
+  const highAvg = high.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / high.length;
+  if (lowAvg - highAvg > 5) return 'Interpretation: lower emotional pressure (levels 1-2) is currently associated with stronger average outcomes than high-pressure trades.';
+  if (highAvg - lowAvg > 5) return 'Interpretation: high-pressure trades are currently outperforming low-pressure trades; verify if this is sustained or sample noise.';
+  return 'Interpretation: outcomes are currently similar across pressure ranges in this sample.';
 }
 
 function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
