@@ -1574,6 +1574,7 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
   }).join(' ');
   const xTickIndexes = buildAxisTickIndexes(points.length, 5);
   const yTicks = [yMax, yMax / 2, 0, yMin / 2, yMin];
+  const tradeCountTicks = [maxTradeCount, Math.ceil(maxTradeCount / 2), 0];
   const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
   const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
   const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
@@ -1593,6 +1594,7 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
         })}
         <line x1={plotLeft} y1={baseline} x2={plotRight} y2={baseline} stroke="#2a3445" strokeWidth={1} />
         {view === 'daily' && points.map((point, idx) => {
+          if (point.tradeCount === 0) return null;
           const x = xForIndex(idx) - 5;
           const barHeight = Math.max(2, Math.abs(point.value / (yMax || 1)) * (plotHeight / 2 - 2));
           const y = point.value >= 0 ? baseline - barHeight : baseline;
@@ -1602,11 +1604,25 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
         {view === 'cumulative' && points.map((point, idx) => (
           <circle key={`line-hit-${point.date}`} cx={xForIndex(idx)} cy={yForValue(point.value)} r={6} fill="transparent" onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />
         ))}
-        {overlay === 'count' && points.map((point, idx) => {
-          const x = xForIndex(idx);
-          const y = plotBottom - (point.tradeCount / maxTradeCount) * 24;
-          return point.tradeCount > 0 ? <circle key={`count-${point.date}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
-        })}
+        {overlay === 'count' && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#a5b4fc"
+              strokeWidth={1.5}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom);
+              return point.tradeCount > 0 ? <circle key={`count-${point.date}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
+            })}
+            {tradeCountTicks.map((tick) => {
+              const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
+              return <text key={`right-y-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{tick}</text>;
+            })}
+          </>
+        )}
         {points.map((point, idx) => {
           if (!point.noTrade) return null;
           const x = xForIndex(idx) - 3;
@@ -1631,10 +1647,10 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
       </svg>
       {activePoint && (
         <div className="small muted" style={{ marginTop: 4 }}>
-          {formatLongDate(activePoint.date)} · {formatMetricValue(activePoint.value, metric)} · {activePoint.tradeCount} trade(s){activePoint.noTrade ? ' · no-trade logged' : ''}
+          {formatLongDate(activePoint.date)} · {formatMetricValue(activePoint.value, metric)} · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.noTrade ? 'No-trade day' : 'No logged activity'}{overlay === 'count' ? ` · trade count: ${activePoint.tradeCount}` : ''}
         </div>
       )}
-      <div className="small muted">Legend: green=positive, red=negative, gray tick=no-trade day{overlay === 'count' ? ', dots=trade count overlay' : ''}.</div>
+      <div className="small muted">Legend: green=positive, red=negative, gray tick=explicit no-trade, blank=no logged activity{overlay === 'count' ? ', purple line/dots=trade count (right axis)' : ''}.</div>
     </div>
   );
 }
