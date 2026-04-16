@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -224,10 +224,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       console.warn('Recoverable Supabase load issue', errors);
       setError(normalizeSupabaseError(errors[0]?.message || 'Some data is temporarily unavailable.'));
     }
-    setTrades((((t.data || []) as TradeRow[]) || []).map((trade) => ({
+    const normalizedTrades = ((((t.data || []) as TradeRow[]) || []).map((trade) => ({
       ...trade,
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
+    setTrades(normalizedTrades);
     setNoTrades(((n.data || []) as NoTradeDayRow[]) || []);
     setSessions(((sessionResult.data || []) as SessionRow[]) || []);
     setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
@@ -245,11 +246,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const normalizedInstruments = Array.isArray(rawInstruments)
       ? rawInstruments.map((item) => String(item ?? ''))
       : String(rawInstruments || '').split(',');
+    const resolvedCatalog = resolveMistakeCatalogState(
+      baseSettings.mistake_catalog,
+      (baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden,
+      normalizedTrades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+    );
     setSettings({
       ...baseSettings,
       instruments: normalizeUniqueInstruments(normalizedInstruments),
-      mistake_catalog: normalizeActiveMistakeCatalog(baseSettings.mistake_catalog, (baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden),
-      mistake_catalog_hidden: normalizeLegacyMistakeCatalog((baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden, baseSettings.mistake_catalog)
+      mistake_catalog: resolvedCatalog.active,
+      mistake_catalog_hidden: resolvedCatalog.hidden
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
@@ -305,8 +311,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
-  const activeMistakeCatalog = normalizeActiveMistakeCatalog(settings?.mistake_catalog, settings?.mistake_catalog_hidden);
-  const hiddenMistakeCatalog = normalizeLegacyMistakeCatalog(settings?.mistake_catalog_hidden, settings?.mistake_catalog);
+  const resolvedMistakeCatalog = resolveMistakeCatalogState(
+    settings?.mistake_catalog,
+    settings?.mistake_catalog_hidden,
+    trades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+  );
+  const activeMistakeCatalog = resolvedMistakeCatalog.active;
+  const hiddenMistakeCatalog = resolvedMistakeCatalog.hidden;
   const instrumentOptions = normalizeUniqueInstruments([
     'MES',
     tradeDraft.ticker,
@@ -1148,8 +1159,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
                   <div className="small muted"><span className="badge">Trade</span> {item.trade.family} · {item.trade.model}</div>
-                  <div className="small">{item.trade.classification} · ${item.trade.pnl} · {item.trade.r_multiple}R · {item.trade.minutes_in_trade}m</div>
-                  <div className="small muted">Emotional pressure: {item.trade.emotional_pressure}/5</div>
+                  <div className="small">
+                    {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
+                  </div>
+                  <div className="small muted">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
                   <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
@@ -1171,10 +1184,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Family: {item.trade.family}</div>
                       <div className="small">Model: {item.trade.model}</div>
                       <div className="small">Classification: {item.trade.classification}</div>
-                      <div className="small">Result: ${item.trade.pnl}</div>
-                      <div className="small">R multiple: {item.trade.r_multiple}</div>
+                      <div className="small">Result: <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span></div>
+                      <div className="small">R multiple: <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span></div>
                       <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
-                      <div className="small">Emotional pressure: {item.trade.emotional_pressure}/5</div>
+                      <div className="small">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
                       <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
@@ -1634,13 +1647,35 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </div>
           <div className="chip">{reviewStatus}</div>
           <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTrades.length} trade(s), {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTrades.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
-          <div className="trade stack">
-            <strong>This week's entries</strong>
+          <RichTextEditor
+            label="1) Reflection on mistakes"
+            value={reviewAnswers.q1}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q1: next }))}
+            placeholder="What patterns drove mistakes this week?"
+            minRows={5}
+          />
+          <RichTextEditor
+            label="2) Reflection on no-trade choices"
+            value={reviewAnswers.q2}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q2: next }))}
+            placeholder="Which no-trade decisions protected your edge?"
+            minRows={5}
+          />
+          <RichTextEditor
+            label="3) Rule for next week"
+            value={reviewAnswers.q3}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q3: next }))}
+            placeholder="Write one process rule you will enforce next week."
+            minRows={5}
+          />
+          <details className="trade stack">
+            <summary><strong>This week's entries reference</strong></summary>
+            <div className="small muted">Read-only journal context for this selected week.</div>
             {weekTrades.map((t) => (
               <article key={t.id} className="trade">
                 <div className="small muted">{t.trade_date} · {t.ticker}</div>
                 <div className="small">{t.family} · {t.model} · {t.classification}</div>
-                <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m · Emotion {t.emotional_pressure}/5</div>
+                <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span></div>
                 <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
                 <div className="small">Notes:</div>
                 <RichTextContent value={t.notes || ''} emptyLabel="—" />
@@ -1663,28 +1698,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </article>
             ))}
             {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
-          </div>
-          <RichTextEditor
-            label="1) Reflection on mistakes"
-            value={reviewAnswers.q1}
-            onChange={(next) => setReviewAnswers((s) => ({ ...s, q1: next }))}
-            placeholder="What patterns drove mistakes this week?"
-            minRows={5}
-          />
-          <RichTextEditor
-            label="2) Reflection on no-trade choices"
-            value={reviewAnswers.q2}
-            onChange={(next) => setReviewAnswers((s) => ({ ...s, q2: next }))}
-            placeholder="Which no-trade decisions protected your edge?"
-            minRows={5}
-          />
-          <RichTextEditor
-            label="3) Rule for next week"
-            value={reviewAnswers.q3}
-            onChange={(next) => setReviewAnswers((s) => ({ ...s, q3: next }))}
-            placeholder="Write one process rule you will enforce next week."
-            minRows={5}
-          />
+          </details>
           <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
         </section>
       )}
@@ -1766,109 +1780,70 @@ function RichTextEditor({
   placeholder?: string;
   minRows?: number;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [htmlValue, setHtmlValue] = useState(() => toEditorHtml(value || ''));
 
-  function withSelection(transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number }) {
-    const node = textareaRef.current;
-    if (!node) return;
-    const start = node.selectionStart ?? 0;
-    const end = node.selectionEnd ?? 0;
-    const next = transform(value || '', start, end);
-    onChange(next.text);
-    requestAnimationFrame(() => {
-      if (!textareaRef.current) return;
-      const focusStart = next.nextStart ?? start;
-      const focusEnd = next.nextEnd ?? end;
-      textareaRef.current.focus();
-      textareaRef.current.setSelectionRange(focusStart, focusEnd);
-    });
-  }
+  useEffect(() => {
+    const next = toEditorHtml(value || '');
+    setHtmlValue((prev) => (prev === next ? prev : next));
+  }, [value]);
 
-  const controls: Array<{ key: string; label: string; onPress: () => void }> = [
-    { key: 'bold', label: 'B', onPress: () => withSelection((source, start, end) => wrapWithToken(source, start, end, '**')) },
-    { key: 'underline', label: 'U', onPress: () => withSelection((source, start, end) => wrapWithToken(source, start, end, '__')) },
-    { key: 'bullet', label: '• List', onPress: () => withSelection((source, start, end) => prefixLines(source, start, end, '- ')) },
-    { key: 'number', label: '1. List', onPress: () => withSelection((source, start, end) => prefixNumberedLines(source, start, end)) },
-    { key: 'indent', label: 'Indent', onPress: () => withSelection((source, start, end) => indentLines(source, start, end, 2)) },
-    { key: 'outdent', label: 'Outdent', onPress: () => withSelection((source, start, end) => indentLines(source, start, end, -2)) }
+  const controls: Array<{ key: string; label: string; command?: string; value?: string; run?: () => void }> = [
+    { key: 'bold', label: 'B', command: 'bold' },
+    { key: 'underline', label: 'U', command: 'underline' },
+    { key: 'bullet', label: '• List', command: 'insertUnorderedList' },
+    { key: 'number', label: '1. List', command: 'insertOrderedList' },
+    { key: 'indent', label: 'Indent', command: 'indent' },
+    { key: 'outdent', label: 'Outdent', command: 'outdent' }
   ];
+
+  function runCommand(control: { command?: string; value?: string; run?: () => void }) {
+    const node = editorRef.current;
+    if (!node) return;
+    node.focus();
+    if (control.run) {
+      control.run();
+    } else if (control.command && typeof document !== 'undefined') {
+      document.execCommand(control.command, false, control.value);
+    }
+    const nextHtml = normalizeStoredRichText(node.innerHTML);
+    setHtmlValue(nextHtml);
+    onChange(nextHtml);
+  }
 
   return (
     <div className="stack">
       <label className="small muted">{label}</label>
       <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
         {controls.map((control) => (
-          <button key={control.key} className="inline" type="button" onClick={control.onPress} style={{ width: 'auto', minWidth: 58 }}>
+          <button key={control.key} className="inline" type="button" onClick={() => runCommand(control)} style={{ width: 'auto', minWidth: 58 }}>
             {control.label}
           </button>
         ))}
       </div>
-      <textarea
-        ref={textareaRef}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        rows={minRows}
-        style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        className="trade"
+        style={{ minHeight: `${Math.max(120, minRows * 26)}px`, whiteSpace: 'pre-wrap', outline: 'none' }}
+        data-placeholder={placeholder || ''}
+        onInput={(e) => {
+          const nextHtml = normalizeStoredRichText((e.currentTarget as HTMLDivElement).innerHTML);
+          setHtmlValue(nextHtml);
+          onChange(nextHtml);
+        }}
+        dangerouslySetInnerHTML={{ __html: htmlValue || '' }}
       />
-      <div className="small muted">Tip: use toolbar actions for formatting. Plain text is still supported.</div>
-      <article className="trade stack">
-        <div className="small muted">Preview</div>
-        <RichTextContent value={value} emptyLabel="Nothing written yet." />
-      </article>
+      <div className="small muted">Formatting is applied directly while typing. Existing plain text remains supported.</div>
     </div>
   );
 }
 
 function RichTextContent({ value, emptyLabel = '—' }: { value: string; emptyLabel?: string }) {
-  const normalized = String(value || '').replace(/\r/g, '');
-  if (!normalized.trim()) return <div className="small muted">{emptyLabel}</div>;
-  const lines = normalized.split('\n');
-  const blocks: ReactNode[] = [];
-  let currentListType: 'ul' | 'ol' | null = null;
-  let listItems: Array<{ text: string; indent: number }> = [];
-
-  const flushList = () => {
-    if (!currentListType || !listItems.length) return;
-    const Tag = currentListType;
-    blocks.push(
-      <Tag key={`list-${blocks.length}`} style={{ margin: '4px 0 6px', paddingLeft: 20 }}>
-        {listItems.map((item, idx) => (
-          <li key={`${item.text}-${idx}`} style={{ marginLeft: `${item.indent * 10}px` }}>
-            {renderInlineRichText(item.text)}
-          </li>
-        ))}
-      </Tag>
-    );
-    currentListType = null;
-    listItems = [];
-  };
-
-  lines.forEach((line, idx) => {
-    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
-    const numbered = line.match(/^(\s*)\d+\.\s+(.*)$/);
-    if (bullet) {
-      if (currentListType !== 'ul') flushList();
-      currentListType = 'ul';
-      listItems.push({ text: bullet[2], indent: Math.floor((bullet[1] || '').length / 2) });
-      return;
-    }
-    if (numbered) {
-      if (currentListType !== 'ol') flushList();
-      currentListType = 'ol';
-      listItems.push({ text: numbered[2], indent: Math.floor((numbered[1] || '').length / 2) });
-      return;
-    }
-    flushList();
-    if (!line.trim()) {
-      blocks.push(<div key={`space-${idx}`} style={{ height: 8 }} />);
-      return;
-    }
-    blocks.push(<p key={`line-${idx}`} style={{ margin: '0 0 6px' }}>{renderInlineRichText(line)}</p>);
-  });
-  flushList();
-
-  return <div className="small">{blocks}</div>;
+  const html = toDisplayHtml(value || '');
+  if (!html.trim()) return <div className="small muted">{emptyLabel}</div>;
+  return <div className="small rich-content" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: AttachmentRow[]; signedUrls: Record<string, string>; onOpenImage: (url: string, name: string) => void }) {
@@ -2198,6 +2173,23 @@ function mapValueToY(value: number, min: number, max: number, top: number, botto
   if (max === min) return (top + bottom) / 2;
   const ratio = (value - min) / (max - min);
   return bottom - ratio * (bottom - top);
+}
+
+function pnlValueColor(value: number) {
+  if (Number(value || 0) > 0) return '#4ad66d';
+  if (Number(value || 0) < 0) return '#ff6b6b';
+  return '#93a3b8';
+}
+
+function rValueColor(value: number) {
+  return pnlValueColor(value);
+}
+
+function emotionalPressureColor(value: number | null | undefined) {
+  const level = Number(value || 0);
+  if (level >= 3) return '#ff6b6b';
+  if (level >= 1) return '#4ad66d';
+  return '#93a3b8';
 }
 
 function buildAxisTickIndexes(length: number, targetTicks: number) {
@@ -3058,71 +3050,83 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   return Number(signed.toFixed(2));
 }
 
-function wrapWithToken(source: string, start: number, end: number, token: string) {
-  const from = Math.max(0, Math.min(start, end));
-  const to = Math.max(from, Math.max(start, end));
-  const selected = source.slice(from, to) || 'text';
-  const wrapped = `${token}${selected}${token}`;
-  const text = `${source.slice(0, from)}${wrapped}${source.slice(to)}`;
-  const nextStart = from + token.length;
-  const nextEnd = nextStart + selected.length;
-  return { text, nextStart, nextEnd };
+function toEditorHtml(value: string) {
+  const normalized = String(value || '');
+  if (!normalized.trim()) return '';
+  if (/<\/?[a-z][\s\S]*>/i.test(normalized)) return normalizeStoredRichText(normalized);
+  return normalizeStoredRichText(markdownishToHtml(normalized));
 }
 
-function prefixLines(source: string, start: number, end: number, prefix: string) {
-  return mutateLines(source, start, end, (line) => {
-    if (!line.trim()) return line;
-    if (line.trimStart().startsWith(prefix.trim())) return line;
-    return `${prefix}${line}`;
-  });
+function toDisplayHtml(value: string) {
+  return toEditorHtml(value);
 }
 
-function prefixNumberedLines(source: string, start: number, end: number) {
-  let count = 1;
-  return mutateLines(source, start, end, (line) => {
-    if (!line.trim()) return line;
-    const cleaned = line.replace(/^\s*\d+\.\s+/, '');
-    const next = `${count}. ${cleaned}`;
-    count += 1;
-    return next;
-  });
+function normalizeStoredRichText(html: string) {
+  const text = String(html || '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/javascript:/gi, '');
+  const trimmed = text.trim();
+  if (!trimmed || /^<(br|div|p)>\s*<\/\1>$/i.test(trimmed)) return '';
+  return trimmed;
 }
 
-function indentLines(source: string, start: number, end: number, delta: number) {
-  return mutateLines(source, start, end, (line) => {
-    if (!line.trim()) return line;
-    const leading = line.match(/^\s*/)?.[0] || '';
-    const updated = Math.max(0, leading.length + delta);
-    return `${' '.repeat(updated)}${line.trimStart()}`;
-  });
-}
+function markdownishToHtml(rawValue: string) {
+  const lines = String(rawValue || '').replace(/\r/g, '').split('\n');
+  const blocks: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
 
-function mutateLines(source: string, start: number, end: number, transform: (line: string) => string) {
-  const from = Math.max(0, Math.min(start, end));
-  const to = Math.max(from, Math.max(start, end));
-  const lineStart = source.lastIndexOf('\n', from - 1) + 1;
-  const nextBreak = source.indexOf('\n', to);
-  const lineEnd = nextBreak === -1 ? source.length : nextBreak;
-  const segment = source.slice(lineStart, lineEnd);
-  const lines = segment.split('\n');
-  const updatedLines = lines.map(transform);
-  const updated = updatedLines.join('\n');
-  const text = `${source.slice(0, lineStart)}${updated}${source.slice(lineEnd)}`;
-  return { text, nextStart: lineStart, nextEnd: lineStart + updated.length };
-}
+  const flushList = () => {
+    if (!listType || !listItems.length) return;
+    blocks.push(`<${listType}>${listItems.join('')}</${listType}>`);
+    listType = null;
+    listItems = [];
+  };
 
-function renderInlineRichText(rawText: string): ReactNode[] {
-  const text = String(rawText || '');
-  const tokens = text.split(/(\*\*[^*]+\*\*|__[^_]+__)/g).filter(Boolean);
-  return tokens.map((token, idx) => {
-    if (token.startsWith('**') && token.endsWith('**')) {
-      return <strong key={`bold-${idx}`}>{token.slice(2, -2)}</strong>;
+  lines.forEach((line) => {
+    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const numbered = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (bullet) {
+      if (listType !== 'ul') flushList();
+      listType = 'ul';
+      const indent = Math.floor((bullet[1] || '').length / 2);
+      listItems.push(`<li style="margin-left:${indent * 10}px">${applyInlineMarkup(bullet[2])}</li>`);
+      return;
     }
-    if (token.startsWith('__') && token.endsWith('__')) {
-      return <u key={`under-${idx}`}>{token.slice(2, -2)}</u>;
+    if (numbered) {
+      if (listType !== 'ol') flushList();
+      listType = 'ol';
+      const indent = Math.floor((numbered[1] || '').length / 2);
+      listItems.push(`<li style="margin-left:${indent * 10}px">${applyInlineMarkup(numbered[2])}</li>`);
+      return;
     }
-    return <Fragment key={`plain-${idx}`}>{token}</Fragment>;
+    flushList();
+    if (!line.trim()) {
+      blocks.push('<div><br></div>');
+      return;
+    }
+    blocks.push(`<div>${applyInlineMarkup(line)}</div>`);
   });
+  flushList();
+  return blocks.join('');
+}
+
+function applyInlineMarkup(rawLine: string) {
+  const escaped = escapeHtml(rawLine);
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<u>$1</u>');
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
@@ -3188,21 +3192,46 @@ function isLegacyJunkMistakeTag(tag: string) {
   return LEGACY_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
 }
 
-function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: unknown): string[] {
-  const hidden = new Set(normalizeMistakeTags(hiddenCatalog).map((item) => item.toLowerCase()));
-  const source = normalizeMistakeTags(activeCatalog);
-  const seeded = source.length ? source : [...DEFAULT_MISTAKE_CATALOG];
-  return normalizeUniqueTags(
-    seeded.filter((tag) => !isLegacyJunkMistakeTag(tag) && !hidden.has(tag.toLowerCase()))
+function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unknown, historicalTags: unknown = []): { active: string[]; hidden: string[]; legacy: string[] } {
+  const hiddenSeed = normalizeMistakeTags(hiddenCatalog);
+  const hiddenSet = new Set(hiddenSeed.map((item) => item.toLowerCase()));
+  const sourceActive = normalizeMistakeTags(activeCatalog);
+  const historical = normalizeMistakeTags(historicalTags);
+  const defaultSet = new Set(DEFAULT_MISTAKE_CATALOG.map((item) => item.toLowerCase()));
+
+  const cleanedActive = normalizeUniqueTags(
+    sourceActive.filter((tag) => !isLegacyJunkMistakeTag(tag) && !hiddenSet.has(tag.toLowerCase()))
   );
+  const hasReasonableDefaultCoverage = cleanedActive.filter((tag) => defaultSet.has(tag.toLowerCase())).length >= 2;
+  const looksStaleLegacyOnly = cleanedActive.length <= 1 && !hasReasonableDefaultCoverage;
+  const fallbackActive = normalizeUniqueTags([
+    ...DEFAULT_MISTAKE_CATALOG.filter((tag) => !hiddenSet.has(tag.toLowerCase())),
+    ...cleanedActive
+  ]);
+  const active = normalizeUniqueTags(
+    (looksStaleLegacyOnly ? fallbackActive : (cleanedActive.length ? cleanedActive : fallbackActive))
+      .filter((tag) => !hiddenSet.has(tag.toLowerCase()))
+  );
+  const activeSet = new Set(active.map((tag) => tag.toLowerCase()));
+
+  const hidden = normalizeUniqueTags([
+    ...hiddenSeed,
+    ...sourceActive.filter((tag) => isLegacyJunkMistakeTag(tag)),
+    ...(looksStaleLegacyOnly ? sourceActive : [])
+  ]).filter((tag) => !activeSet.has(tag.toLowerCase()));
+
+  const hiddenSetFinal = new Set(hidden.map((tag) => tag.toLowerCase()));
+  const legacy = normalizeUniqueTags(historical.filter((tag) => !activeSet.has(tag.toLowerCase()) && !hiddenSetFinal.has(tag.toLowerCase())));
+
+  return { active, hidden, legacy };
+}
+
+function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: unknown): string[] {
+  return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).active;
 }
 
 function normalizeLegacyMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
-  const active = new Set(normalizeMistakeTags(activeCatalog).map((item) => item.toLowerCase()));
-  return normalizeUniqueTags([
-    ...normalizeMistakeTags(hiddenCatalog),
-    ...normalizeMistakeTags(activeCatalog).filter((tag) => isLegacyJunkMistakeTag(tag))
-  ]).filter((tag) => !active.has(tag.toLowerCase()));
+  return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).hidden;
 }
 
 function normalizeSupabaseError(message: string) {
