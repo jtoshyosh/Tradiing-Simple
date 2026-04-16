@@ -1,0 +1,61 @@
+export type TradeClassification =
+  | 'Valid setup'
+  | 'Valid setup, poor execution'
+  | 'FOMO trade'
+  | 'Forced trade'
+  | 'Experimental trade'
+  | 'No valid setup';
+
+export type TradeRow = {
+  id: string;
+  user_id: string;
+  trade_date: string;
+  ticker: string;
+  family: string;
+  model: string;
+  classification: TradeClassification;
+  pnl: number;
+  r_multiple: number;
+  minutes_in_trade: number;
+  emotional_pressure: number | null;
+  mistake_tags: string[];
+  notes: string | null;
+};
+
+export type NoTradeDayRow = {
+  id: string;
+  user_id: string;
+  day_date: string;
+  reason: string;
+  notes: string | null;
+};
+
+export type WeeklyReviewRow = {
+  id: string;
+  user_id: string;
+  week_key: string;
+  q1: string;
+  q2: string;
+  q3: string;
+};
+
+export type SettingsRow = {
+  user_id: string;
+  daily_reminder: boolean;
+  weekly_reminder: boolean;
+  default_risk: number;
+  display_name: string;
+  instruments: string[];
+  mistake_catalog: string[];
+};
+
+export type AttachmentRow = {
+  id: string;
+  user_id: string;
+  trade_id: string | null;
+  no_trade_day_id: string | null;
+  file_path: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+};
