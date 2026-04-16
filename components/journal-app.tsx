@@ -162,9 +162,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
   const [calendarMetric, setCalendarMetric] = useState<'pnl' | 'r'>('pnl');
-  const [chartMetric, setChartMetric] = useState<'pnl' | 'r'>('pnl');
   const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
-  const [chartOverlay, setChartOverlay] = useState<'none' | 'count'>('none');
+  const [overlayR, setOverlayR] = useState(false);
+  const [overlayTradeCount, setOverlayTradeCount] = useState(true);
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
@@ -263,7 +263,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
-  const periodTimeline = buildPeriodTimeline(periodRange.start, periodRange.end, periodTrades, periodNoTrades, chartMetric, chartView);
+  const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
   const instrumentOptions = normalizeUniqueInstruments([
     'MES',
@@ -835,20 +835,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <section className="card stack">
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <strong>Performance chart</strong>
-              <select value={chartMetric} onChange={(e) => setChartMetric(e.target.value as 'pnl' | 'r')} style={{ width: 'auto' }}>
-                <option value="pnl">$</option>
-                <option value="r">R</option>
-              </select>
               <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto' }}>
                 <option value="daily">Daily</option>
                 <option value="cumulative">Cumulative</option>
               </select>
-              <select value={chartOverlay} onChange={(e) => setChartOverlay(e.target.value as 'none' | 'count')} style={{ width: 'auto' }}>
-                <option value="none">Overlay: None</option>
-                <option value="count">Overlay: Trade count</option>
-              </select>
+              <label className="small muted row" style={{ gap: 6, width: 'auto' }}>
+                <input type="checkbox" checked={overlayR} onChange={(e) => setOverlayR(e.target.checked)} />
+                R overlay
+              </label>
+              <label className="small muted row" style={{ gap: 6, width: 'auto' }}>
+                <input type="checkbox" checked={overlayTradeCount} onChange={(e) => setOverlayTradeCount(e.target.checked)} />
+                Trade count overlay
+              </label>
             </div>
-            <PerformanceChart points={periodTimeline} metric={chartMetric} view={chartView} overlay={chartOverlay} />
+            <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} />
           </section>
 
           <section className="card stack">
@@ -1546,12 +1546,30 @@ function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: 
   );
 }
 
-type TimelinePoint = { date: string; value: number; tradeCount: number; noTrade: boolean };
+type TimelinePoint = {
+  key: string;
+  label: string;
+  start: string;
+  end: string;
+  dailyPnl: number;
+  dailyR: number;
+  tradeCount: number;
+  explicitNoTrade: boolean;
+  bucketType: 'day' | 'week';
+};
 
-function PerformanceChart({ points, metric, view, overlay }: { points: TimelinePoint[]; metric: 'pnl' | 'r'; view: 'daily' | 'cumulative'; overlay: 'none' | 'count' }) {
+function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }: { points: TimelinePoint[]; view: 'daily' | 'cumulative'; showROverlay: boolean; showTradeCountOverlay: boolean }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(points.length ? points.length - 1 : null);
   if (!points.length) return <div className="small muted">No data in selected period.</div>;
-  const values = points.map((p) => p.value);
+  const mainSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.dailyPnl, 0) : point.dailyPnl;
+  });
+  const rSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.dailyR, 0) : point.dailyR;
+  });
+  const values = mainSeries;
   const maxAbs = Math.max(1, ...values.map((v) => Math.abs(v)), 0.01);
   const yMax = Math.ceil(maxAbs * 1.2 * 10) / 10;
   const yMin = -yMax;
@@ -1565,11 +1583,17 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
   const plotWidth = plotRight - plotLeft;
   const baseline = mapValueToY(0, yMin, yMax, plotTop, plotBottom);
   const maxTradeCount = Math.max(1, ...points.map((p) => p.tradeCount));
+  const maxRAbs = Math.max(1, ...rSeries.map((v) => Math.abs(v)), 0.01);
   const xForIndex = (idx: number) => plotLeft + (idx / Math.max(1, points.length - 1)) * plotWidth;
   const yForValue = (value: number) => mapValueToY(value, yMin, yMax, plotTop, plotBottom);
   const polyline = points.map((point, idx) => {
     const x = xForIndex(idx);
-    const y = yForValue(point.value);
+    const y = yForValue(mainSeries[idx]);
+    return `${x},${y}`;
+  }).join(' ');
+  const rPolyline = points.map((point, idx) => {
+    const x = xForIndex(idx);
+    const y = mapValueToY(rSeries[idx], -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
     return `${x},${y}`;
   }).join(' ');
   const xTickIndexes = buildAxisTickIndexes(points.length, 5);
@@ -1578,7 +1602,7 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
   const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
   const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
   const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
-  const activeY = activePoint ? yForValue(activePoint.value) : null;
+  const activeY = safeActiveIndex != null ? yForValue(mainSeries[safeActiveIndex]) : null;
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -1588,7 +1612,7 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
           return (
             <g key={`y-${tick}`}>
               <line x1={plotLeft} y1={y} x2={plotRight} y2={y} stroke="#1f2937" strokeWidth={1} />
-              <text x={4} y={y + 4} fill="#93a3b8" fontSize={10}>{formatMetricValue(tick, metric)}</text>
+              <text x={4} y={y + 4} fill="#93a3b8" fontSize={10}>{formatMetricValue(tick, 'pnl')}</text>
             </g>
           );
         })}
@@ -1596,15 +1620,32 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
         {view === 'daily' && points.map((point, idx) => {
           if (point.tradeCount === 0) return null;
           const x = xForIndex(idx) - 5;
-          const barHeight = Math.max(2, Math.abs(point.value / (yMax || 1)) * (plotHeight / 2 - 2));
-          const y = point.value >= 0 ? baseline - barHeight : baseline;
-          return <rect key={`bar-${point.date}`} x={x} y={y} width={10} height={barHeight} fill={point.value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />;
+          const value = mainSeries[idx];
+          const barHeight = Math.max(2, Math.abs(value / (yMax || 1)) * (plotHeight / 2 - 2));
+          const y = value >= 0 ? baseline - barHeight : baseline;
+          return <rect key={`bar-${point.key}`} x={x} y={y} width={10} height={barHeight} fill={value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />;
         })}
         {view === 'cumulative' && <polyline fill="none" stroke="#70c8ff" strokeWidth={2} points={polyline} />}
         {view === 'cumulative' && points.map((point, idx) => (
-          <circle key={`line-hit-${point.date}`} cx={xForIndex(idx)} cy={yForValue(point.value)} r={6} fill="transparent" onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />
+          <circle key={`line-hit-${point.key}`} cx={xForIndex(idx)} cy={yForValue(mainSeries[idx])} r={6} fill="transparent" onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />
         ))}
-        {overlay === 'count' && (
+        {showROverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth={1.5}
+              points={rPolyline}
+            />
+            {points.map((point, idx) => {
+              if (point.tradeCount === 0 && point.explicitNoTrade) return null;
+              const x = xForIndex(idx);
+              const y = mapValueToY(rSeries[idx], -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
+              return <circle key={`r-${point.key}`} cx={x} cy={y} r={2} fill="#94a3b8" />;
+            })}
+          </>
+        )}
+        {showTradeCountOverlay && (
           <>
             <polyline
               fill="none"
@@ -1615,7 +1656,7 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
             {points.map((point, idx) => {
               const x = xForIndex(idx);
               const y = mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom);
-              return point.tradeCount > 0 ? <circle key={`count-${point.date}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
+              return point.tradeCount > 0 ? <circle key={`count-${point.key}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
             })}
             {tradeCountTicks.map((tick) => {
               const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
@@ -1624,17 +1665,17 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
           </>
         )}
         {points.map((point, idx) => {
-          if (!point.noTrade) return null;
+          if (!point.explicitNoTrade) return null;
           const x = xForIndex(idx) - 3;
-          return <line key={`nt-${point.date}`} x1={x} y1={plotBottom + 6} x2={x + 6} y2={plotBottom + 6} stroke="#9ca3af" strokeWidth={2} />;
+          return <line key={`nt-${point.key}`} x1={x} y1={plotBottom + 6} x2={x + 6} y2={plotBottom + 6} stroke="#9ca3af" strokeWidth={2} />;
         })}
         {xTickIndexes.map((idx) => {
           const point = points[idx];
           const x = xForIndex(idx);
           return (
-            <g key={`x-${point.date}`}>
+            <g key={`x-${point.key}`}>
               <line x1={x} y1={plotBottom} x2={x} y2={plotBottom + 4} stroke="#475569" />
-              <text x={x} y={chartHeight - 8} fill="#93a3b8" fontSize={10} textAnchor="middle">{formatAxisDate(point.date)}</text>
+              <text x={x} y={chartHeight - 8} fill="#93a3b8" fontSize={10} textAnchor="middle">{point.label}</text>
             </g>
           );
         })}
@@ -1647,26 +1688,56 @@ function PerformanceChart({ points, metric, view, overlay }: { points: TimelineP
       </svg>
       {activePoint && (
         <div className="small muted" style={{ marginTop: 4 }}>
-          {formatLongDate(activePoint.date)} · {formatMetricValue(activePoint.value, metric)} · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.noTrade ? 'No-trade day' : 'No logged activity'}{overlay === 'count' ? ` · trade count: ${activePoint.tradeCount}` : ''}
+          {formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''} · {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')}{showROverlay ? ` · R: ${(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R` : ''} · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'No-trade day' : 'No logged activity'} · trade count: {activePoint.tradeCount}
         </div>
       )}
-      <div className="small muted">Legend: green=positive, red=negative, gray tick=explicit no-trade, blank=no logged activity{overlay === 'count' ? ', purple line/dots=trade count (right axis)' : ''}.</div>
+      <div className="small muted">Legend: green=positive $, red=negative $, gray tick=explicit no-trade, blank=no logged activity{showROverlay ? ', slate line/dots=R overlay' : ''}{showTradeCountOverlay ? ', purple line/dots=trade count (right axis)' : ''}.</div>
     </div>
   );
 }
 
-function buildPeriodTimeline(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], metric: 'pnl' | 'r', view: 'daily' | 'cumulative'): TimelinePoint[] {
+function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], periodType: DashboardPeriod): TimelinePoint[] {
   const dates = enumerateDates(start, end);
-  let running = 0;
-  return dates.map((date) => {
-    const dayTrades = periodTrades.filter((t) => t.trade_date === date);
-    const dayValue = dayTrades.reduce((sum, trade) => sum + Number(metric === 'pnl' ? trade.pnl : trade.r_multiple), 0);
-    running += dayValue;
+  if (periodType === 'weekly' || periodType === 'monthly') {
+    return dates.map((date) => {
+      const dayTrades = periodTrades.filter((t) => t.trade_date === date);
+      return {
+        key: date,
+        label: formatAxisDate(date),
+        start: date,
+        end: date,
+        dailyPnl: dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
+        dailyR: dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
+        tradeCount: dayTrades.length,
+        explicitNoTrade: periodNoTrades.some((n) => n.day_date === date),
+        bucketType: 'day'
+      };
+    });
+  }
+  const weeks = new Map<string, { start: string; end: string; dates: string[] }>();
+  dates.forEach((date) => {
+    const key = sundayWeekStart(date);
+    const existing = weeks.get(key);
+    if (existing) {
+      existing.end = date;
+      existing.dates.push(date);
+    } else {
+      weeks.set(key, { start: date, end: date, dates: [date] });
+    }
+  });
+  return Array.from(weeks.entries()).map(([key, value]) => {
+    const bucketTrades = periodTrades.filter((t) => value.dates.includes(t.trade_date));
+    const hasNoTrade = periodNoTrades.some((n) => value.dates.includes(n.day_date));
     return {
-      date,
-      value: view === 'cumulative' ? running : dayValue,
-      tradeCount: dayTrades.length,
-      noTrade: periodNoTrades.some((n) => n.day_date === date)
+      key,
+      label: formatAxisDate(value.start),
+      start: value.start,
+      end: value.end,
+      dailyPnl: bucketTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
+      dailyR: bucketTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
+      tradeCount: bucketTrades.length,
+      explicitNoTrade: hasNoTrade,
+      bucketType: 'week'
     };
   });
 }
@@ -1734,6 +1805,13 @@ function formatShortDate(dateStr: string) {
 function formatAxisDate(dateStr: string) {
   const date = new Date(`${dateStr}T00:00:00Z`);
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function sundayWeekStart(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - day);
+  return date.toISOString().slice(0, 10);
 }
 
 function formatLongDate(dateStr: string) {
