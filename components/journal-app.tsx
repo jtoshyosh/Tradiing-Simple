@@ -1825,8 +1825,8 @@ function RichTextEditor({
   const controls: Array<{ key: string; label: string; run: () => void }> = [
     { key: 'bold', label: 'B', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
     { key: 'underline', label: 'U', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
-    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => prefixLines(source, start, end, '- ')) },
-    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => prefixNumberedLines(source, start, end)) },
+    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet')) },
+    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered')) },
     { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2)) },
     { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2)) }
   ];
@@ -3260,23 +3260,45 @@ function wrapWithToken(source: string, start: number, end: number, token: string
   return { text, nextStart: from + token.length, nextEnd: from + token.length + selected.length };
 }
 
-function prefixLines(source: string, start: number, end: number, prefix: string) {
-  return mutateLines(source, start, end, (line) => {
-    if (!line.trim()) return line;
-    if (line.trimStart().startsWith(prefix.trim())) return line;
-    return `${prefix}${line}`;
-  });
-}
+function applyListActivation(source: string, start: number, end: number, type: 'bullet' | 'numbered') {
+  if (start === end) {
+    const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+    const nextBreak = source.indexOf('\n', start);
+    const lineEnd = nextBreak === -1 ? source.length : nextBreak;
+    const line = source.slice(lineStart, lineEnd);
+    const indent = (line.match(/^\s*/) || [''])[0];
+    const cleaned = stripListPrefix(line.trimStart());
+    const marker = type === 'bullet' ? '- ' : '1. ';
+    const nextLine = `${indent}${marker}${cleaned}`;
+    const text = `${source.slice(0, lineStart)}${nextLine}${source.slice(lineEnd)}`;
+    const caretOffset = cleaned.length === 0
+      ? lineStart + indent.length + marker.length
+      : Math.min(lineStart + nextLine.length, lineStart + indent.length + marker.length + (start - lineStart));
+    return { text, nextStart: caretOffset, nextEnd: caretOffset };
+  }
 
-function prefixNumberedLines(source: string, start: number, end: number) {
+  if (type === 'bullet') {
+    return mutateLines(source, start, end, (line) => {
+      if (!line.trim()) return line;
+      const indent = (line.match(/^\s*/) || [''])[0];
+      const cleaned = stripListPrefix(line.trimStart());
+      return `${indent}- ${cleaned}`;
+    });
+  }
+
   let count = 1;
   return mutateLines(source, start, end, (line) => {
     if (!line.trim()) return line;
-    const cleaned = line.replace(/^\s*\d+\.\s+/, '');
-    const next = `${count}. ${cleaned}`;
+    const indent = (line.match(/^\s*/) || [''])[0];
+    const cleaned = stripListPrefix(line.trimStart());
+    const next = `${indent}${count}. ${cleaned}`;
     count += 1;
     return next;
   });
+}
+
+function stripListPrefix(line: string) {
+  return line.replace(/^(-|\*|\d+\.)\s+/, '');
 }
 
 function indentLines(source: string, start: number, end: number, delta: number) {
