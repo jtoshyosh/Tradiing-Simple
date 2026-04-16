@@ -192,6 +192,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [overlayR, setOverlayR] = useState(false);
   const [overlayTradeCount, setOverlayTradeCount] = useState(true);
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
+  const [reviewEntriesOpen, setReviewEntriesOpen] = useState(false);
 
   useEffect(() => {
     const [first, last] = splitDisplayName(settings?.display_name || '', email);
@@ -1668,37 +1669,46 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             placeholder="Write one process rule you will enforce next week."
             minRows={5}
           />
-          <details className="trade stack">
-            <summary><strong>This week's entries reference</strong></summary>
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week's entries reference</strong>
+              <button className="inline" type="button" onClick={() => setReviewEntriesOpen((open) => !open)}>
+                {reviewEntriesOpen ? 'Hide' : 'Show'}
+              </button>
+            </div>
             <div className="small muted">Read-only journal context for this selected week.</div>
-            {weekTrades.map((t) => (
-              <article key={t.id} className="trade">
-                <div className="small muted">{t.trade_date} · {t.ticker}</div>
-                <div className="small">{t.family} · {t.model} · {t.classification}</div>
-                <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span></div>
-                <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
-                <div className="small">Notes:</div>
-                <RichTextContent value={t.notes || ''} emptyLabel="—" />
-                <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-              </article>
-            ))}
-            {weekNoTrades.map((n) => (
-              <article key={n.id} className="trade no-trade">
-                <div className="small muted">{n.day_date}</div>
-                <div className="small">Reason: {n.reason}</div>
-                <div className="small">Notes:</div>
-                <RichTextContent value={n.notes || ''} emptyLabel="—" />
-                <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-              </article>
-            ))}
-            {weekSessions.map((s) => (
-              <article key={s.id} className="trade">
-                <div className="small muted">{s.session_date} · {titleCase(s.session_type)} session</div>
-                <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
-              </article>
-            ))}
-            {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
-          </details>
+            {reviewEntriesOpen ? (
+              <div className="stack" style={{ maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
+                {weekTrades.map((t) => (
+                  <article key={t.id} className="trade">
+                    <div className="small muted">{t.trade_date} · {t.ticker}</div>
+                    <div className="small">{t.family} · {t.model} · {t.classification}</div>
+                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span></div>
+                    <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={t.notes || ''} emptyLabel="—" />
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </article>
+                ))}
+                {weekNoTrades.map((n) => (
+                  <article key={n.id} className="trade no-trade">
+                    <div className="small muted">{n.day_date}</div>
+                    <div className="small">Reason: {n.reason}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={n.notes || ''} emptyLabel="—" />
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </article>
+                ))}
+                {weekSessions.map((s) => (
+                  <article key={s.id} className="trade">
+                    <div className="small muted">{s.session_date} · {titleCase(s.session_type)} session</div>
+                    <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
+                  </article>
+                ))}
+                {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
+              </div>
+            ) : null}
+          </section>
           <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
         </section>
       )}
@@ -1780,62 +1790,71 @@ function RichTextEditor({
   placeholder?: string;
   minRows?: number;
 }) {
-  const editorRef = useRef<HTMLDivElement | null>(null);
-  const [htmlValue, setHtmlValue] = useState(() => toEditorHtml(value || ''));
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textValue, setTextValue] = useState(() => toEditorText(value || ''));
 
   useEffect(() => {
-    const next = toEditorHtml(value || '');
-    setHtmlValue((prev) => (prev === next ? prev : next));
+    const next = toEditorText(value || '');
+    setTextValue((prev) => (prev === next ? prev : next));
   }, [value]);
 
-  const controls: Array<{ key: string; label: string; command?: string; value?: string; run?: () => void }> = [
-    { key: 'bold', label: 'B', command: 'bold' },
-    { key: 'underline', label: 'U', command: 'underline' },
-    { key: 'bullet', label: '• List', command: 'insertUnorderedList' },
-    { key: 'number', label: '1. List', command: 'insertOrderedList' },
-    { key: 'indent', label: 'Indent', command: 'indent' },
-    { key: 'outdent', label: 'Outdent', command: 'outdent' }
-  ];
-
-  function runCommand(control: { command?: string; value?: string; run?: () => void }) {
-    const node = editorRef.current;
+  function applyMutation(
+    transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number }
+  ) {
+    const node = textareaRef.current;
     if (!node) return;
-    node.focus();
-    if (control.run) {
-      control.run();
-    } else if (control.command && typeof document !== 'undefined') {
-      document.execCommand(control.command, false, control.value);
-    }
-    const nextHtml = normalizeStoredRichText(node.innerHTML);
-    setHtmlValue(nextHtml);
-    onChange(nextHtml);
+    const start = node.selectionStart ?? 0;
+    const end = node.selectionEnd ?? 0;
+    const next = transform(textValue, start, end);
+    setTextValue(next.text);
+    onChange(next.text);
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return;
+      const nextStart = next.nextStart ?? start;
+      const nextEnd = next.nextEnd ?? end;
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(nextStart, nextEnd);
+    });
   }
+
+  const controls: Array<{ key: string; label: string; run: () => void }> = [
+    { key: 'bold', label: 'B', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
+    { key: 'underline', label: 'U', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
+    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => prefixLines(source, start, end, '- ')) },
+    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => prefixNumberedLines(source, start, end)) },
+    { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2)) },
+    { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2)) }
+  ];
 
   return (
     <div className="stack">
       <label className="small muted">{label}</label>
       <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
         {controls.map((control) => (
-          <button key={control.key} className="inline" type="button" onClick={() => runCommand(control)} style={{ width: 'auto', minWidth: 58 }}>
+          <button
+            key={control.key}
+            className="inline"
+            type="button"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={control.run}
+            style={{ width: 'auto', minWidth: 58 }}
+          >
             {control.label}
           </button>
         ))}
       </div>
-      <div
-        ref={editorRef}
-        contentEditable
-        suppressContentEditableWarning
-        className="trade"
-        style={{ minHeight: `${Math.max(120, minRows * 26)}px`, whiteSpace: 'pre-wrap', outline: 'none' }}
-        data-placeholder={placeholder || ''}
-        onInput={(e) => {
-          const nextHtml = normalizeStoredRichText((e.currentTarget as HTMLDivElement).innerHTML);
-          setHtmlValue(nextHtml);
-          onChange(nextHtml);
+      <textarea
+        ref={textareaRef}
+        value={textValue}
+        onChange={(event) => {
+          setTextValue(event.target.value);
+          onChange(event.target.value);
         }}
-        dangerouslySetInnerHTML={{ __html: htmlValue || '' }}
+        placeholder={placeholder}
+        rows={minRows}
+        style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
       />
-      <div className="small muted">Formatting is applied directly while typing. Existing plain text remains supported.</div>
+      <div className="small muted">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
     </div>
   );
 }
@@ -3050,15 +3069,18 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   return Number(signed.toFixed(2));
 }
 
-function toEditorHtml(value: string) {
+function toEditorText(value: string) {
+  const normalized = String(value || '');
+  if (!normalized.trim()) return '';
+  if (/<\/?[a-z][\s\S]*>/i.test(normalized)) return htmlToEditorText(normalized);
+  return normalized;
+}
+
+function toDisplayHtml(value: string) {
   const normalized = String(value || '');
   if (!normalized.trim()) return '';
   if (/<\/?[a-z][\s\S]*>/i.test(normalized)) return normalizeStoredRichText(normalized);
   return normalizeStoredRichText(markdownishToHtml(normalized));
-}
-
-function toDisplayHtml(value: string) {
-  return toEditorHtml(value);
 }
 
 function normalizeStoredRichText(html: string) {
@@ -3070,6 +3092,26 @@ function normalizeStoredRichText(html: string) {
   const trimmed = text.trim();
   if (!trimmed || /^<(br|div|p)>\s*<\/\1>$/i.test(trimmed)) return '';
   return trimmed;
+}
+
+function htmlToEditorText(rawHtml: string) {
+  const sanitized = normalizeStoredRichText(rawHtml)
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '');
+  let text = sanitized
+    .replace(/<\/?(strong|b)>/gi, '**')
+    .replace(/<\/?u>/gi, '__')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<div>/gi, '')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p>/gi, '')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  text = decodeHtmlEntities(text).replace(/\n{3,}/g, '\n\n').trim();
+  return text;
 }
 
 function markdownishToHtml(rawValue: string) {
@@ -3127,6 +3169,65 @@ function escapeHtml(value: string) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function wrapWithToken(source: string, start: number, end: number, token: string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const selected = source.slice(from, to) || 'text';
+  const wrapped = `${token}${selected}${token}`;
+  const text = `${source.slice(0, from)}${wrapped}${source.slice(to)}`;
+  return { text, nextStart: from + token.length, nextEnd: from + token.length + selected.length };
+}
+
+function prefixLines(source: string, start: number, end: number, prefix: string) {
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    if (line.trimStart().startsWith(prefix.trim())) return line;
+    return `${prefix}${line}`;
+  });
+}
+
+function prefixNumberedLines(source: string, start: number, end: number) {
+  let count = 1;
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const cleaned = line.replace(/^\s*\d+\.\s+/, '');
+    const next = `${count}. ${cleaned}`;
+    count += 1;
+    return next;
+  });
+}
+
+function indentLines(source: string, start: number, end: number, delta: number) {
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const leading = line.match(/^\s*/)?.[0] || '';
+    const updated = Math.max(0, leading.length + delta);
+    return `${' '.repeat(updated)}${line.trimStart()}`;
+  });
+}
+
+function mutateLines(source: string, start: number, end: number, transform: (line: string) => string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const lineStart = source.lastIndexOf('\n', from - 1) + 1;
+  const nextBreak = source.indexOf('\n', to);
+  const lineEnd = nextBreak === -1 ? source.length : nextBreak;
+  const segment = source.slice(lineStart, lineEnd);
+  const lines = segment.split('\n');
+  const updated = lines.map(transform).join('\n');
+  return { text: `${source.slice(0, lineStart)}${updated}${source.slice(lineEnd)}`, nextStart: lineStart, nextEnd: lineStart + updated.length };
 }
 
 function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
