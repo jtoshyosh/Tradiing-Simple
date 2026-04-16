@@ -77,7 +77,8 @@ type TradeDraft = {
   family: string;
   model: string;
   pnl: string;
-  r_multiple: string;
+  r_multiple_whole: string;
+  r_multiple_decimal: string;
   minutes_in_trade: string;
   emotional_pressure: string;
   mistake_tags: string[];
@@ -96,7 +97,7 @@ type OcrDebugState = {
   minutesRejectReason?: string;
   timeframeRejected?: boolean;
 };
-type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'r_multiple' | 'minutes_in_trade'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
+type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'minutes_in_trade'>> & { r_multiple?: string; hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 
 export default function JournalApp({ userId, email }: Props) {
@@ -131,7 +132,8 @@ export default function JournalApp({ userId, email }: Props) {
     family: 'Bounce',
     model: familyModels.Bounce[0],
     pnl: '',
-    r_multiple: '',
+    r_multiple_whole: '2',
+    r_multiple_decimal: '00',
     minutes_in_trade: '',
     emotional_pressure: '1',
     mistake_tags: [],
@@ -224,7 +226,14 @@ export default function JournalApp({ userId, email }: Props) {
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
     ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade }))
-  ].sort((a, b) => b.date.localeCompare(a.date));
+  ].sort((a, b) => {
+    const byDate = b.date.localeCompare(a.date);
+    if (byDate !== 0) return byDate;
+    const createdA = getTimelineCreatedAt(a);
+    const createdB = getTimelineCreatedAt(b);
+    if (createdA !== createdB) return createdB.localeCompare(createdA);
+    return a.id.localeCompare(b.id);
+  });
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -248,7 +257,7 @@ export default function JournalApp({ userId, email }: Props) {
       model: isInvalid ? NA_MODEL : String(tradeDraft.model || familyModels[family][0]),
       classification,
       pnl: Number(tradeDraft.pnl || 0),
-      r_multiple: Number(tradeDraft.r_multiple || 0),
+      r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
       mistake_tags: tradeDraft.mistake_tags,
@@ -372,7 +381,8 @@ export default function JournalApp({ userId, email }: Props) {
       family: 'Bounce',
       model: familyModels.Bounce[0],
       pnl: '',
-      r_multiple: '',
+      r_multiple_whole: '2',
+      r_multiple_decimal: '00',
       minutes_in_trade: '',
       emotional_pressure: '1',
       mistake_tags: [],
@@ -395,7 +405,7 @@ export default function JournalApp({ userId, email }: Props) {
       family: trade.family,
       model: trade.model,
       pnl: String(trade.pnl ?? ''),
-      r_multiple: String(trade.r_multiple ?? ''),
+      ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
       mistake_tags: trade.mistake_tags || [],
@@ -513,15 +523,20 @@ export default function JournalApp({ userId, email }: Props) {
     setNoTradeExtract(next || null);
   }
 
-  function applyTradeSuggestion<K extends keyof TradeDraft>(key: K, value: TradeDraft[K]) {
+  function applyTradeSuggestion(key: keyof TradeExtractSuggestions, value: string) {
     if (key === 'ticker') {
       const normalizedTicker = normalizeInstrument(String(value || ''));
       setTradeDraft((prev) => ({ ...prev, ticker: normalizedTicker }));
       if (normalizedTicker && settings) {
         void saveSettings({ ...settings, instruments: normalizeUniqueInstruments([...(settings.instruments || []), normalizedTicker]) });
       }
-    } else {
+    } else if (key === 'r_multiple') {
+      const parts = parseRMultipleToParts(value);
+      setTradeDraft((prev) => ({ ...prev, ...parts }));
+    } else if (key === 'trade_date' || key === 'pnl' || key === 'minutes_in_trade') {
       setTradeDraft((prev) => ({ ...prev, [key]: value }));
+    } else {
+      return;
     }
     setTradeExtract((prev) => {
       if (!prev) return prev;
@@ -661,7 +676,7 @@ export default function JournalApp({ userId, email }: Props) {
               <Fragment key={`trade-row-${item.id}`}>
                 <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
-                  <div className="small muted">Trade · {item.trade.family} · {item.trade.model}</div>
+                  <div className="small muted"><span className="badge">Trade</span> {item.trade.family} · {item.trade.model}</div>
                   <div className="small">{item.trade.classification} · ${item.trade.pnl} · {item.trade.r_multiple}R · {item.trade.minutes_in_trade}m</div>
                   <div className="small muted">Emotional pressure: {item.trade.emotional_pressure}/5</div>
                   <div>{item.trade.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
@@ -700,7 +715,7 @@ export default function JournalApp({ userId, email }: Props) {
               <Fragment key={`no-trade-row-${item.id}`}>
                 <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
                   <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
-                  <div className="small">Reason: {item.noTrade.reason}</div>
+                  <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === item.noTrade.id).length}</div>
                     <div className="row">
@@ -780,9 +795,23 @@ export default function JournalApp({ userId, email }: Props) {
             </select>
             <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
             <label className="small muted">R multiple</label>
-            <select name="r_multiple" value={tradeDraft.r_multiple} onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple: e.target.value }))}>
-              {Array.from({ length: 161 }, (_, i) => ((i - 80) * 0.25).toFixed(2)).map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
+            <div className="row">
+              <select
+                name="r_multiple_whole"
+                value={tradeDraft.r_multiple_whole}
+                onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple_whole: e.target.value }))}
+              >
+                {buildRWholeOptions().map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <span className="small muted">.</span>
+              <select
+                name="r_multiple_decimal"
+                value={tradeDraft.r_multiple_decimal}
+                onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple_decimal: e.target.value }))}
+              >
+                {Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0')).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </div>
             <label className="small muted">Minutes in trade</label>
             <select name="minutes_in_trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))}>
               {Array.from({ length: 481 }, (_, i) => String(i)).map((value) => <option key={value} value={value}>{value}</option>)}
@@ -1818,6 +1847,53 @@ function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string,
   if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
   if (period === 'annual') return String(anchor.getUTCFullYear());
   return `Year to date · ${anchor.getUTCFullYear()}`;
+}
+
+function buildRWholeOptions() {
+  const values = Array.from({ length: 36 }, (_, i) => String(i - 10));
+  return [...values.slice(0, 11), '-0', ...values.slice(11)];
+}
+
+function parseRMultipleToParts(rawValue: unknown): { r_multiple_whole: string; r_multiple_decimal: string } {
+  const numeric = Number(rawValue ?? 2);
+  if (!Number.isFinite(numeric)) {
+    return { r_multiple_whole: '2', r_multiple_decimal: '00' };
+  }
+  const rounded = Math.round(numeric * 100) / 100;
+  const negative = rounded < 0;
+  const abs = Math.abs(rounded);
+  const wholeAbs = Math.trunc(abs);
+  const decimal = Math.round((abs - wholeAbs) * 100);
+  const wholeSigned = negative ? (wholeAbs === 0 ? '-0' : String(-wholeAbs)) : String(wholeAbs);
+  return {
+    r_multiple_whole: clampRWholeOption(wholeSigned),
+    r_multiple_decimal: String(Math.min(99, Math.max(0, decimal))).padStart(2, '0')
+  };
+}
+
+function clampRWholeOption(value: string) {
+  if (value === '-0') return value;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '2';
+  return String(Math.min(25, Math.max(-10, Math.trunc(numeric))));
+}
+
+function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
+  const wholePart = wholeRaw === '-0' ? 0 : Number(wholeRaw || 0);
+  const decimal = Math.min(99, Math.max(0, Number(decimalRaw || 0)));
+  const magnitude = Math.abs(wholePart) + decimal / 100;
+  const negative = wholeRaw === '-0' || wholePart < 0;
+  const signed = negative ? -magnitude : magnitude;
+  return Number(signed.toFixed(2));
+}
+
+function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow }) {
+  const raw = item.type === 'trade'
+    ? (item.trade as TradeRow & { created_at?: string }).created_at
+    : (item.noTrade as NoTradeDayRow & { created_at?: string }).created_at;
+  if (!raw) return '0000-00-00T00:00:00.000Z';
+  const timestamp = Date.parse(raw);
+  return Number.isNaN(timestamp) ? '0000-00-00T00:00:00.000Z' : new Date(timestamp).toISOString();
 }
 
 function normalizeInstrument(value: string) {
