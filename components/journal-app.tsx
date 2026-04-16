@@ -833,20 +833,21 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack">
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Performance chart</strong>
-              <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto' }}>
+              <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto', maxWidth: 140 }}>
                 <option value="daily">Daily</option>
                 <option value="cumulative">Cumulative</option>
               </select>
-              <label className="small muted row" style={{ gap: 6, width: 'auto' }}>
-                <input type="checkbox" checked={overlayR} onChange={(e) => setOverlayR(e.target.checked)} />
-                R overlay
-              </label>
-              <label className="small muted row" style={{ gap: 6, width: 'auto' }}>
-                <input type="checkbox" checked={overlayTradeCount} onChange={(e) => setOverlayTradeCount(e.target.checked)} />
-                Trade count overlay
-              </label>
+            </div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" onClick={() => setOverlayR((v) => !v)} style={{ width: 'auto' }}>
+                {overlayR ? '✓ ' : ''}R
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlayTradeCount((v) => !v)} style={{ width: 'auto' }}>
+                {overlayTradeCount ? '✓ ' : ''}Trade count
+              </button>
+              <span className="small muted">Overlays</span>
             </div>
             <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} />
           </section>
@@ -1574,7 +1575,7 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
   const yMax = Math.ceil(maxAbs * 1.2 * 10) / 10;
   const yMin = -yMax;
   const chartHeight = 170;
-  const width = Math.max(340, points.length * 20);
+  const width = 340;
   const plotLeft = 42;
   const plotRight = width - 14;
   const plotTop = 12;
@@ -1605,8 +1606,8 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
   const activeY = safeActiveIndex != null ? yForValue(mainSeries[safeActiveIndex]) : null;
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg viewBox={`0 0 ${width} ${chartHeight}`} style={{ width: '100%', minWidth: width, height: 170 }}>
+    <div style={{ width: '100%' }}>
+      <svg viewBox={`0 0 ${width} ${chartHeight}`} style={{ width: '100%', height: 170, display: 'block' }}>
         {yTicks.map((tick) => {
           const y = yForValue(tick);
           return (
