@@ -71,6 +71,19 @@ create table if not exists public.weekly_reviews (
   unique(user_id, week_key)
 );
 
+create table if not exists public.sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  session_type text not null check (session_type in ('chart', 'journal')),
+  session_date date not null,
+  start_time time not null,
+  end_time time not null,
+  duration_minutes integer not null default 0,
+  notes text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
   daily_reminder boolean not null default true,
@@ -108,6 +121,7 @@ alter table public.users enable row level security;
 alter table public.trades enable row level security;
 alter table public.no_trade_days enable row level security;
 alter table public.weekly_reviews enable row level security;
+alter table public.sessions enable row level security;
 alter table public.user_settings enable row level security;
 alter table public.attachments enable row level security;
 
@@ -121,6 +135,9 @@ create policy if not exists "own no_trade_days" on public.no_trade_days
 for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy if not exists "own weekly_reviews" on public.weekly_reviews
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy if not exists "own sessions" on public.sessions
 for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy if not exists "own user_settings" on public.user_settings

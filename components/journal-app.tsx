@@ -2,10 +2,12 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
-import type { AttachmentRow, NoTradeDayRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
+import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
-const tabs = ['dashboard', 'trades', 'add', 'review', 'settings'] as const;
+const APP_VERSION = 'v1.0';
+const tabs = ['dashboard', 'history', 'log', 'review'] as const;
 type Tab = (typeof tabs)[number];
+type LogMode = 'trade' | 'no_trade' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd';
 type HelpKey = 'classification' | 'family' | 'model';
 type HelpItem = readonly [string, string];
@@ -68,8 +70,8 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
 const helpNote =
   'FOMO / Forced / No valid setup trades do not need to be forced into Bounce / Reject / Break. Use N/A / No valid setup + N/A / None when appropriate.';
 
-type Props = { userId: string; email?: string };
-type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | null;
+type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
+type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
 type TradeDraft = {
   trade_date: string;
   ticker: string;
@@ -100,11 +102,12 @@ type OcrDebugState = {
 type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'minutes_in_trade'>> & { r_multiple?: string; hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
 
-export default function JournalApp({ userId, email }: Props) {
+export default function JournalApp({ userId, email, onSignOut }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
   const [tab, setTab] = useState<Tab>('dashboard');
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [noTrades, setNoTrades] = useState<NoTradeDayRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
   const [reviews, setReviews] = useState<WeeklyReviewRow[]>([]);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
@@ -142,6 +145,17 @@ export default function JournalApp({ userId, email }: Props) {
   const [newInstrument, setNewInstrument] = useState('');
   const [newMistakeTag, setNewMistakeTag] = useState('');
   const [mistakePickerValue, setMistakePickerValue] = useState('');
+  const [logMode, setLogMode] = useState<LogMode>('trade');
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
+    session_type: 'chart',
+    session_date: new Date().toISOString().slice(0, 10),
+    start_time: '09:00',
+    end_time: '10:00',
+    notes: ''
+  });
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
 
@@ -152,15 +166,16 @@ export default function JournalApp({ userId, email }: Props) {
   }, []);
 
   async function loadAll() {
-    const [t, n, r, s, a] = await Promise.all([
+    const [t, n, sessionResult, r, s, a] = await Promise.all([
       supabase.from('trades').select('*').order('trade_date', { ascending: false }),
       supabase.from('no_trade_days').select('*').order('day_date', { ascending: false }),
+      supabase.from('sessions').select('*').order('session_date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('weekly_reviews').select('*').order('week_key', { ascending: false }),
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('attachments').select('*').order('created_at', { ascending: false })
     ]);
-    if (t.error || n.error || r.error || s.error || a.error) {
-      setError(normalizeSupabaseError(t.error?.message || n.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed'));
+    if (t.error || n.error || sessionResult.error || r.error || s.error || a.error) {
+      setError(normalizeSupabaseError(t.error?.message || n.error?.message || sessionResult.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed'));
       return;
     }
     setTrades(((t.data || []) as TradeRow[]).map((trade) => ({
@@ -168,6 +183,7 @@ export default function JournalApp({ userId, email }: Props) {
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
     setNoTrades((n.data || []) as NoTradeDayRow[]);
+    setSessions((sessionResult.data || []) as SessionRow[]);
     setReviews((r.data || []) as WeeklyReviewRow[]);
     const baseSettings = (s.data as SettingsRow | null) ?? {
       user_id: userId,
@@ -233,7 +249,8 @@ export default function JournalApp({ userId, email }: Props) {
   ]);
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
-    ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade }))
+    ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade })),
+    ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session }))
   ].sort((a, b) => {
     const byDate = b.date.localeCompare(a.date);
     if (byDate !== 0) return byDate;
@@ -246,6 +263,7 @@ export default function JournalApp({ userId, email }: Props) {
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
+  const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
 
   useEffect(() => {
@@ -311,7 +329,7 @@ export default function JournalApp({ userId, email }: Props) {
 
     await loadAll();
     resetTradeDraft();
-    setTab('trades');
+    setTab('history');
   }
 
   async function addNoTrade(formData: FormData) {
@@ -354,7 +372,37 @@ export default function JournalApp({ userId, email }: Props) {
     setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
     setNoTradeExtract(null);
     setEditingNoTradeId(null);
-    setTab('trades');
+    setTab('history');
+  }
+
+  async function addSession() {
+    const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const payload = {
+      user_id: userId,
+      session_type: sessionDraft.session_type,
+      session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
+      start_time: sessionDraft.start_time,
+      end_time: sessionDraft.end_time,
+      duration_minutes: duration,
+      notes: sessionDraft.notes || ''
+    };
+    const response = editingSessionId
+      ? await supabase.from('sessions').update(payload).eq('id', editingSessionId)
+      : await supabase.from('sessions').insert(payload);
+    if (response.error) {
+      setError(normalizeSupabaseError(response.error.message));
+      return;
+    }
+    setSessionDraft({
+      session_type: 'chart',
+      session_date: new Date().toISOString().slice(0, 10),
+      start_time: '09:00',
+      end_time: '10:00',
+      notes: ''
+    });
+    setEditingSessionId(null);
+    await loadAll();
+    setTab('history');
   }
 
   async function saveReview() {
@@ -422,7 +470,7 @@ export default function JournalApp({ userId, email }: Props) {
   function startEditTrade(trade: TradeRow) {
     setEditingTradeId(trade.id);
     setEditingNoTradeId(null);
-    setTab('add');
+    setTab('log');
     setAddTradeClassification(trade.classification);
     setAddTradeFamily(trade.family);
     setAddTradeModel(trade.model);
@@ -445,7 +493,7 @@ export default function JournalApp({ userId, email }: Props) {
   function startEditNoTrade(noTrade: NoTradeDayRow) {
     setEditingNoTradeId(noTrade.id);
     setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, notes: noTrade.notes || '' });
-    setTab('add');
+    setTab('log');
   }
 
   async function deleteTrade(tradeId: string) {
@@ -483,6 +531,17 @@ export default function JournalApp({ userId, email }: Props) {
     await loadAll();
   }
 
+  async function deleteSession(sessionId: string) {
+    if (!window.confirm('Delete this session?')) return;
+    const { error: deleteError } = await supabase.from('sessions').delete().eq('id', sessionId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'session' && detail.id === sessionId) setDetail(null);
+    await loadAll();
+  }
+
   async function openEntryDetail(nextDetail: DetailState) {
     if (!nextDetail) return;
     setDetail(nextDetail);
@@ -495,7 +554,9 @@ export default function JournalApp({ userId, email }: Props) {
     const linkedAttachments =
       nextDetail.kind === 'trade'
         ? attachments.filter((a) => a.trade_id === nextDetail.id)
-        : attachments.filter((a) => a.no_trade_day_id === nextDetail.id);
+        : nextDetail.kind === 'no_trade'
+          ? attachments.filter((a) => a.no_trade_day_id === nextDetail.id)
+          : [];
 
     if (!linkedAttachments.length) {
       setSignedUrls({});
@@ -606,6 +667,9 @@ export default function JournalApp({ userId, email }: Props) {
   const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
   const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
   const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
+  const displayName = (settings?.display_name || '').trim();
+  const [firstNameValue, lastNameValue] = splitDisplayName(displayName, email);
+  const initials = buildInitials(firstNameValue, lastNameValue, email);
 
   return (
     <main className="app">
@@ -613,13 +677,56 @@ export default function JournalApp({ userId, email }: Props) {
         <div>
           <div className="sub">JY Trading Journal</div>
           <h1>Own your process.<br />Build consistency.</h1>
-          <div className="muted small">Connected app (Next.js + Supabase) • {email}</div>
+          <div className="muted small">Connected app (Next.js + Supabase)</div>
         </div>
         <div className="stack" style={{ alignItems: 'flex-end' }}>
           <span className="chip">Connected</span>
-          <span className="chip version">v0.9</span>
+          <span className="chip version">{APP_VERSION}</span>
+          <button
+            className="inline"
+            type="button"
+            style={{ width: 42, height: 42, borderRadius: '999px', padding: 0 }}
+            onClick={() => setAccountOpen((open) => !open)}
+          >
+            {initials}
+          </button>
         </div>
       </header>
+      {accountOpen && (
+        <section className="card stack" style={{ marginTop: -6 }}>
+          <div className="small muted">First name: {firstNameValue || '—'}</div>
+          <div className="small muted">Last name: {lastNameValue || '—'}</div>
+          <div className="small muted">Email: {email || '—'}</div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="inline" type="button" onClick={() => setShowAccountSettings((open) => !open)}>Settings</button>
+            <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
+          </div>
+          {showAccountSettings && settings && (
+            <section className="stack">
+              <input
+                placeholder="First name"
+                value={firstNameValue}
+                onChange={(e) => {
+                  const nextFirst = e.target.value;
+                  const nextDisplay = [nextFirst, lastNameValue].join(' ').trim() || settings.display_name;
+                  setSettings({ ...settings, display_name: nextDisplay });
+                }}
+              />
+              <input
+                placeholder="Last name"
+                value={lastNameValue}
+                onChange={(e) => {
+                  const nextLast = e.target.value;
+                  const nextDisplay = [firstNameValue, nextLast].join(' ').trim() || settings.display_name;
+                  setSettings({ ...settings, display_name: nextDisplay });
+                }}
+              />
+              <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
+              <button className="inline" type="button" onClick={() => saveSettings(settings)}>Save settings</button>
+            </section>
+          )}
+        </section>
+      )}
 
       {tab === 'dashboard' && (
         <section className="stack">
@@ -765,7 +872,7 @@ export default function JournalApp({ userId, email }: Props) {
         </section>
       )}
 
-      {tab === 'trades' && (
+      {tab === 'history' && (
         <section className="card stack">
           {activityItems.map((item) => (
             item.type === 'trade' ? (
@@ -807,7 +914,7 @@ export default function JournalApp({ userId, email }: Props) {
                   </article>
                 )}
               </Fragment>
-            ) : (
+            ) : item.type === 'no_trade' ? (
               <Fragment key={`no-trade-row-${item.id}`}>
                 <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
                   <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
@@ -836,13 +943,60 @@ export default function JournalApp({ userId, email }: Props) {
                   </article>
                 )}
               </Fragment>
+            ) : (
+              <Fragment key={`session-row-${item.id}`}>
+                <article className="trade" ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                  <div className="row"><strong>{titleCase(item.session.session_type)} session</strong><span>{item.session.session_date}</span></div>
+                  <div className="small muted">{item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {item.session.duration_minutes}m</div>
+                  <div className="row">
+                    <div className="small muted">Notes: {item.session.notes ? 'Yes' : 'No'}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => {
+                        setEditingSessionId(item.session.id);
+                        setSessionDraft({
+                          session_type: item.session.session_type,
+                          session_date: item.session.session_date,
+                          start_time: item.session.start_time.slice(0, 5),
+                          end_time: item.session.end_time.slice(0, 5),
+                          notes: item.session.notes || ''
+                        });
+                        setTab('log');
+                        setLogMode('session');
+                      }}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'session' && detail.id === item.session.id && (
+                  <article className="trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>Session detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.session.session_date} · {titleCase(item.session.session_type)} session</div>
+                      <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
+                      <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
+                      <div className="small">Duration: {item.session.duration_minutes} minutes</div>
+                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.session.notes || '—'}</div>
+                    </div>
+                  </article>
+                )}
+              </Fragment>
             )
           ))}
         </section>
       )}
 
-      {tab === 'add' && (
+      {tab === 'log' && (
         <section className="stack">
+          <div className="card row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="inline" type="button" onClick={() => setLogMode('trade')}>Trade</button>
+            <button className="inline" type="button" onClick={() => setLogMode('no_trade')}>No-trade day</button>
+            <button className="inline" type="button" onClick={() => setLogMode('session')}>Session</button>
+          </div>
+          {logMode === 'trade' && (
           <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
             <div className="row">
               <strong>{editingTradeId ? 'Edit trade' : 'Add trade'}</strong>
@@ -1057,7 +1211,9 @@ export default function JournalApp({ userId, email }: Props) {
             <div className="small muted">Uploads are stored attachments only. AI extraction is not implemented.</div>
             <button className="primary" disabled={pending}>{editingTradeId ? 'Update trade' : 'Save trade'}</button>
           </form>
+          )}
 
+          {logMode === 'no_trade' && (
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
             <div className="row">
               <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
@@ -1129,6 +1285,45 @@ export default function JournalApp({ userId, email }: Props) {
             )}
             <button disabled={pending}>{editingNoTradeId ? 'Update no-trade day' : 'Save no-trade day'}</button>
           </form>
+          )}
+
+          {logMode === 'session' && (
+            <form className="card stack" action={() => startTransition(() => void addSession())}>
+              <div className="row">
+                <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
+                {editingSessionId ? <button className="inline" type="button" onClick={() => {
+                  setEditingSessionId(null);
+                  setSessionDraft({
+                    session_type: 'chart',
+                    session_date: new Date().toISOString().slice(0, 10),
+                    start_time: '09:00',
+                    end_time: '10:00',
+                    notes: ''
+                  });
+                }}>Cancel edit</button> : null}
+              </div>
+              <label className="small muted">Session type</label>
+              <select value={sessionDraft.session_type} onChange={(e) => setSessionDraft((p) => ({ ...p, session_type: e.target.value as 'chart' | 'journal' }))}>
+                <option value="chart">Chart session</option>
+                <option value="journal">Journal session</option>
+              </select>
+              <label className="small muted">Date</label>
+              <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
+              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div className="stack">
+                  <label className="small muted">Start time</label>
+                  <input type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                </div>
+                <div className="stack">
+                  <label className="small muted">End time</label>
+                  <input type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                </div>
+              </div>
+              <div className="small muted">Duration: {calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time)} minutes</div>
+              <textarea placeholder="Session notes (optional)" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
+            </form>
+          )}
         </section>
       )}
 
@@ -1145,7 +1340,7 @@ export default function JournalApp({ userId, email }: Props) {
             </select>
           </div>
           <div className="chip">{reviewStatus}</div>
-          <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTrades.length} trade(s), {weekNoTrades.length} no-trade day(s), {weekTrades.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTrades.length} trade(s), {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTrades.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
           <div className="trade stack">
             <strong>This week's entries</strong>
             {weekTrades.map((t) => (
@@ -1163,23 +1358,18 @@ export default function JournalApp({ userId, email }: Props) {
                 <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
               </article>
             ))}
-            {!weekTrades.length && !weekNoTrades.length && <div className="small muted">No entries for selected week.</div>}
+            {weekSessions.map((s) => (
+              <article key={s.id} className="trade">
+                <div className="small muted">{s.session_date} · {titleCase(s.session_type)} session</div>
+                <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
+              </article>
+            ))}
+            {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
           </div>
           <textarea value={reviewAnswers.q1} onChange={(e) => setReviewAnswers((s) => ({ ...s, q1: e.target.value }))} placeholder="1) Reflection on mistakes" />
           <textarea value={reviewAnswers.q2} onChange={(e) => setReviewAnswers((s) => ({ ...s, q2: e.target.value }))} placeholder="2) Reflection on no-trade choices" />
           <textarea value={reviewAnswers.q3} onChange={(e) => setReviewAnswers((s) => ({ ...s, q3: e.target.value }))} placeholder="3) Rule for next week" />
           <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
-        </section>
-      )}
-
-      {tab === 'settings' && settings && (
-        <section className="card stack">
-          <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => saveSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
-          <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => saveSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
-          <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
-          <input value={settings.display_name} onChange={(e) => setSettings({ ...settings, display_name: e.target.value })} placeholder="Display name" />
-          <button onClick={() => settings && saveSettings(settings)}>Save settings</button>
-          <div className="small muted">Passkeys: prepared next. Use Supabase auth; add WebAuthn/passkey provider in next milestone.</div>
         </section>
       )}
 
@@ -2025,10 +2215,12 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   return Number(signed.toFixed(2));
 }
 
-function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow }) {
+function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
   const raw = item.type === 'trade'
     ? (item.trade as TradeRow & { created_at?: string }).created_at
-    : (item.noTrade as NoTradeDayRow & { created_at?: string }).created_at;
+    : item.type === 'no_trade'
+      ? (item.noTrade as NoTradeDayRow & { created_at?: string }).created_at
+      : (item.session as SessionRow & { created_at?: string }).created_at;
   if (!raw) return '0000-00-00T00:00:00.000Z';
   const timestamp = Date.parse(raw);
   return Number.isNaN(timestamp) ? '0000-00-00T00:00:00.000Z' : new Date(timestamp).toISOString();
@@ -2144,4 +2336,35 @@ function weekKeyFromInput(weekInput: string) {
 
 function currentWeekInput() {
   return weekInputFromKey(currentWeekKey());
+}
+
+function splitDisplayName(displayName: string, email?: string) {
+  const cleaned = String(displayName || '').trim();
+  if (cleaned) {
+    const tokens = cleaned.split(/\s+/).filter(Boolean);
+    return [tokens[0] || '', tokens.slice(1).join(' ')] as const;
+  }
+  const fromEmail = String(email || '').split('@')[0] || '';
+  const emailParts = fromEmail.split(/[._-]+/).filter(Boolean);
+  return [emailParts[0] || '', emailParts.slice(1).join(' ')] as const;
+}
+
+function buildInitials(firstName: string, lastName: string, email?: string) {
+  const f = (firstName || '').trim()[0] || '';
+  const l = (lastName || '').trim()[0] || '';
+  if (f || l) return `${f}${l}`.toUpperCase();
+  const fallback = String(email || '').trim()[0] || 'U';
+  return fallback.toUpperCase();
+}
+
+function calculateDurationMinutes(startTime: string, endTime: string) {
+  const parse = (value: string) => {
+    const [h, m] = String(value || '').split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+    return h * 60 + m;
+  };
+  const start = parse(startTime);
+  const end = parse(endTime);
+  const diff = end - start;
+  return diff >= 0 ? diff : 24 * 60 + diff;
 }

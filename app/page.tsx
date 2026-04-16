@@ -56,12 +56,5 @@ export default function Home() {
     );
   }
 
-  return (
-    <>
-      <div style={{ maxWidth: 940, margin: '12px auto 0', padding: '0 14px' }}>
-        <button className="inline" style={{ width: 'auto' }} onClick={signOut}>Sign out</button>
-      </div>
-      <JournalApp userId={userId} email={email} />
-    </>
-  );
+  return <JournalApp userId={userId} email={email} onSignOut={signOut} />;
 }

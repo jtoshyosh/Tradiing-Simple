@@ -39,6 +39,19 @@ export type WeeklyReviewRow = {
   q3: string;
 };
 
+export type SessionRow = {
+  id: string;
+  user_id: string;
+  session_type: 'chart' | 'journal';
+  session_date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  notes: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
 export type SettingsRow = {
   user_id: string;
   daily_reminder: boolean;
