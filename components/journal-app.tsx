@@ -632,6 +632,73 @@ export default function JournalApp({ userId, email }: Props) {
               <option value="annual">Year</option>
               <option value="ytd">YTD</option>
             </select>
+            <label className="small muted">Jump to</label>
+            {dashboardPeriod === 'weekly' && (
+              <input
+                type="date"
+                value={dashboardAnchor.toISOString().slice(0, 10)}
+                onChange={(e) => {
+                  const next = parseIsoDateInput(e.target.value);
+                  if (next) setDashboardAnchor(next);
+                }}
+              />
+            )}
+            {dashboardPeriod === 'monthly' && (
+              <input
+                type="month"
+                value={`${dashboardAnchor.getUTCFullYear()}-${String(dashboardAnchor.getUTCMonth() + 1).padStart(2, '0')}`}
+                onChange={(e) => {
+                  const next = parseMonthInput(e.target.value);
+                  if (next) setDashboardAnchor(next);
+                }}
+              />
+            )}
+            {dashboardPeriod === 'quarterly' && (
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <select
+                  value={String(Math.floor(dashboardAnchor.getUTCMonth() / 3) + 1)}
+                  onChange={(e) => {
+                    const quarter = Number(e.target.value);
+                    const year = dashboardAnchor.getUTCFullYear();
+                    setDashboardAnchor(new Date(Date.UTC(year, (quarter - 1) * 3, 1)));
+                  }}
+                >
+                  <option value="1">Q1</option>
+                  <option value="2">Q2</option>
+                  <option value="3">Q3</option>
+                  <option value="4">Q4</option>
+                </select>
+                <input
+                  type="number"
+                  min={2000}
+                  max={2100}
+                  value={dashboardAnchor.getUTCFullYear()}
+                  onChange={(e) => {
+                    const nextYear = Number(e.target.value);
+                    if (!Number.isFinite(nextYear)) return;
+                    const quarter = Math.floor(dashboardAnchor.getUTCMonth() / 3) + 1;
+                    setDashboardAnchor(new Date(Date.UTC(nextYear, (quarter - 1) * 3, 1)));
+                  }}
+                />
+              </div>
+            )}
+            {(dashboardPeriod === 'annual' || dashboardPeriod === 'ytd') && (
+              <input
+                type="number"
+                min={2000}
+                max={2100}
+                value={dashboardAnchor.getUTCFullYear()}
+                onChange={(e) => {
+                  const nextYear = Number(e.target.value);
+                  if (!Number.isFinite(nextYear)) return;
+                  if (dashboardPeriod === 'annual') {
+                    setDashboardAnchor(new Date(Date.UTC(nextYear, 0, 1)));
+                  } else {
+                    setDashboardAnchor(anchorForYtdYear(nextYear));
+                  }
+                }}
+              />
+            )}
             <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
@@ -656,11 +723,11 @@ export default function JournalApp({ userId, email }: Props) {
           </section>
 
           <section className="card stack">
-            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Anchor month calendar'}</strong>
+            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
             <div className="small muted">
               {dashboardPeriod === 'monthly'
                 ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
-                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} for context while period metrics use ${periodTypeLabel(dashboardPeriod)}.`}
+                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 6 }}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
@@ -1822,6 +1889,26 @@ function shiftPeriod(anchor: Date, period: DashboardPeriod, direction: number): 
   else if (period === 'quarterly') next.setUTCMonth(next.getUTCMonth() + 3 * direction);
   else next.setUTCFullYear(next.getUTCFullYear() + direction);
   return next;
+}
+
+function parseIsoDateInput(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function parseMonthInput(value: string) {
+  if (!/^\d{4}-\d{2}$/.test(String(value || ''))) return null;
+  const [year, month] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+function anchorForYtdYear(year: number) {
+  const now = new Date();
+  const month = now.getUTCMonth();
+  const day = now.getUTCDate();
+  const endOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(day, endOfTargetMonth)));
 }
 
 function inDateRange(dateStr: string, start: string, end: string) {
