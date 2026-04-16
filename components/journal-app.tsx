@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -1650,23 +1650,26 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTrades.length} trade(s), {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTrades.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
           <RichTextEditor
             label="1) Reflection on mistakes"
+            helperText="What patterns drove mistakes this week?"
             value={reviewAnswers.q1}
             onChange={(next) => setReviewAnswers((s) => ({ ...s, q1: next }))}
-            placeholder="What patterns drove mistakes this week?"
+            placeholder=""
             minRows={5}
           />
           <RichTextEditor
             label="2) Reflection on no-trade choices"
+            helperText="Which no-trade decisions protected your edge?"
             value={reviewAnswers.q2}
             onChange={(next) => setReviewAnswers((s) => ({ ...s, q2: next }))}
-            placeholder="Which no-trade decisions protected your edge?"
+            placeholder=""
             minRows={5}
           />
           <RichTextEditor
             label="3) Rule for next week"
+            helperText="Write one process rule you will enforce next week."
             value={reviewAnswers.q3}
             onChange={(next) => setReviewAnswers((s) => ({ ...s, q3: next }))}
-            placeholder="Write one process rule you will enforce next week."
+            placeholder=""
             minRows={5}
           />
           <section className="trade stack">
@@ -1779,12 +1782,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
 function RichTextEditor({
   label,
+  helperText,
   value,
   onChange,
   placeholder,
   minRows = 4
 }: {
   label: string;
+  helperText?: string;
   value: string;
   onChange: (next: string) => void;
   placeholder?: string;
@@ -1826,9 +1831,73 @@ function RichTextEditor({
     { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2)) }
   ];
 
+  function handleEnterListContinuation(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+    const node = textareaRef.current;
+    if (!node) return;
+    const start = node.selectionStart ?? 0;
+    const end = node.selectionEnd ?? 0;
+    if (start !== end) return;
+    const lineStart = textValue.lastIndexOf('\n', start - 1) + 1;
+    const nextBreak = textValue.indexOf('\n', start);
+    const lineEnd = nextBreak === -1 ? textValue.length : nextBreak;
+    const line = textValue.slice(lineStart, lineEnd);
+
+    const bulletMatch = line.match(/^(\s*)-\s+(.*)$/);
+    if (bulletMatch) {
+      event.preventDefault();
+      const indent = bulletMatch[1] || '';
+      const content = bulletMatch[2] || '';
+      if (!content.trim()) {
+        const nextText = `${textValue.slice(0, lineStart)}${indent}${textValue.slice(lineEnd)}`;
+        setTextValue(nextText);
+        onChange(nextText);
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(lineStart + indent.length, lineStart + indent.length);
+        });
+        return;
+      }
+      const insertion = `\n${indent}- `;
+      const nextText = `${textValue.slice(0, start)}${insertion}${textValue.slice(end)}`;
+      const cursor = start + insertion.length;
+      setTextValue(nextText);
+      onChange(nextText);
+      requestAnimationFrame(() => {
+        textareaRef.current?.setSelectionRange(cursor, cursor);
+      });
+      return;
+    }
+
+    const numberedMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
+    if (numberedMatch) {
+      event.preventDefault();
+      const indent = numberedMatch[1] || '';
+      const currentNumber = Number(numberedMatch[2] || 1);
+      const content = numberedMatch[3] || '';
+      if (!content.trim()) {
+        const nextText = `${textValue.slice(0, lineStart)}${indent}${textValue.slice(lineEnd)}`;
+        setTextValue(nextText);
+        onChange(nextText);
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(lineStart + indent.length, lineStart + indent.length);
+        });
+        return;
+      }
+      const insertion = `\n${indent}${currentNumber + 1}. `;
+      const nextText = `${textValue.slice(0, start)}${insertion}${textValue.slice(end)}`;
+      const cursor = start + insertion.length;
+      setTextValue(nextText);
+      onChange(nextText);
+      requestAnimationFrame(() => {
+        textareaRef.current?.setSelectionRange(cursor, cursor);
+      });
+    }
+  }
+
   return (
     <div className="stack">
       <label className="small muted">{label}</label>
+      {helperText ? <div className="small muted" style={{ fontStyle: 'italic' }}>{helperText}</div> : null}
       <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
         {controls.map((control) => (
           <button
@@ -1850,6 +1919,7 @@ function RichTextEditor({
           setTextValue(event.target.value);
           onChange(event.target.value);
         }}
+        onKeyDown={handleEnterListContinuation}
         placeholder={placeholder}
         rows={minRows}
         style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
