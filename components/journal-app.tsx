@@ -80,7 +80,7 @@ type TradeDraft = {
   r_multiple: string;
   minutes_in_trade: string;
   emotional_pressure: string;
-  mistake_tags: string;
+  mistake_tags: string[];
   notes: string;
 };
 type OcrDebugState = {
@@ -121,12 +121,12 @@ export default function JournalApp({ userId, email }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
   const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
-  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
-    ticker: '',
+    ticker: 'MES',
     classification: 'Valid setup',
     family: 'Bounce',
     model: familyModels.Bounce[0],
@@ -134,9 +134,11 @@ export default function JournalApp({ userId, email }: Props) {
     r_multiple: '',
     minutes_in_trade: '',
     emotional_pressure: '1',
-    mistake_tags: '',
+    mistake_tags: [],
     notes: ''
   }));
+  const [newInstrument, setNewInstrument] = useState('');
+  const [newMistakeTag, setNewMistakeTag] = useState('');
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
 
@@ -161,7 +163,20 @@ export default function JournalApp({ userId, email }: Props) {
     setTrades((t.data || []) as TradeRow[]);
     setNoTrades((n.data || []) as NoTradeDayRow[]);
     setReviews((r.data || []) as WeeklyReviewRow[]);
-    setSettings((s.data as SettingsRow | null) ?? { user_id: userId, daily_reminder: true, weekly_reminder: true, default_risk: 200, display_name: 'JY' });
+    const baseSettings = (s.data as SettingsRow | null) ?? {
+      user_id: userId,
+      daily_reminder: true,
+      weekly_reminder: true,
+      default_risk: 200,
+      display_name: 'JY',
+      instruments: ['MES'],
+      mistake_catalog: []
+    };
+    setSettings({
+      ...baseSettings,
+      instruments: normalizeUniqueInstruments(baseSettings.instruments || []),
+      mistake_catalog: normalizeUniqueTags(baseSettings.mistake_catalog || [])
+    });
     setAttachments((a.data || []) as AttachmentRow[]);
   }
 
@@ -196,6 +211,20 @@ export default function JournalApp({ userId, email }: Props) {
   const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
+  const instrumentOptions = normalizeUniqueInstruments([
+    'MES',
+    tradeDraft.ticker,
+    ...(settings?.instruments || []),
+    ...trades.map((t) => String(t.ticker || '').toUpperCase()).filter(Boolean)
+  ]);
+  const mistakeTagOptions = normalizeUniqueTags([
+    ...(settings?.mistake_catalog || []),
+    ...trades.flatMap((t) => t.mistake_tags || []).map((m) => String(m).trim()).filter(Boolean)
+  ]);
+  const activityItems = [
+    ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
+    ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade }))
+  ].sort((a, b) => b.date.localeCompare(a.date));
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -222,7 +251,7 @@ export default function JournalApp({ userId, email }: Props) {
       r_multiple: Number(tradeDraft.r_multiple || 0),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
-      mistake_tags: String(tradeDraft.mistake_tags || '').split(',').map((x) => x.trim()).filter(Boolean),
+      mistake_tags: tradeDraft.mistake_tags,
       notes: String(tradeDraft.notes || '')
     };
 
@@ -233,6 +262,14 @@ export default function JournalApp({ userId, email }: Props) {
     if (upsertError) {
       setError(normalizeSupabaseError(upsertError.message));
       return;
+    }
+
+    if (settings) {
+      await saveSettings({
+        ...settings,
+        instruments: normalizeUniqueInstruments([...(settings.instruments || []), payload.ticker]),
+        mistake_catalog: normalizeUniqueTags([...(settings.mistake_catalog || []), ...payload.mistake_tags])
+      });
     }
 
     const files = formData.getAll('files') as File[];
@@ -264,7 +301,8 @@ export default function JournalApp({ userId, email }: Props) {
     const payload = {
       user_id: userId,
       day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
-      reason: noTradeDraft.reason || 'No A+ setup'
+      reason: noTradeDraft.reason || 'No A+ setup',
+      notes: String(noTradeDraft.notes || '')
     };
     const upsert = editingNoTradeId
       ? await supabase.from('no_trade_days').update(payload).eq('id', editingNoTradeId).select('*').single()
@@ -296,7 +334,7 @@ export default function JournalApp({ userId, email }: Props) {
     }
 
     await loadAll();
-    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
     setNoTradeExtract(null);
     setEditingNoTradeId(null);
     setTab('trades');
@@ -312,9 +350,14 @@ export default function JournalApp({ userId, email }: Props) {
   }
 
   async function saveSettings(next: SettingsRow) {
-    const { error: upsertError } = await supabase.from('user_settings').upsert(next, { onConflict: 'user_id' });
+    const payload: SettingsRow = {
+      ...next,
+      instruments: normalizeUniqueInstruments(next.instruments || []),
+      mistake_catalog: normalizeUniqueTags(next.mistake_catalog || [])
+    };
+    const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
     if (upsertError) setError(normalizeSupabaseError(upsertError.message));
-    else setSettings(next);
+    else setSettings(payload);
   }
 
   function resetTradeDraft() {
@@ -324,7 +367,7 @@ export default function JournalApp({ userId, email }: Props) {
     setAddTradeModel(familyModels.Bounce[0]);
     setTradeDraft({
       trade_date: new Date().toISOString().slice(0, 10),
-      ticker: '',
+      ticker: 'MES',
       classification: 'Valid setup',
       family: 'Bounce',
       model: familyModels.Bounce[0],
@@ -332,7 +375,7 @@ export default function JournalApp({ userId, email }: Props) {
       r_multiple: '',
       minutes_in_trade: '',
       emotional_pressure: '1',
-      mistake_tags: '',
+      mistake_tags: [],
       notes: ''
     });
     setTradeExtract(null);
@@ -355,14 +398,14 @@ export default function JournalApp({ userId, email }: Props) {
       r_multiple: String(trade.r_multiple ?? ''),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
-      mistake_tags: (trade.mistake_tags || []).join(', '),
+      mistake_tags: trade.mistake_tags || [],
       notes: trade.notes || ''
     });
   }
 
   function startEditNoTrade(noTrade: NoTradeDayRow) {
     setEditingNoTradeId(noTrade.id);
-    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason });
+    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, notes: noTrade.notes || '' });
     setTab('add');
   }
 
@@ -396,7 +439,7 @@ export default function JournalApp({ userId, email }: Props) {
     if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
     if (editingNoTradeId === noTradeId) {
       setEditingNoTradeId(null);
-      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] });
+      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
     }
     await loadAll();
   }
@@ -471,7 +514,15 @@ export default function JournalApp({ userId, email }: Props) {
   }
 
   function applyTradeSuggestion<K extends keyof TradeDraft>(key: K, value: TradeDraft[K]) {
-    setTradeDraft((prev) => ({ ...prev, [key]: value }));
+    if (key === 'ticker') {
+      const normalizedTicker = normalizeInstrument(String(value || ''));
+      setTradeDraft((prev) => ({ ...prev, ticker: normalizedTicker }));
+      if (normalizedTicker && settings) {
+        void saveSettings({ ...settings, instruments: normalizeUniqueInstruments([...(settings.instruments || []), normalizedTicker]) });
+      }
+    } else {
+      setTradeDraft((prev) => ({ ...prev, [key]: value }));
+    }
     setTradeExtract((prev) => {
       if (!prev) return prev;
       const next = { ...prev };
@@ -605,74 +656,76 @@ export default function JournalApp({ userId, email }: Props) {
 
       {tab === 'trades' && (
         <section className="card stack">
-          {trades.map((t) => (
-            <Fragment key={`trade-row-${t.id}`}>
-            <article key={`trade-card-${t.id}`} className="trade" ref={(node) => { detailAnchors.current[`trade:${t.id}`] = node; }}>
-              <div className="row"><strong>{t.ticker}</strong><span>{t.trade_date}</span></div>
-              <div className="small muted">{t.family} · {t.model}</div>
-              <div className="small">{t.classification} · ${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m</div>
-              <div className="small muted">Emotional pressure: {t.emotional_pressure}/5</div>
-              <div>{t.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
-              <div className="row">
-                <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === t.id).length}</div>
-                <div className="row">
-                  <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: t.id })}>View</button>
-                  <button className="inline" type="button" onClick={() => startEditTrade(t)}>Edit</button>
-                  <button className="inline" type="button" onClick={() => void deleteTrade(t.id)}>Delete</button>
-                </div>
-              </div>
-            </article>
-            {detail?.kind === 'trade' && detail.id === t.id && (
-              <article key={`trade-detail-${t.id}`} className="trade" style={{ marginTop: -4 }}>
-                <div className="row">
-                  <strong>Trade detail</strong>
-                  <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                </div>
-                <div className="stack">
-                  <div className="small muted">{t.trade_date} · {t.ticker}</div>
-                  <div className="small">Family: {t.family}</div>
-                  <div className="small">Model: {t.model}</div>
-                  <div className="small">Classification: {t.classification}</div>
-                  <div className="small">Result: ${t.pnl}</div>
-                  <div className="small">R multiple: {t.r_multiple}</div>
-                  <div className="small">Minutes in trade: {t.minutes_in_trade}</div>
-                  <div className="small">Emotional pressure: {t.emotional_pressure}/5</div>
-                  <div className="small">Mistake tags: {t.mistake_tags?.length ? t.mistake_tags.join(', ') : 'None'}</div>
-                  <div className="small">Notes: {t.notes || '—'}</div>
-                  <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                </div>
-              </article>
-            )}
-            </Fragment>
-          ))}
-          {noTrades.map((n) => (
-            <Fragment key={`no-trade-row-${n.id}`}>
-            <article key={`no-trade-card-${n.id}`} className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${n.id}`] = node; }}>
-              <div className="row"><strong>No-trade day</strong><span>{n.day_date}</span></div>
-              <div className="small">Reason: {n.reason}</div>
-              <div className="row">
-                <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
-                <div className="row">
-                  <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: n.id })}>View</button>
-                  <button className="inline" type="button" onClick={() => startEditNoTrade(n)}>Edit</button>
-                  <button className="inline" type="button" onClick={() => void deleteNoTrade(n.id)}>Delete</button>
-                </div>
-              </div>
-            </article>
-            {detail?.kind === 'no_trade' && detail.id === n.id && (
-              <article key={`no-trade-detail-${n.id}`} className="trade no-trade" style={{ marginTop: -4 }}>
-                <div className="row">
-                  <strong>No-trade detail</strong>
-                  <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                </div>
-                <div className="stack">
-                  <div className="small muted">{n.day_date}</div>
-                  <div className="small">Reason: {n.reason}</div>
-                  <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                </div>
-              </article>
-            )}
-            </Fragment>
+          {activityItems.map((item) => (
+            item.type === 'trade' ? (
+              <Fragment key={`trade-row-${item.id}`}>
+                <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
+                  <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
+                  <div className="small muted">Trade · {item.trade.family} · {item.trade.model}</div>
+                  <div className="small">{item.trade.classification} · ${item.trade.pnl} · {item.trade.r_multiple}R · {item.trade.minutes_in_trade}m</div>
+                  <div className="small muted">Emotional pressure: {item.trade.emotional_pressure}/5</div>
+                  <div>{item.trade.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
+                  <div className="row">
+                    <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: item.trade.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditTrade(item.trade)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteTrade(item.trade.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'trade' && detail.id === item.trade.id && (
+                  <article className="trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>Trade detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.trade.trade_date} · {item.trade.ticker}</div>
+                      <div className="small">Family: {item.trade.family}</div>
+                      <div className="small">Model: {item.trade.model}</div>
+                      <div className="small">Classification: {item.trade.classification}</div>
+                      <div className="small">Result: ${item.trade.pnl}</div>
+                      <div className="small">R multiple: {item.trade.r_multiple}</div>
+                      <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
+                      <div className="small">Emotional pressure: {item.trade.emotional_pressure}/5</div>
+                      <div className="small">Mistake tags: {item.trade.mistake_tags?.length ? item.trade.mistake_tags.join(', ') : 'None'}</div>
+                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.trade.notes || '—'}</div>
+                      <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
+              </Fragment>
+            ) : (
+              <Fragment key={`no-trade-row-${item.id}`}>
+                <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
+                  <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
+                  <div className="small">Reason: {item.noTrade.reason}</div>
+                  <div className="row">
+                    <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === item.noTrade.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: item.noTrade.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditNoTrade(item.noTrade)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteNoTrade(item.noTrade.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'no_trade' && detail.id === item.noTrade.id && (
+                  <article className="trade no-trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>No-trade detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.noTrade.day_date}</div>
+                      <div className="small">Reason: {item.noTrade.reason}</div>
+                      <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.noTrade.notes || '—'}</div>
+                      <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
+              </Fragment>
+            )
           ))}
         </section>
       )}
@@ -687,7 +740,23 @@ export default function JournalApp({ userId, email }: Props) {
             <label className="small muted">Date</label>
             <input name="trade_date" type="date" required value={tradeDraft.trade_date} onChange={(e) => setTradeDraft((p) => ({ ...p, trade_date: e.target.value }))} />
             <label className="small muted">Ticker</label>
-            <input name="ticker" placeholder="Ticker" required value={tradeDraft.ticker} onChange={(e) => setTradeDraft((p) => ({ ...p, ticker: e.target.value.toUpperCase() }))} />
+            <select name="ticker" value={tradeDraft.ticker} onChange={(e) => setTradeDraft((p) => ({ ...p, ticker: e.target.value }))} required>
+              <option value="" disabled>Select instrument</option>
+              {instrumentOptions.map((symbol) => <option key={symbol} value={symbol}>{symbol}</option>)}
+            </select>
+            <div className="row">
+              <input placeholder="Add new instrument (e.g. NQ)" value={newInstrument} onChange={(e) => setNewInstrument(e.target.value.toUpperCase())} />
+              <button className="inline" type="button" onClick={() => {
+                const next = normalizeInstrument(newInstrument);
+                if (!next) return;
+                const nextSettings = settings
+                  ? { ...settings, instruments: normalizeUniqueInstruments([...(settings.instruments || []), next]) }
+                  : null;
+                if (nextSettings) void saveSettings(nextSettings);
+                setTradeDraft((p) => ({ ...p, ticker: next }));
+                setNewInstrument('');
+              }}>Add</button>
+            </div>
             <div className="row">
               <label className="small muted">Trade classification</label>
               <button className="info-btn" aria-label="Trade classification help" type="button" onClick={() => setOpenHelp('classification')}>i</button>
@@ -710,8 +779,14 @@ export default function JournalApp({ userId, email }: Props) {
               {(familyModels[addTradeFamily] || [NA_MODEL]).map((m) => <option key={m}>{m}</option>)}
             </select>
             <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
-            <input name="r_multiple" type="number" step="0.1" placeholder="R multiple" value={tradeDraft.r_multiple} onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple: e.target.value }))} />
-            <input name="minutes_in_trade" type="number" placeholder="Minutes in trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))} />
+            <label className="small muted">R multiple</label>
+            <select name="r_multiple" value={tradeDraft.r_multiple} onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple: e.target.value }))}>
+              {Array.from({ length: 161 }, (_, i) => ((i - 80) * 0.25).toFixed(2)).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <label className="small muted">Minutes in trade</label>
+            <select name="minutes_in_trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))}>
+              {Array.from({ length: 481 }, (_, i) => String(i)).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
             <label className="small muted">Emotional pressure (1-5)</label>
             <select name="emotional_pressure" value={tradeDraft.emotional_pressure} onChange={(e) => setTradeDraft((p) => ({ ...p, emotional_pressure: e.target.value }))}>
               {emotionalPressureScale.map((level) => (
@@ -719,7 +794,25 @@ export default function JournalApp({ userId, email }: Props) {
               ))}
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
-            <input name="mistake_tags" placeholder="Mistake tags (comma-separated)" value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: e.target.value }))} />
+            <label className="small muted">Mistake tags</label>
+            <select multiple value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value) }))}>
+              {mistakeTagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+            </select>
+            <div className="row">
+              <input placeholder="Add new mistake tag" value={newMistakeTag} onChange={(e) => setNewMistakeTag(e.target.value)} />
+              <button className="inline" type="button" onClick={() => {
+                const next = normalizeTag(newMistakeTag);
+                if (!next) return;
+                if (!tradeDraft.mistake_tags.some((existing) => existing.localeCompare(next, undefined, { sensitivity: 'accent' }) === 0)) {
+                  setTradeDraft((p) => ({ ...p, mistake_tags: [...p.mistake_tags, next] }));
+                }
+                const nextSettings = settings
+                  ? { ...settings, mistake_catalog: normalizeUniqueTags([...(settings.mistake_catalog || []), next]) }
+                  : null;
+                if (nextSettings) void saveSettings(nextSettings);
+                setNewMistakeTag('');
+              }}>Add</button>
+            </div>
             <textarea name="notes" placeholder="Notes" value={tradeDraft.notes} onChange={(e) => setTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
             <input
               name="files"
@@ -821,10 +914,11 @@ export default function JournalApp({ userId, email }: Props) {
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
             <div className="row">
               <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
-              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0] }); }}>Cancel edit</button> : null}
+              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' }); }}>Cancel edit</button> : null}
             </div>
             <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
+            <textarea name="no_trade_notes" placeholder="No-trade notes" value={noTradeDraft.notes} onChange={(e) => setNoTradeDraft((p) => ({ ...p, notes: e.target.value }))} />
             <input
               name="no_trade_files"
               type="file"
@@ -1724,6 +1818,39 @@ function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string,
   if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
   if (period === 'annual') return String(anchor.getUTCFullYear());
   return `Year to date · ${anchor.getUTCFullYear()}`;
+}
+
+function normalizeInstrument(value: string) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function normalizeTag(value: string) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function normalizeUniqueInstruments(values: string[]) {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  values.forEach((raw) => {
+    const normalized = normalizeInstrument(raw);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    next.push(normalized);
+  });
+  return next.sort();
+}
+
+function normalizeUniqueTags(values: string[]) {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  values.forEach((raw) => {
+    const normalized = normalizeTag(raw);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    next.push(normalized);
+  });
+  return next.sort((a, b) => a.localeCompare(b));
 }
 
 function normalizeSupabaseError(message: string) {

@@ -50,10 +50,14 @@ create table if not exists public.no_trade_days (
   user_id uuid not null references auth.users(id) on delete cascade,
   day_date date not null,
   reason text not null,
+  notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(user_id, day_date)
 );
+
+alter table public.no_trade_days
+  add column if not exists notes text;
 
 create table if not exists public.weekly_reviews (
   id uuid primary key default gen_random_uuid(),
@@ -73,8 +77,16 @@ create table if not exists public.user_settings (
   weekly_reminder boolean not null default true,
   default_risk numeric not null default 200,
   display_name text not null default 'JY',
+  instruments text[] not null default '{"MES"}',
+  mistake_catalog text[] not null default '{}',
   updated_at timestamptz not null default now()
 );
+
+alter table public.user_settings
+  add column if not exists instruments text[] not null default '{"MES"}';
+
+alter table public.user_settings
+  add column if not exists mistake_catalog text[] not null default '{}';
 
 create table if not exists public.attachments (
   id uuid primary key default gen_random_uuid(),

@@ -27,6 +27,7 @@ export type NoTradeDayRow = {
   user_id: string;
   day_date: string;
   reason: string;
+  notes: string | null;
 };
 
 export type WeeklyReviewRow = {
@@ -44,6 +45,8 @@ export type SettingsRow = {
   weekly_reminder: boolean;
   default_risk: number;
   display_name: string;
+  instruments: string[];
+  mistake_catalog: string[];
 };
 
 export type AttachmentRow = {
