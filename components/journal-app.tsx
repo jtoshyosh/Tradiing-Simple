@@ -162,7 +162,10 @@ export default function JournalApp({ userId, email }: Props) {
       setError(normalizeSupabaseError(t.error?.message || n.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed'));
       return;
     }
-    setTrades((t.data || []) as TradeRow[]);
+    setTrades(((t.data || []) as TradeRow[]).map((trade) => ({
+      ...trade,
+      mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
+    })));
     setNoTrades((n.data || []) as NoTradeDayRow[]);
     setReviews((r.data || []) as WeeklyReviewRow[]);
     const baseSettings = (s.data as SettingsRow | null) ?? {
@@ -174,10 +177,14 @@ export default function JournalApp({ userId, email }: Props) {
       instruments: ['MES'],
       mistake_catalog: []
     };
+    const rawInstruments = (baseSettings as { instruments?: unknown }).instruments;
+    const normalizedInstruments = Array.isArray(rawInstruments)
+      ? rawInstruments.map((item) => String(item ?? ''))
+      : String(rawInstruments || '').split(',');
     setSettings({
       ...baseSettings,
-      instruments: normalizeUniqueInstruments(baseSettings.instruments || []),
-      mistake_catalog: normalizeUniqueTags(baseSettings.mistake_catalog || [])
+      instruments: normalizeUniqueInstruments(normalizedInstruments),
+      mistake_catalog: normalizeMistakeTags(baseSettings.mistake_catalog)
     });
     setAttachments((a.data || []) as AttachmentRow[]);
   }
@@ -201,7 +208,7 @@ export default function JournalApp({ userId, email }: Props) {
   const lowPressureTrades = periodTrades.filter((t) => Number(t.emotional_pressure || 0) <= 2);
   const highPressureAvgPnl = highPressureTrades.length ? highPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / highPressureTrades.length : 0;
   const lowPressureAvgPnl = lowPressureTrades.length ? lowPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / lowPressureTrades.length : 0;
-  const mistakeTagCounts = countItems(periodTrades.flatMap((t) => t.mistake_tags || []));
+  const mistakeTagCounts = countItems(periodTrades.flatMap((t) => normalizeMistakeTags(t.mistake_tags)));
   const topMistakes = Object.entries(mistakeTagCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const familyStats = computeGroupStats(periodTrades, (t) => t.family);
   const modelStats = computeGroupStats(periodTrades, (t) => t.model);
@@ -220,8 +227,8 @@ export default function JournalApp({ userId, email }: Props) {
     ...trades.map((t) => String(t.ticker || '').toUpperCase()).filter(Boolean)
   ]);
   const mistakeTagOptions = normalizeUniqueTags([
-    ...(settings?.mistake_catalog || []),
-    ...trades.flatMap((t) => t.mistake_tags || []).map((m) => String(m).trim()).filter(Boolean)
+    ...normalizeMistakeTags(settings?.mistake_catalog),
+    ...trades.flatMap((t) => normalizeMistakeTags(t.mistake_tags))
   ]);
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
@@ -260,7 +267,7 @@ export default function JournalApp({ userId, email }: Props) {
       r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
-      mistake_tags: tradeDraft.mistake_tags,
+      mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
       notes: String(tradeDraft.notes || '')
     };
 
@@ -362,11 +369,30 @@ export default function JournalApp({ userId, email }: Props) {
     const payload: SettingsRow = {
       ...next,
       instruments: normalizeUniqueInstruments(next.instruments || []),
-      mistake_catalog: normalizeUniqueTags(next.mistake_catalog || [])
+      mistake_catalog: normalizeMistakeTags(next.mistake_catalog)
     };
     const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
-    if (upsertError) setError(normalizeSupabaseError(upsertError.message));
-    else setSettings(payload);
+    if (!upsertError) {
+      setSettings(payload);
+      return;
+    }
+    if (!isSettingsCatalogSchemaMismatch(upsertError.message)) {
+      setError(normalizeSupabaseError(upsertError.message));
+      return;
+    }
+    const fallbackPayload = {
+      user_id: payload.user_id,
+      daily_reminder: payload.daily_reminder,
+      weekly_reminder: payload.weekly_reminder,
+      default_risk: payload.default_risk,
+      display_name: payload.display_name
+    };
+    const { error: fallbackError } = await supabase.from('user_settings').upsert(fallbackPayload, { onConflict: 'user_id' });
+    if (fallbackError) {
+      setError(normalizeSupabaseError(fallbackError.message));
+      return;
+    }
+    setSettings(payload);
   }
 
   function resetTradeDraft() {
@@ -408,7 +434,7 @@ export default function JournalApp({ userId, email }: Props) {
       ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
-      mistake_tags: trade.mistake_tags || [],
+      mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
   }
@@ -679,7 +705,7 @@ export default function JournalApp({ userId, email }: Props) {
                   <div className="small muted"><span className="badge">Trade</span> {item.trade.family} · {item.trade.model}</div>
                   <div className="small">{item.trade.classification} · ${item.trade.pnl} · {item.trade.r_multiple}R · {item.trade.minutes_in_trade}m</div>
                   <div className="small muted">Emotional pressure: {item.trade.emotional_pressure}/5</div>
-                  <div>{item.trade.mistake_tags?.map((m) => <span className="badge" key={m}>{m}</span>)}</div>
+                  <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
                     <div className="row">
@@ -704,7 +730,7 @@ export default function JournalApp({ userId, email }: Props) {
                       <div className="small">R multiple: {item.trade.r_multiple}</div>
                       <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
                       <div className="small">Emotional pressure: {item.trade.emotional_pressure}/5</div>
-                      <div className="small">Mistake tags: {item.trade.mistake_tags?.length ? item.trade.mistake_tags.join(', ') : 'None'}</div>
+                      <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
                       <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {item.trade.notes || '—'}</div>
                       <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
@@ -824,7 +850,7 @@ export default function JournalApp({ userId, email }: Props) {
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
             <label className="small muted">Mistake tags</label>
-            <select multiple value={tradeDraft.mistake_tags} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value) }))}>
+            <select multiple value={normalizeMistakeTags(tradeDraft.mistake_tags)} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags(Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value)) }))}>
               {mistakeTagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
             </select>
             <div className="row">
@@ -832,11 +858,12 @@ export default function JournalApp({ userId, email }: Props) {
               <button className="inline" type="button" onClick={() => {
                 const next = normalizeTag(newMistakeTag);
                 if (!next) return;
-                if (!tradeDraft.mistake_tags.some((existing) => existing.localeCompare(next, undefined, { sensitivity: 'accent' }) === 0)) {
-                  setTradeDraft((p) => ({ ...p, mistake_tags: [...p.mistake_tags, next] }));
+                const currentTags = normalizeMistakeTags(tradeDraft.mistake_tags);
+                if (!currentTags.some((existing) => existing.localeCompare(next, undefined, { sensitivity: 'accent' }) === 0)) {
+                  setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...currentTags, next]) }));
                 }
                 const nextSettings = settings
-                  ? { ...settings, mistake_catalog: normalizeUniqueTags([...(settings.mistake_catalog || []), next]) }
+                  ? { ...settings, mistake_catalog: normalizeMistakeTags([...(settings.mistake_catalog || []), next]) }
                   : null;
                 if (nextSettings) void saveSettings(nextSettings);
                 setNewMistakeTag('');
@@ -1035,7 +1062,7 @@ export default function JournalApp({ userId, email }: Props) {
                 <div className="small muted">{t.trade_date} · {t.ticker}</div>
                 <div className="small">{t.family} · {t.model} · {t.classification}</div>
                 <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m · Emotion {t.emotional_pressure}/5</div>
-                <div>{t.mistake_tags?.map((m) => <span key={m} className="badge">{m}</span>)}</div>
+                <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
               </article>
             ))}
             {weekNoTrades.map((n) => (
@@ -1904,6 +1931,21 @@ function normalizeTag(value: string) {
   return String(value || '').trim().replace(/\s+/g, ' ');
 }
 
+function normalizeMistakeTags(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return normalizeUniqueTags(value.map((item) => normalizeTag(String(item ?? ''))));
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    const tokens = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+    return normalizeUniqueTags(tokens.map((token) => normalizeTag(token)));
+  }
+  if (value == null) return [];
+  if (typeof value === 'object') return [];
+  return normalizeUniqueTags([normalizeTag(String(value))]);
+}
+
 function normalizeUniqueInstruments(values: string[]) {
   const seen = new Set<string>();
   const next: string[] = [];
@@ -1934,7 +1976,16 @@ function normalizeSupabaseError(message: string) {
   if (/could not find .*emotional_pressure.*schema cache/i.test(text)) {
     return 'Your database schema is missing the emotional pressure field. Please run the latest Supabase migration and refresh.';
   }
+  if (isSettingsCatalogSchemaMismatch(text)) {
+    return 'Settings catalog columns are temporarily unavailable in schema cache. Core settings were saved; catalog sync will resume after schema cache refresh/migration.';
+  }
   return text;
+}
+
+function isSettingsCatalogSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(instruments|mistake_catalog).*?schema cache/i.test(text)
+    || /column .*?(instruments|mistake_catalog).*? does not exist/i.test(text);
 }
 
 function currentWeekKey() {
