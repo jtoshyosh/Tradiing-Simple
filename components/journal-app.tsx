@@ -1549,42 +1549,92 @@ function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: 
 type TimelinePoint = { date: string; value: number; tradeCount: number; noTrade: boolean };
 
 function PerformanceChart({ points, metric, view, overlay }: { points: TimelinePoint[]; metric: 'pnl' | 'r'; view: 'daily' | 'cumulative'; overlay: 'none' | 'count' }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(points.length ? points.length - 1 : null);
   if (!points.length) return <div className="small muted">No data in selected period.</div>;
   const values = points.map((p) => p.value);
-  const maxAbs = Math.max(1, ...values.map((v) => Math.abs(v)));
-  const baseline = 70;
-  const chartHeight = 140;
-  const width = Math.max(320, points.length * 18);
+  const maxAbs = Math.max(1, ...values.map((v) => Math.abs(v)), 0.01);
+  const yMax = Math.ceil(maxAbs * 1.2 * 10) / 10;
+  const yMin = -yMax;
+  const chartHeight = 170;
+  const width = Math.max(340, points.length * 20);
+  const plotLeft = 42;
+  const plotRight = width - 14;
+  const plotTop = 12;
+  const plotBottom = chartHeight - 32;
+  const plotHeight = plotBottom - plotTop;
+  const plotWidth = plotRight - plotLeft;
+  const baseline = mapValueToY(0, yMin, yMax, plotTop, plotBottom);
   const maxTradeCount = Math.max(1, ...points.map((p) => p.tradeCount));
+  const xForIndex = (idx: number) => plotLeft + (idx / Math.max(1, points.length - 1)) * plotWidth;
+  const yForValue = (value: number) => mapValueToY(value, yMin, yMax, plotTop, plotBottom);
   const polyline = points.map((point, idx) => {
-    const x = (idx / Math.max(1, points.length - 1)) * (width - 24) + 12;
-    const y = baseline - (point.value / maxAbs) * 56;
-    return `${x},${Math.max(10, Math.min(chartHeight - 10, y))}`;
+    const x = xForIndex(idx);
+    const y = yForValue(point.value);
+    return `${x},${y}`;
   }).join(' ');
+  const xTickIndexes = buildAxisTickIndexes(points.length, 5);
+  const yTicks = [yMax, yMax / 2, 0, yMin / 2, yMin];
+  const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
+  const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
+  const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
+  const activeY = activePoint ? yForValue(activePoint.value) : null;
 
   return (
     <div style={{ overflowX: 'auto' }}>
       <svg viewBox={`0 0 ${width} ${chartHeight}`} style={{ width: '100%', minWidth: width, height: 170 }}>
-        <line x1={0} y1={baseline} x2={width} y2={baseline} stroke="#2a3445" strokeWidth={1} />
+        {yTicks.map((tick) => {
+          const y = yForValue(tick);
+          return (
+            <g key={`y-${tick}`}>
+              <line x1={plotLeft} y1={y} x2={plotRight} y2={y} stroke="#1f2937" strokeWidth={1} />
+              <text x={4} y={y + 4} fill="#93a3b8" fontSize={10}>{formatMetricValue(tick, metric)}</text>
+            </g>
+          );
+        })}
+        <line x1={plotLeft} y1={baseline} x2={plotRight} y2={baseline} stroke="#2a3445" strokeWidth={1} />
         {view === 'daily' && points.map((point, idx) => {
-          const x = idx * 18 + 10;
-          const barHeight = Math.max(2, Math.abs(point.value / maxAbs) * 52);
+          const x = xForIndex(idx) - 5;
+          const barHeight = Math.max(2, Math.abs(point.value / (yMax || 1)) * (plotHeight / 2 - 2));
           const y = point.value >= 0 ? baseline - barHeight : baseline;
-          return <rect key={`bar-${point.date}`} x={x} y={y} width={10} height={barHeight} fill={point.value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} />;
+          return <rect key={`bar-${point.date}`} x={x} y={y} width={10} height={barHeight} fill={point.value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />;
         })}
         {view === 'cumulative' && <polyline fill="none" stroke="#70c8ff" strokeWidth={2} points={polyline} />}
+        {view === 'cumulative' && points.map((point, idx) => (
+          <circle key={`line-hit-${point.date}`} cx={xForIndex(idx)} cy={yForValue(point.value)} r={6} fill="transparent" onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />
+        ))}
         {overlay === 'count' && points.map((point, idx) => {
-          const x = view === 'daily' ? idx * 18 + 15 : (idx / Math.max(1, points.length - 1)) * (width - 24) + 12;
-          const y = chartHeight - 12 - (point.tradeCount / maxTradeCount) * 24;
+          const x = xForIndex(idx);
+          const y = plotBottom - (point.tradeCount / maxTradeCount) * 24;
           return point.tradeCount > 0 ? <circle key={`count-${point.date}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
         })}
         {points.map((point, idx) => {
           if (!point.noTrade) return null;
-          const x = view === 'daily' ? idx * 18 + 10 : (idx / Math.max(1, points.length - 1)) * (width - 24) + 8;
-          return <line key={`nt-${point.date}`} x1={x} y1={chartHeight - 6} x2={x + 6} y2={chartHeight - 6} stroke="#9ca3af" strokeWidth={2} />;
+          const x = xForIndex(idx) - 3;
+          return <line key={`nt-${point.date}`} x1={x} y1={plotBottom + 6} x2={x + 6} y2={plotBottom + 6} stroke="#9ca3af" strokeWidth={2} />;
         })}
+        {xTickIndexes.map((idx) => {
+          const point = points[idx];
+          const x = xForIndex(idx);
+          return (
+            <g key={`x-${point.date}`}>
+              <line x1={x} y1={plotBottom} x2={x} y2={plotBottom + 4} stroke="#475569" />
+              <text x={x} y={chartHeight - 8} fill="#93a3b8" fontSize={10} textAnchor="middle">{formatAxisDate(point.date)}</text>
+            </g>
+          );
+        })}
+        {activePoint && activeX != null && activeY != null && (
+          <>
+            <line x1={activeX} y1={plotTop} x2={activeX} y2={plotBottom} stroke="#64748b" strokeDasharray="3 3" />
+            <circle cx={activeX} cy={activeY} r={3.5} fill="#e2e8f0" />
+          </>
+        )}
       </svg>
-      <div className="small muted">Showing {view} {metric === 'pnl' ? '$' : 'R'}{overlay === 'count' ? ' with trade-count overlay' : ''}.</div>
+      {activePoint && (
+        <div className="small muted" style={{ marginTop: 4 }}>
+          {formatLongDate(activePoint.date)} · {formatMetricValue(activePoint.value, metric)} · {activePoint.tradeCount} trade(s){activePoint.noTrade ? ' · no-trade logged' : ''}
+        </div>
+      )}
+      <div className="small muted">Legend: green=positive, red=negative, gray tick=no-trade day{overlay === 'count' ? ', dots=trade count overlay' : ''}.</div>
     </div>
   );
 }
@@ -1663,6 +1713,37 @@ function chunkCalendarWeeks<T>(cells: T[]) {
 function formatShortDate(dateStr: string) {
   const date = new Date(`${dateStr}T00:00:00Z`);
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function formatAxisDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function formatLongDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+function formatMetricValue(value: number, metric: 'pnl' | 'r') {
+  return metric === 'pnl' ? `${value >= 0 ? '+' : ''}$${value.toFixed(2)}` : `${value >= 0 ? '+' : ''}${value.toFixed(2)}R`;
+}
+
+function mapValueToY(value: number, min: number, max: number, top: number, bottom: number) {
+  if (max === min) return (top + bottom) / 2;
+  const ratio = (value - min) / (max - min);
+  return bottom - ratio * (bottom - top);
+}
+
+function buildAxisTickIndexes(length: number, targetTicks: number) {
+  if (length <= 1) return [0];
+  if (length <= targetTicks) return Array.from({ length }, (_, idx) => idx);
+  const out = new Set<number>([0, length - 1]);
+  const step = (length - 1) / (targetTicks - 1);
+  for (let i = 1; i < targetTicks - 1; i += 1) {
+    out.add(Math.round(i * step));
+  }
+  return Array.from(out).sort((a, b) => a - b);
 }
 
 function titleCase(v: string) {
