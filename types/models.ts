@@ -60,6 +60,7 @@ export type SettingsRow = {
   display_name: string;
   instruments: string[];
   mistake_catalog: string[];
+  mistake_catalog_hidden: string[];
 };
 
 export type AttachmentRow = {

@@ -92,6 +92,7 @@ create table if not exists public.user_settings (
   display_name text not null default 'JY',
   instruments text[] not null default '{"MES"}',
   mistake_catalog text[] not null default '{}',
+  mistake_catalog_hidden text[] not null default '{}',
   updated_at timestamptz not null default now()
 );
 
@@ -100,6 +101,9 @@ alter table public.user_settings
 
 alter table public.user_settings
   add column if not exists mistake_catalog text[] not null default '{}';
+
+alter table public.user_settings
+  add column if not exists mistake_catalog_hidden text[] not null default '{}';
 
 create table if not exists public.attachments (
   id uuid primary key default gen_random_uuid(),

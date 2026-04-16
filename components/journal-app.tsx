@@ -29,6 +29,31 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const DEFAULT_MISTAKE_CATALOG = [
+  'FOMO entry',
+  'Forced trade',
+  'Early entry',
+  'Late entry',
+  'Chased move',
+  'Moved stop',
+  'Exited too early',
+  'Held too long',
+  'Revenge trade',
+  'Overtrading',
+  'Oversized position',
+  'Ignored stop loss',
+  'No A+ setup',
+  'Misread bias',
+  'Traded into news',
+  'Traded in chop',
+  'Ignored session timing',
+  'Ignored higher timeframe context',
+  'Poor risk-reward',
+  'No displacement / weak setup',
+  'Broke plan',
+  'Emotional interference'
+] as const;
+const LEGACY_MISTAKE_TAGS = new Set(['test', 'mistake', 'huh?', 'huh', 'tmp', 'todo', 'n/a']);
 const emotionalPressureScale: Array<{ value: number; label: string }> = [
   { value: 1, label: '1 = Level-headed' },
   { value: 2, label: '2 = Slight tension' },
@@ -144,6 +169,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }));
   const [newInstrument, setNewInstrument] = useState('');
   const [newMistakeTag, setNewMistakeTag] = useState('');
+  const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
   const [mistakePickerValue, setMistakePickerValue] = useState('');
   const [logMode, setLogMode] = useState<LogMode>('trade');
   const [accountOpen, setAccountOpen] = useState(false);
@@ -212,7 +238,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       default_risk: 200,
       display_name: 'JY',
       instruments: ['MES'],
-      mistake_catalog: []
+      mistake_catalog: [...DEFAULT_MISTAKE_CATALOG],
+      mistake_catalog_hidden: []
     });
     const rawInstruments = (baseSettings as { instruments?: unknown }).instruments;
     const normalizedInstruments = Array.isArray(rawInstruments)
@@ -221,7 +248,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setSettings({
       ...baseSettings,
       instruments: normalizeUniqueInstruments(normalizedInstruments),
-      mistake_catalog: normalizeMistakeTags(baseSettings.mistake_catalog)
+      mistake_catalog: normalizeActiveMistakeCatalog(baseSettings.mistake_catalog, (baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden),
+      mistake_catalog_hidden: normalizeLegacyMistakeCatalog((baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden, baseSettings.mistake_catalog)
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
@@ -277,6 +305,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
+  const activeMistakeCatalog = normalizeActiveMistakeCatalog(settings?.mistake_catalog, settings?.mistake_catalog_hidden);
+  const hiddenMistakeCatalog = normalizeLegacyMistakeCatalog(settings?.mistake_catalog_hidden, settings?.mistake_catalog);
   const instrumentOptions = normalizeUniqueInstruments([
     'MES',
     tradeDraft.ticker,
@@ -284,8 +314,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     ...trades.map((t) => String(t.ticker || '').toUpperCase()).filter(Boolean)
   ]);
   const mistakeTagOptions = normalizeUniqueTags([
-    ...normalizeMistakeTags(settings?.mistake_catalog),
-    ...trades.flatMap((t) => normalizeMistakeTags(t.mistake_tags))
+    ...activeMistakeCatalog,
+    ...normalizeMistakeTags(tradeDraft.mistake_tags)
   ]);
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
@@ -366,7 +396,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       await saveSettings({
         ...settings,
         instruments: normalizeUniqueInstruments([...(settings.instruments || []), payload.ticker]),
-        mistake_catalog: normalizeUniqueTags([...(settings.mistake_catalog || []), ...payload.mistake_tags])
+        mistake_catalog: normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), ...payload.mistake_tags], settings.mistake_catalog_hidden),
+        mistake_catalog_hidden: settings.mistake_catalog_hidden || []
       });
     }
 
@@ -481,7 +512,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const payload: SettingsRow = {
       ...next,
       instruments: normalizeUniqueInstruments(next.instruments || []),
-      mistake_catalog: normalizeMistakeTags(next.mistake_catalog)
+      mistake_catalog: normalizeActiveMistakeCatalog(next.mistake_catalog, next.mistake_catalog_hidden),
+      mistake_catalog_hidden: normalizeLegacyMistakeCatalog(next.mistake_catalog_hidden, next.mistake_catalog)
     };
     const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
     if (!upsertError) {
@@ -776,6 +808,71 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => setSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
           <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => setSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
           <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
+          <article className="trade stack">
+            <div className="row">
+              <strong>Mistake catalog</strong>
+              <span className="small muted">{activeMistakeCatalog.length} active</span>
+            </div>
+            <div className="small muted">Active mistakes are shown in Log → Trade selection. Hidden items remain available in historical entries.</div>
+            <div className="stack">
+              {activeMistakeCatalog.length ? activeMistakeCatalog.map((tag) => (
+                <div key={`active-${tag}`} className="row" style={{ gap: 8 }}>
+                  <span className="badge">{tag}</span>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      const nextActive = activeMistakeCatalog.filter((item) => item !== tag);
+                      const nextHidden = normalizeLegacyMistakeCatalog([...(settings.mistake_catalog_hidden || []), tag], nextActive);
+                      void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                    }}
+                  >
+                    Hide
+                  </button>
+                </div>
+              )) : <div className="small muted">No active mistakes yet.</div>}
+            </div>
+            <div className="row">
+              <input placeholder="Add mistake category" value={newCatalogMistakeTag} onChange={(e) => setNewCatalogMistakeTag(e.target.value)} />
+              <button
+                className="inline"
+                type="button"
+                onClick={() => {
+                  const next = normalizeTag(newCatalogMistakeTag);
+                  if (!next) return;
+                  const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden);
+                  const nextHidden = normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), nextActive);
+                  void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                  setNewCatalogMistakeTag('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+            {hiddenMistakeCatalog.length ? (
+              <details>
+                <summary className="small muted">Hidden / legacy mistakes ({hiddenMistakeCatalog.length})</summary>
+                <div className="stack" style={{ marginTop: 8 }}>
+                  {hiddenMistakeCatalog.map((tag) => (
+                    <div key={`hidden-${tag}`} className="row" style={{ gap: 8 }}>
+                      <span className="badge">{tag}</span>
+                      <button
+                        className="inline"
+                        type="button"
+                        onClick={() => {
+                          const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), tag], settings.mistake_catalog_hidden);
+                          const nextHidden = normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== tag), nextActive);
+                          void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                        }}
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </article>
           <button
             className="inline"
             type="button"
@@ -950,6 +1047,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                         <strong>{row.key}</strong>
                         <span className="small muted">{row.trades} trade(s)</span>
                       </div>
+                      {!activeMistakeCatalog.includes(row.key) ? <div className="small muted">Legacy tag (not in active catalog)</div> : null}
                       <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Win rate: {row.winRate.toFixed(1)}%</div>
                     </article>
                   ))}
@@ -1279,7 +1377,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...currentTags, next]) }));
                 }
                 const nextSettings = settings
-                  ? { ...settings, mistake_catalog: normalizeMistakeTags([...(settings.mistake_catalog || []), next]) }
+                  ? {
+                    ...settings,
+                    mistake_catalog: normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden),
+                    mistake_catalog_hidden: normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), [...(settings.mistake_catalog || []), next])
+                  }
                   : null;
                 if (nextSettings) void saveSettings(nextSettings);
                 setNewMistakeTag('');
@@ -2865,6 +2967,27 @@ function normalizeUniqueTags(values: string[]) {
   return next.sort((a, b) => a.localeCompare(b));
 }
 
+function isLegacyJunkMistakeTag(tag: string) {
+  return LEGACY_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
+}
+
+function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: unknown): string[] {
+  const hidden = new Set(normalizeMistakeTags(hiddenCatalog).map((item) => item.toLowerCase()));
+  const source = normalizeMistakeTags(activeCatalog);
+  const seeded = source.length ? source : [...DEFAULT_MISTAKE_CATALOG];
+  return normalizeUniqueTags(
+    seeded.filter((tag) => !isLegacyJunkMistakeTag(tag) && !hidden.has(tag.toLowerCase()))
+  );
+}
+
+function normalizeLegacyMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
+  const active = new Set(normalizeMistakeTags(activeCatalog).map((item) => item.toLowerCase()));
+  return normalizeUniqueTags([
+    ...normalizeMistakeTags(hiddenCatalog),
+    ...normalizeMistakeTags(activeCatalog).filter((tag) => isLegacyJunkMistakeTag(tag))
+  ]).filter((tag) => !active.has(tag.toLowerCase()));
+}
+
 function normalizeSupabaseError(message: string) {
   const text = String(message || '');
   if (isRecoverableSchemaError(text)) {
@@ -2875,8 +2998,8 @@ function normalizeSupabaseError(message: string) {
 
 function isSettingsCatalogSchemaMismatch(message: string) {
   const text = String(message || '');
-  return /could not find .*?(instruments|mistake_catalog).*?schema cache/i.test(text)
-    || /column .*?(instruments|mistake_catalog).*? does not exist/i.test(text);
+  return /could not find .*?(instruments|mistake_catalog|mistake_catalog_hidden).*?schema cache/i.test(text)
+    || /column .*?(instruments|mistake_catalog|mistake_catalog_hidden).*? does not exist/i.test(text);
 }
 
 function isRecoverableSchemaError(message: string) {
