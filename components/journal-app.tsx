@@ -141,6 +141,7 @@ export default function JournalApp({ userId, email }: Props) {
   }));
   const [newInstrument, setNewInstrument] = useState('');
   const [newMistakeTag, setNewMistakeTag] = useState('');
+  const [mistakePickerValue, setMistakePickerValue] = useState('');
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
 
@@ -415,6 +416,7 @@ export default function JournalApp({ userId, email }: Props) {
       notes: ''
     });
     setTradeExtract(null);
+    setMistakePickerValue('');
   }
 
   function startEditTrade(trade: TradeRow) {
@@ -437,6 +439,7 @@ export default function JournalApp({ userId, email }: Props) {
       mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
+    setMistakePickerValue('');
   }
 
   function startEditNoTrade(noTrade: NoTradeDayRow) {
@@ -850,7 +853,28 @@ export default function JournalApp({ userId, email }: Props) {
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
             <label className="small muted">Mistake tags</label>
-            <select multiple value={normalizeMistakeTags(tradeDraft.mistake_tags)} onChange={(e) => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags(Array.from(e.currentTarget.selectedOptions).map((opt) => opt.value)) }))}>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {normalizeMistakeTags(tradeDraft.mistake_tags).length ? normalizeMistakeTags(tradeDraft.mistake_tags).map((tag) => (
+                <button
+                  key={tag}
+                  className="inline"
+                  type="button"
+                  onClick={() => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags(normalizeMistakeTags(p.mistake_tags).filter((existing) => existing !== tag)) }))}
+                >
+                  {tag} ✕
+                </button>
+              )) : <span className="small muted">No mistakes selected.</span>}
+            </div>
+            <select
+              value={mistakePickerValue}
+              onChange={(e) => {
+                const next = normalizeTag(e.target.value);
+                setMistakePickerValue('');
+                if (!next) return;
+                setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...normalizeMistakeTags(p.mistake_tags), next]) }));
+              }}
+            >
+              <option value="">Select saved mistake tag</option>
               {mistakeTagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
             </select>
             <div className="row">
