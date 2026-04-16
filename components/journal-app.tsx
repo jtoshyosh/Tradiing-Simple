@@ -148,6 +148,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [logMode, setLogMode] = useState<LogMode>('trade');
   const [accountOpen, setAccountOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [accountFirstName, setAccountFirstName] = useState('');
+  const [accountLastName, setAccountLastName] = useState('');
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
     session_type: 'chart',
@@ -158,6 +160,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
+  const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
+  const [calendarMetric, setCalendarMetric] = useState<'pnl' | 'r'>('pnl');
+  const [chartMetric, setChartMetric] = useState<'pnl' | 'r'>('pnl');
+  const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
+  const [chartOverlay, setChartOverlay] = useState<'none' | 'count'>('none');
+  const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const [first, last] = splitDisplayName(settings?.display_name || '', email);
+    setAccountFirstName(first);
+    setAccountLastName(last);
+  }, [settings?.display_name, email]);
 
   useEffect(() => {
     void loadAll();
@@ -174,18 +188,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('attachments').select('*').order('created_at', { ascending: false })
     ]);
-    if (t.error || n.error || sessionResult.error || r.error || s.error || a.error) {
-      setError(normalizeSupabaseError(t.error?.message || n.error?.message || sessionResult.error?.message || r.error?.message || s.error?.message || a.error?.message || 'Load failed'));
+    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error].filter(Boolean);
+    const blocking = errors.find((entry) => !isRecoverableSchemaError(entry?.message || ''));
+    if (blocking) {
+      setError(normalizeSupabaseError(blocking.message));
       return;
     }
-    setTrades(((t.data || []) as TradeRow[]).map((trade) => ({
+    if (errors.length) {
+      console.warn('Recoverable Supabase load issue', errors);
+      setError(normalizeSupabaseError(errors[0]?.message || 'Some data is temporarily unavailable.'));
+    }
+    setTrades((((t.data || []) as TradeRow[]) || []).map((trade) => ({
       ...trade,
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
-    setNoTrades((n.data || []) as NoTradeDayRow[]);
-    setSessions((sessionResult.data || []) as SessionRow[]);
-    setReviews((r.data || []) as WeeklyReviewRow[]);
-    const baseSettings = (s.data as SettingsRow | null) ?? {
+    setNoTrades(((n.data || []) as NoTradeDayRow[]) || []);
+    setSessions(((sessionResult.data || []) as SessionRow[]) || []);
+    setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
+    const baseSettings = ((s.data as SettingsRow | null) ?? {
       user_id: userId,
       daily_reminder: true,
       weekly_reminder: true,
@@ -193,7 +213,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       display_name: 'JY',
       instruments: ['MES'],
       mistake_catalog: []
-    };
+    });
     const rawInstruments = (baseSettings as { instruments?: unknown }).instruments;
     const normalizedInstruments = Array.isArray(rawInstruments)
       ? rawInstruments.map((item) => String(item ?? ''))
@@ -203,7 +223,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       instruments: normalizeUniqueInstruments(normalizedInstruments),
       mistake_catalog: normalizeMistakeTags(baseSettings.mistake_catalog)
     });
-    setAttachments((a.data || []) as AttachmentRow[]);
+    setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
 
   const netPnl = trades.reduce((s, t) => s + Number(t.pnl || 0), 0);
@@ -213,7 +233,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodNetPnl = periodTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const periodNetR = periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
   const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const winningTrades = periodTrades.filter((t) => Number(t.pnl || 0) > 0);
+  const losingTrades = periodTrades.filter((t) => Number(t.pnl || 0) < 0);
+  const avgWinnerResult = winningTrades.length ? winningTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / winningTrades.length : 0;
+  const avgLoserResult = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / losingTrades.length : 0;
   const periodWinRate = periodTrades.length ? (periodWins / periodTrades.length) * 100 : 0;
   const periodAvgR = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0) / periodTrades.length : 0;
   const periodAvgEmotion = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length : 0;
@@ -237,6 +262,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
+  const calendarWeekRows = chunkCalendarWeeks(calendarCells);
+  const periodTimeline = buildPeriodTimeline(periodRange.start, periodRange.end, periodTrades, periodNoTrades, chartMetric, chartView);
+  const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
   const instrumentOptions = normalizeUniqueInstruments([
     'MES',
     tradeDraft.ticker,
@@ -269,6 +297,29 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '' });
   }, [reviewRow?.id, selectedWeekKey]);
+
+  useEffect(() => {
+    if (tab !== 'review') return;
+    const paths = attachments
+      .filter((a) => weekTrades.some((t) => t.id === a.trade_id) || weekNoTrades.some((n) => n.id === a.no_trade_day_id))
+      .map((a) => a.file_path);
+    if (!paths.length) {
+      setReviewSignedUrls({});
+      return;
+    }
+    void supabase.storage.from('attachments').createSignedUrls(paths, 60 * 60).then(({ data, error: signError }) => {
+      if (signError) {
+        console.warn('Review attachment sign error', signError);
+        setReviewSignedUrls({});
+        return;
+      }
+      const next: Record<string, string> = {};
+      (data || []).forEach((item, idx) => {
+        if (item?.signedUrl) next[paths[idx]] = item.signedUrl;
+      });
+      setReviewSignedUrls(next);
+    });
+  }, [tab, selectedWeekKey, attachments, weekTrades, weekNoTrades, supabase]);
 
   async function addTrade(formData: FormData) {
     setError('');
@@ -667,9 +718,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
   const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
   const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
-  const displayName = (settings?.display_name || '').trim();
-  const [firstNameValue, lastNameValue] = splitDisplayName(displayName, email);
-  const initials = buildInitials(firstNameValue, lastNameValue, email);
+  const initials = buildInitials(accountFirstName, accountLastName, email);
 
   return (
     <main className="app">
@@ -694,118 +743,69 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       </header>
       {accountOpen && (
         <section className="card stack" style={{ marginTop: -6 }}>
-          <div className="small muted">First name: {firstNameValue || '—'}</div>
-          <div className="small muted">Last name: {lastNameValue || '—'}</div>
+          <div className="small muted">First name: {accountFirstName || '—'}</div>
+          <div className="small muted">Last name: {accountLastName || '—'}</div>
           <div className="small muted">Email: {email || '—'}</div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <button className="inline" type="button" onClick={() => setShowAccountSettings((open) => !open)}>Settings</button>
+            <button className="inline" type="button" onClick={() => { setShowAccountSettings(true); setAccountOpen(false); }}>Settings</button>
             <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
           </div>
-          {showAccountSettings && settings && (
-            <section className="stack">
-              <input
-                placeholder="First name"
-                value={firstNameValue}
-                onChange={(e) => {
-                  const nextFirst = e.target.value;
-                  const nextDisplay = [nextFirst, lastNameValue].join(' ').trim() || settings.display_name;
-                  setSettings({ ...settings, display_name: nextDisplay });
-                }}
-              />
-              <input
-                placeholder="Last name"
-                value={lastNameValue}
-                onChange={(e) => {
-                  const nextLast = e.target.value;
-                  const nextDisplay = [firstNameValue, nextLast].join(' ').trim() || settings.display_name;
-                  setSettings({ ...settings, display_name: nextDisplay });
-                }}
-              />
-              <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
-              <button className="inline" type="button" onClick={() => saveSettings(settings)}>Save settings</button>
-            </section>
-          )}
+        </section>
+      )}
+      {showAccountSettings && settings && (
+        <section className="card stack">
+          <div className="row">
+            <strong>Account settings</strong>
+            <button className="inline" type="button" onClick={() => setShowAccountSettings(false)}>Close</button>
+          </div>
+          <input placeholder="First name" value={accountFirstName} onChange={(e) => setAccountFirstName(e.target.value)} />
+          <input placeholder="Last name" value={accountLastName} onChange={(e) => setAccountLastName(e.target.value)} />
+          <input value={email || ''} disabled />
+          <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => setSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
+          <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => setSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
+          <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
+          <button
+            className="inline"
+            type="button"
+            onClick={() => {
+              const nextDisplay = [accountFirstName, accountLastName].join(' ').trim() || settings.display_name;
+              void saveSettings({ ...settings, display_name: nextDisplay });
+            }}
+          >
+            Save settings
+          </button>
         </section>
       )}
 
       {tab === 'dashboard' && (
         <section className="stack">
           <section className="card stack">
-            <label className="small muted" htmlFor="period-type">Period type</label>
-            <select id="period-type" value={dashboardPeriod} onChange={(e) => setDashboardPeriod(e.target.value as DashboardPeriod)}>
-              <option value="weekly">Week</option>
-              <option value="monthly">Month</option>
-              <option value="quarterly">Quarter</option>
-              <option value="annual">Year</option>
-              <option value="ytd">YTD</option>
-            </select>
-            <label className="small muted">Jump to</label>
-            {dashboardPeriod === 'weekly' && (
-              <input
-                type="date"
-                value={dashboardAnchor.toISOString().slice(0, 10)}
-                onChange={(e) => {
-                  const next = parseIsoDateInput(e.target.value);
-                  if (next) setDashboardAnchor(next);
-                }}
-              />
-            )}
-            {dashboardPeriod === 'monthly' && (
-              <input
-                type="month"
-                value={`${dashboardAnchor.getUTCFullYear()}-${String(dashboardAnchor.getUTCMonth() + 1).padStart(2, '0')}`}
-                onChange={(e) => {
-                  const next = parseMonthInput(e.target.value);
-                  if (next) setDashboardAnchor(next);
-                }}
-              />
-            )}
-            {dashboardPeriod === 'quarterly' && (
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
+              <div style={{ flex: 1 }}>
+                <label className="small muted" htmlFor="period-type">Period type</label>
+                <select id="period-type" value={dashboardPeriod} onChange={(e) => setDashboardPeriod(e.target.value as DashboardPeriod)}>
+                  <option value="weekly">Week</option>
+                  <option value="monthly">Month</option>
+                  <option value="quarterly">Quarter</option>
+                  <option value="annual">Year</option>
+                  <option value="ytd">YTD</option>
+                </select>
+              </div>
+              <div style={{ flex: 1 }}>
+                <label className="small muted">Jump to</label>
                 <select
-                  value={String(Math.floor(dashboardAnchor.getUTCMonth() / 3) + 1)}
+                  value={periodJumpOptions.selected}
                   onChange={(e) => {
-                    const quarter = Number(e.target.value);
-                    const year = dashboardAnchor.getUTCFullYear();
-                    setDashboardAnchor(new Date(Date.UTC(year, (quarter - 1) * 3, 1)));
+                    const next = periodJumpOptions.options.find((opt) => opt.value === e.target.value);
+                    if (next) setDashboardAnchor(next.anchor);
                   }}
                 >
-                  <option value="1">Q1</option>
-                  <option value="2">Q2</option>
-                  <option value="3">Q3</option>
-                  <option value="4">Q4</option>
+                  {periodJumpOptions.options.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
                 </select>
-                <input
-                  type="number"
-                  min={2000}
-                  max={2100}
-                  value={dashboardAnchor.getUTCFullYear()}
-                  onChange={(e) => {
-                    const nextYear = Number(e.target.value);
-                    if (!Number.isFinite(nextYear)) return;
-                    const quarter = Math.floor(dashboardAnchor.getUTCMonth() / 3) + 1;
-                    setDashboardAnchor(new Date(Date.UTC(nextYear, (quarter - 1) * 3, 1)));
-                  }}
-                />
               </div>
-            )}
-            {(dashboardPeriod === 'annual' || dashboardPeriod === 'ytd') && (
-              <input
-                type="number"
-                min={2000}
-                max={2100}
-                value={dashboardAnchor.getUTCFullYear()}
-                onChange={(e) => {
-                  const nextYear = Number(e.target.value);
-                  if (!Number.isFinite(nextYear)) return;
-                  if (dashboardPeriod === 'annual') {
-                    setDashboardAnchor(new Date(Date.UTC(nextYear, 0, 1)));
-                  } else {
-                    setDashboardAnchor(anchorForYtdYear(nextYear));
-                  }
-                }}
-              />
-            )}
+            </div>
             <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
@@ -822,36 +822,87 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </div>
           <section className="grid">
             <article className="card"><div className="muted small">Period Net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
+            <article className="card"><div className="muted small">Period Net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
             <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
             <article className="card"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
             <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
             <article className="card"><div className="muted small">Avg R</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+            <article className="card"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
+            <article className="card"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
+          </section>
+
+          <section className="card stack">
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <strong>Performance chart</strong>
+              <select value={chartMetric} onChange={(e) => setChartMetric(e.target.value as 'pnl' | 'r')} style={{ width: 'auto' }}>
+                <option value="pnl">$</option>
+                <option value="r">R</option>
+              </select>
+              <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto' }}>
+                <option value="daily">Daily</option>
+                <option value="cumulative">Cumulative</option>
+              </select>
+              <select value={chartOverlay} onChange={(e) => setChartOverlay(e.target.value as 'none' | 'count')} style={{ width: 'auto' }}>
+                <option value="none">Overlay: None</option>
+                <option value="count">Overlay: Trade count</option>
+              </select>
+            </div>
+            <PerformanceChart points={periodTimeline} metric={chartMetric} view={chartView} overlay={chartOverlay} />
           </section>
 
           <section className="card stack">
             <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
+            <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <div className="row" style={{ gap: 6, width: 'auto' }}>
+                <button className="inline" type="button" onClick={() => setCalendarView('month')}>{calendarView === 'month' ? '✓ ' : ''}Month view</button>
+                <button className="inline" type="button" onClick={() => setCalendarView('weekly')}>{calendarView === 'weekly' ? '✓ ' : ''}Weekly view</button>
+              </div>
+              <div className="row" style={{ gap: 6, width: 'auto' }}>
+                <button className="inline" type="button" onClick={() => setCalendarMetric('pnl')}>{calendarMetric === 'pnl' ? '✓ ' : ''}$</button>
+                <button className="inline" type="button" onClick={() => setCalendarMetric('r')}>{calendarMetric === 'r' ? '✓ ' : ''}R</button>
+              </div>
+            </div>
             <div className="small muted">
               {dashboardPeriod === 'monthly'
                 ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
                 : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 6 }}>
-              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
-              {calendarCells.map((cell) => (
-                <article key={cell.date} className="trade" style={{ padding: 8, minHeight: 64, background: cell.isOutside ? '#0f1724' : cell.pnl > 0 ? 'rgba(74,214,109,0.17)' : cell.pnl < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#0f1622', borderColor: cell.tradeCount || cell.noTrade ? undefined : '#223045' }}>
-                  <div className="small muted">{cell.day}</div>
-                  {cell.tradeCount > 0 ? (
-                    <>
-                      <div className="small" style={{ color: cell.pnl > 0 ? '#4ad66d' : cell.pnl < 0 ? '#ff7b7b' : '#d7e2f5' }}>${cell.pnl.toFixed(0)}</div>
-                      <div className="small muted">{cell.tradeCount} trade(s)</div>
-                    </>
-                  ) : cell.noTrade ? (
-                    <div className="small muted">No-trade</div>
-                  ) : null}
-                </article>
-              ))}
-            </div>
+            {calendarView === 'month' ? (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 4 }}>
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
+                {calendarCells.map((cell) => {
+                  const metricValue = calendarMetric === 'pnl' ? cell.pnl : cell.rTotal;
+                  return (
+                    <article key={cell.date} className="trade" style={{ padding: 6, minHeight: 56, background: cell.isOutside ? '#0f1724' : metricValue > 0 ? 'rgba(74,214,109,0.17)' : metricValue < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#0f1622', borderColor: cell.tradeCount || cell.noTrade ? undefined : '#223045' }}>
+                      <div className="small muted">{cell.day}</div>
+                      {cell.tradeCount > 0 ? <div className="small">{calendarMetric === 'pnl' ? `$${cell.pnl.toFixed(0)}` : `${cell.rTotal.toFixed(1)}R`}</div> : null}
+                      {cell.tradeCount > 0 ? <div className="small muted">T{cell.tradeCount}</div> : null}
+                      {cell.noTrade ? <div className="small muted">NT</div> : null}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="stack">
+                {calendarWeekRows.map((week) => {
+                  const start = week[0];
+                  const end = week[week.length - 1];
+                  const total = week.reduce((sum, day) => sum + (calendarMetric === 'pnl' ? day.pnl : day.rTotal), 0);
+                  const tradeCount = week.reduce((sum, day) => sum + day.tradeCount, 0);
+                  const noTradeCount = week.filter((day) => day.noTrade).length;
+                  return (
+                    <article key={start.date} className="trade">
+                      <div className="row">
+                        <strong>{formatShortDate(start.date)} – {formatShortDate(end.date)}</strong>
+                        <span style={{ color: total >= 0 ? '#4ad66d' : '#ff6b6b' }}>{calendarMetric === 'pnl' ? `$${total.toFixed(2)}` : `${total.toFixed(2)}R`}</span>
+                      </div>
+                      <div className="small muted">{tradeCount} trade(s){noTradeCount ? ` · ${noTradeCount} no-trade day(s)` : ''}</div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </section>
 
           <section className="card stack">
@@ -992,9 +1043,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'log' && (
         <section className="stack">
           <div className="card row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <div className="small muted" style={{ width: '100%' }}>Choose what you want to log:</div>
             <button className="inline" type="button" onClick={() => setLogMode('trade')}>Trade</button>
             <button className="inline" type="button" onClick={() => setLogMode('no_trade')}>No-trade day</button>
-            <button className="inline" type="button" onClick={() => setLogMode('session')}>Session</button>
+            <button className="inline" type="button" onClick={() => setLogMode('session')}>Session (Chart / Journal)</button>
           </div>
           {logMode === 'trade' && (
           <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
@@ -1302,11 +1354,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   });
                 }}>Cancel edit</button> : null}
               </div>
-              <label className="small muted">Session type</label>
-              <select value={sessionDraft.session_type} onChange={(e) => setSessionDraft((p) => ({ ...p, session_type: e.target.value as 'chart' | 'journal' }))}>
-                <option value="chart">Chart session</option>
-                <option value="journal">Journal session</option>
-              </select>
+              <div className="small muted">Session type (required)</div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button className="inline" type="button" onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'chart' }))}>
+                  {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
+                </button>
+                <button className="inline" type="button" onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'journal' }))}>
+                  {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
+                </button>
+              </div>
+              <div className="small muted">Use Chart session for chart study/backtesting. Use Journal session for writing/reviewing journal notes.</div>
               <label className="small muted">Date</label>
               <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
@@ -1349,13 +1406,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <div className="small">{t.family} · {t.model} · {t.classification}</div>
                 <div className="small">${t.pnl} · {t.r_multiple}R · {t.minutes_in_trade}m · Emotion {t.emotional_pressure}/5</div>
                 <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {t.notes || '—'}</div>
+                <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
               </article>
             ))}
             {weekNoTrades.map((n) => (
               <article key={n.id} className="trade no-trade">
                 <div className="small muted">{n.day_date}</div>
                 <div className="small">Reason: {n.reason}</div>
-                <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === n.id).length}</div>
+                <div className="small" style={{ whiteSpace: 'pre-wrap' }}>Notes: {n.notes || '—'}</div>
+                <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
               </article>
             ))}
             {weekSessions.map((s) => (
@@ -1366,9 +1426,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ))}
             {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
           </div>
-          <textarea value={reviewAnswers.q1} onChange={(e) => setReviewAnswers((s) => ({ ...s, q1: e.target.value }))} placeholder="1) Reflection on mistakes" />
-          <textarea value={reviewAnswers.q2} onChange={(e) => setReviewAnswers((s) => ({ ...s, q2: e.target.value }))} placeholder="2) Reflection on no-trade choices" />
-          <textarea value={reviewAnswers.q3} onChange={(e) => setReviewAnswers((s) => ({ ...s, q3: e.target.value }))} placeholder="3) Rule for next week" />
+          <label className="small muted">1) Reflection on mistakes</label>
+          <textarea value={reviewAnswers.q1} onChange={(e) => setReviewAnswers((s) => ({ ...s, q1: e.target.value }))} />
+          <label className="small muted">2) Reflection on no-trade choices</label>
+          <textarea value={reviewAnswers.q2} onChange={(e) => setReviewAnswers((s) => ({ ...s, q2: e.target.value }))} />
+          <label className="small muted">3) Rule for next week</label>
+          <textarea value={reviewAnswers.q3} onChange={(e) => setReviewAnswers((s) => ({ ...s, q3: e.target.value }))} />
           <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
         </section>
       )}
@@ -1481,6 +1544,125 @@ function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: 
       })}
     </div>
   );
+}
+
+type TimelinePoint = { date: string; value: number; tradeCount: number; noTrade: boolean };
+
+function PerformanceChart({ points, metric, view, overlay }: { points: TimelinePoint[]; metric: 'pnl' | 'r'; view: 'daily' | 'cumulative'; overlay: 'none' | 'count' }) {
+  if (!points.length) return <div className="small muted">No data in selected period.</div>;
+  const values = points.map((p) => p.value);
+  const maxAbs = Math.max(1, ...values.map((v) => Math.abs(v)));
+  const baseline = 70;
+  const chartHeight = 140;
+  const width = Math.max(320, points.length * 18);
+  const maxTradeCount = Math.max(1, ...points.map((p) => p.tradeCount));
+  const polyline = points.map((point, idx) => {
+    const x = (idx / Math.max(1, points.length - 1)) * (width - 24) + 12;
+    const y = baseline - (point.value / maxAbs) * 56;
+    return `${x},${Math.max(10, Math.min(chartHeight - 10, y))}`;
+  }).join(' ');
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <svg viewBox={`0 0 ${width} ${chartHeight}`} style={{ width: '100%', minWidth: width, height: 170 }}>
+        <line x1={0} y1={baseline} x2={width} y2={baseline} stroke="#2a3445" strokeWidth={1} />
+        {view === 'daily' && points.map((point, idx) => {
+          const x = idx * 18 + 10;
+          const barHeight = Math.max(2, Math.abs(point.value / maxAbs) * 52);
+          const y = point.value >= 0 ? baseline - barHeight : baseline;
+          return <rect key={`bar-${point.date}`} x={x} y={y} width={10} height={barHeight} fill={point.value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} />;
+        })}
+        {view === 'cumulative' && <polyline fill="none" stroke="#70c8ff" strokeWidth={2} points={polyline} />}
+        {overlay === 'count' && points.map((point, idx) => {
+          const x = view === 'daily' ? idx * 18 + 15 : (idx / Math.max(1, points.length - 1)) * (width - 24) + 12;
+          const y = chartHeight - 12 - (point.tradeCount / maxTradeCount) * 24;
+          return point.tradeCount > 0 ? <circle key={`count-${point.date}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
+        })}
+        {points.map((point, idx) => {
+          if (!point.noTrade) return null;
+          const x = view === 'daily' ? idx * 18 + 10 : (idx / Math.max(1, points.length - 1)) * (width - 24) + 8;
+          return <line key={`nt-${point.date}`} x1={x} y1={chartHeight - 6} x2={x + 6} y2={chartHeight - 6} stroke="#9ca3af" strokeWidth={2} />;
+        })}
+      </svg>
+      <div className="small muted">Showing {view} {metric === 'pnl' ? '$' : 'R'}{overlay === 'count' ? ' with trade-count overlay' : ''}.</div>
+    </div>
+  );
+}
+
+function buildPeriodTimeline(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], metric: 'pnl' | 'r', view: 'daily' | 'cumulative'): TimelinePoint[] {
+  const dates = enumerateDates(start, end);
+  let running = 0;
+  return dates.map((date) => {
+    const dayTrades = periodTrades.filter((t) => t.trade_date === date);
+    const dayValue = dayTrades.reduce((sum, trade) => sum + Number(metric === 'pnl' ? trade.pnl : trade.r_multiple), 0);
+    running += dayValue;
+    return {
+      date,
+      value: view === 'cumulative' ? running : dayValue,
+      tradeCount: dayTrades.length,
+      noTrade: periodNoTrades.some((n) => n.day_date === date)
+    };
+  });
+}
+
+function enumerateDates(start: string, end: string) {
+  const out: string[] = [];
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    out.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
+  const options: Array<{ value: string; label: string; anchor: Date }> = [];
+  const selected = jumpValueForAnchor(period, anchor);
+  const base = new Date(anchor);
+  const count = period === 'weekly' ? 24 : period === 'monthly' ? 24 : period === 'quarterly' ? 16 : 12;
+  for (let i = 0; i < count; i += 1) {
+    const next = shiftPeriod(base, period, -i);
+    options.push({
+      value: jumpValueForAnchor(period, next),
+      label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+      anchor: normalizeAnchorForPeriod(period, next)
+    });
+  }
+  if (!options.some((opt) => opt.value === selected)) {
+    options.unshift({
+      value: selected,
+      label: formatPeriodLabel(period, anchor, getPeriodRange(period, anchor).start, getPeriodRange(period, anchor).end),
+      anchor: normalizeAnchorForPeriod(period, anchor)
+    });
+  }
+  return { selected, options };
+}
+
+function jumpValueForAnchor(period: DashboardPeriod, anchor: Date) {
+  if (period === 'weekly') return weekKeyFromDate(anchor.toISOString().slice(0, 10));
+  if (period === 'monthly') return `${anchor.getUTCFullYear()}-${String(anchor.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (period === 'quarterly') return `${anchor.getUTCFullYear()}-Q${Math.floor(anchor.getUTCMonth() / 3) + 1}`;
+  return String(anchor.getUTCFullYear());
+}
+
+function normalizeAnchorForPeriod(period: DashboardPeriod, anchor: Date) {
+  if (period === 'weekly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()));
+  if (period === 'monthly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+  if (period === 'quarterly') return new Date(Date.UTC(anchor.getUTCFullYear(), Math.floor(anchor.getUTCMonth() / 3) * 3, 1));
+  if (period === 'annual') return new Date(Date.UTC(anchor.getUTCFullYear(), 0, 1));
+  return anchorForYtdYear(anchor.getUTCFullYear());
+}
+
+function chunkCalendarWeeks<T>(cells: T[]) {
+  const rows: T[][] = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+  return rows;
+}
+
+function formatShortDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
 function titleCase(v: string) {
@@ -2145,11 +2327,13 @@ function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTr
     const date = dt.toISOString().slice(0, 10);
     const dayTrades = trades.filter((t) => t.trade_date === date);
     const pnl = dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+    const rTotal = dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
     const noTrade = noTrades.some((n) => n.day_date === date);
     return {
       date,
       day: dt.getUTCDate(),
       pnl,
+      rTotal,
       tradeCount: dayTrades.length,
       noTrade,
       isOutside: dt.getUTCMonth() !== monthStart.getUTCMonth()
@@ -2276,11 +2460,8 @@ function normalizeUniqueTags(values: string[]) {
 
 function normalizeSupabaseError(message: string) {
   const text = String(message || '');
-  if (/could not find .*emotional_pressure.*schema cache/i.test(text)) {
-    return 'Your database schema is missing the emotional pressure field. Please run the latest Supabase migration and refresh.';
-  }
-  if (isSettingsCatalogSchemaMismatch(text)) {
-    return 'Settings catalog columns are temporarily unavailable in schema cache. Core settings were saved; catalog sync will resume after schema cache refresh/migration.';
+  if (isRecoverableSchemaError(text)) {
+    return 'Some data is temporarily unavailable while database schema metadata refreshes. Please retry in a moment.';
   }
   return text;
 }
@@ -2289,6 +2470,15 @@ function isSettingsCatalogSchemaMismatch(message: string) {
   const text = String(message || '');
   return /could not find .*?(instruments|mistake_catalog).*?schema cache/i.test(text)
     || /column .*?(instruments|mistake_catalog).*? does not exist/i.test(text);
+}
+
+function isRecoverableSchemaError(message: string) {
+  const text = String(message || '');
+  return isSettingsCatalogSchemaMismatch(text)
+    || /schema cache/i.test(text)
+    || /column .* does not exist/i.test(text)
+    || /relation .* does not exist/i.test(text)
+    || /Could not find the table/i.test(text);
 }
 
 function currentWeekKey() {
