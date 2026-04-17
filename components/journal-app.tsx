@@ -31,7 +31,6 @@ const familyModels: Record<string, string[]> = {
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
 const DEFAULT_MISTAKE_CATALOG = [
   'FOMO entry',
-  'Forced trade',
   'Early entry',
   'Late entry',
   'Chased move',
@@ -42,7 +41,6 @@ const DEFAULT_MISTAKE_CATALOG = [
   'Overtrading',
   'Oversized position',
   'Ignored stop loss',
-  'No A+ setup',
   'Misread bias',
   'Traded into news',
   'Traded in chop',
@@ -50,10 +48,22 @@ const DEFAULT_MISTAKE_CATALOG = [
   'Ignored higher timeframe context',
   'Poor risk-reward',
   'No displacement / weak setup',
-  'Broke plan',
   'Emotional interference'
 ] as const;
-const LEGACY_MISTAKE_TAGS = new Set(['test', 'mistake', 'huh?', 'huh', 'tmp', 'todo', 'n/a']);
+const INACTIVE_MISTAKE_TAGS = new Set([
+  'huh?',
+  'huh',
+  'test',
+  'unfortunate',
+  'broke plan',
+  'forced trade',
+  'no a+ setup',
+  'mistake',
+  'tmp',
+  'todo',
+  'n/a'
+]);
+const SETTINGS_CACHE_PREFIX = 'jy-settings-cache:';
 const emotionalPressureScale: Array<{ value: number; label: string }> = [
   { value: 1, label: '1 = Level-headed' },
   { value: 2, label: '2 = Slight tension' },
@@ -170,7 +180,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [newInstrument, setNewInstrument] = useState('');
   const [newMistakeTag, setNewMistakeTag] = useState('');
   const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
-  const [mistakePickerValue, setMistakePickerValue] = useState('');
+  const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
   const [logMode, setLogMode] = useState<LogMode>('trade');
   const [accountOpen, setAccountOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
@@ -252,11 +262,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       (baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden,
       normalizedTrades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
     );
+    const cachedSettings = readSettingsCache(userId);
+    const cachedCatalog = cachedSettings
+      ? resolveMistakeCatalogState(
+        cachedSettings.mistake_catalog,
+        cachedSettings.mistake_catalog_hidden,
+        normalizedTrades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+      )
+      : null;
     setSettings({
       ...baseSettings,
-      instruments: normalizeUniqueInstruments(normalizedInstruments),
-      mistake_catalog: resolvedCatalog.active,
-      mistake_catalog_hidden: resolvedCatalog.hidden
+      display_name: normalizeTag(cachedSettings?.display_name || baseSettings.display_name),
+      default_risk: Number(cachedSettings?.default_risk ?? baseSettings.default_risk ?? 0),
+      daily_reminder: cachedSettings?.daily_reminder ?? baseSettings.daily_reminder,
+      weekly_reminder: cachedSettings?.weekly_reminder ?? baseSettings.weekly_reminder,
+      instruments: normalizeUniqueInstruments([...(cachedSettings?.instruments || []), ...normalizedInstruments]),
+      mistake_catalog: cachedCatalog?.active || resolvedCatalog.active,
+      mistake_catalog_hidden: cachedCatalog?.hidden || resolvedCatalog.hidden
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
@@ -535,6 +557,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
     if (!upsertError) {
       setSettings(payload);
+      writeSettingsCache(payload);
       return;
     }
     if (!isSettingsCatalogSchemaMismatch(upsertError.message)) {
@@ -554,6 +577,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       return;
     }
     setSettings(payload);
+    writeSettingsCache(payload);
   }
 
   function resetTradeDraft() {
@@ -576,7 +600,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       notes: ''
     });
     setTradeExtract(null);
-    setMistakePickerValue('');
+    setMistakePickerOpen(false);
   }
 
   function startEditTrade(trade: TradeRow) {
@@ -599,7 +623,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
-    setMistakePickerValue('');
+    setMistakePickerOpen(false);
   }
 
   function startEditNoTrade(noTrade: NoTradeDayRow) {
@@ -1418,18 +1442,28 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </button>
               )) : <span className="small muted">No mistakes selected.</span>}
             </div>
-            <select
-              value={mistakePickerValue}
-              onChange={(e) => {
-                const next = normalizeTag(e.target.value);
-                setMistakePickerValue('');
-                if (!next) return;
-                setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...normalizeMistakeTags(p.mistake_tags), next]) }));
-              }}
-            >
-              <option value="">Select saved mistake tag</option>
-              {mistakeTagOptions.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
-            </select>
+            <div className="stack">
+              <button className="inline" type="button" onClick={() => setMistakePickerOpen((open) => !open)}>
+                {mistakePickerOpen ? 'Done selecting mistakes' : 'Select saved mistake tags'}
+              </button>
+              {mistakePickerOpen ? (
+                <div className="trade stack" style={{ maxHeight: 190, overflow: 'auto' }}>
+                  {mistakeTagOptions.map((tag) => {
+                    const selected = normalizeMistakeTags(tradeDraft.mistake_tags).some((existing) => existing.toLowerCase() === tag.toLowerCase());
+                    return (
+                      <button
+                        key={tag}
+                        className="inline"
+                        type="button"
+                        onClick={() => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...normalizeMistakeTags(p.mistake_tags), tag]) }))}
+                      >
+                        {selected ? '✓ ' : ''}{tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
             <div className="row">
               <input placeholder="Add new mistake tag" value={newMistakeTag} onChange={(e) => setNewMistakeTag(e.target.value)} />
               <button className="inline" type="button" onClick={() => {
@@ -3428,8 +3462,8 @@ function normalizeUniqueTags(values: string[]) {
   return next.sort((a, b) => a.localeCompare(b));
 }
 
-function isLegacyJunkMistakeTag(tag: string) {
-  return LEGACY_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
+function isInactiveMistakeTag(tag: string) {
+  return INACTIVE_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
 }
 
 function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unknown, historicalTags: unknown = []): { active: string[]; hidden: string[]; legacy: string[] } {
@@ -3440,7 +3474,7 @@ function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unkno
   const defaultSet = new Set(DEFAULT_MISTAKE_CATALOG.map((item) => item.toLowerCase()));
 
   const cleanedActive = normalizeUniqueTags(
-    sourceActive.filter((tag) => !isLegacyJunkMistakeTag(tag) && !hiddenSet.has(tag.toLowerCase()))
+    sourceActive.filter((tag) => !isInactiveMistakeTag(tag) && !hiddenSet.has(tag.toLowerCase()))
   );
   const hasReasonableDefaultCoverage = cleanedActive.filter((tag) => defaultSet.has(tag.toLowerCase())).length >= 2;
   const looksStaleLegacyOnly = cleanedActive.length <= 1 && !hasReasonableDefaultCoverage;
@@ -3456,7 +3490,7 @@ function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unkno
 
   const hidden = normalizeUniqueTags([
     ...hiddenSeed,
-    ...sourceActive.filter((tag) => isLegacyJunkMistakeTag(tag)),
+    ...sourceActive.filter((tag) => isInactiveMistakeTag(tag)),
     ...(looksStaleLegacyOnly ? sourceActive : [])
   ]).filter((tag) => !activeSet.has(tag.toLowerCase()));
 
@@ -3472,6 +3506,50 @@ function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: un
 
 function normalizeLegacyMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
   return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).hidden;
+}
+
+function settingsCacheKey(userId: string) {
+  return `${SETTINGS_CACHE_PREFIX}${userId}`;
+}
+
+function readSettingsCache(userId: string): SettingsRow | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(settingsCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SettingsRow> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      user_id: userId,
+      daily_reminder: Boolean(parsed.daily_reminder),
+      weekly_reminder: Boolean(parsed.weekly_reminder),
+      default_risk: Number(parsed.default_risk ?? 0),
+      display_name: normalizeTag(String(parsed.display_name || '')),
+      instruments: normalizeUniqueInstruments(Array.isArray(parsed.instruments) ? parsed.instruments.map((item) => String(item ?? '')) : []),
+      mistake_catalog: normalizeMistakeTags(parsed.mistake_catalog),
+      mistake_catalog_hidden: normalizeMistakeTags(parsed.mistake_catalog_hidden)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSettingsCache(settings: SettingsRow) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(settingsCacheKey(settings.user_id), JSON.stringify({
+      user_id: settings.user_id,
+      daily_reminder: settings.daily_reminder,
+      weekly_reminder: settings.weekly_reminder,
+      default_risk: settings.default_risk,
+      display_name: settings.display_name,
+      instruments: settings.instruments,
+      mistake_catalog: settings.mistake_catalog,
+      mistake_catalog_hidden: settings.mistake_catalog_hidden
+    }));
+  } catch {
+    // ignore local storage write failures
+  }
 }
 
 function normalizeSupabaseError(message: string) {
