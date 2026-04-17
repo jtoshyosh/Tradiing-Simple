@@ -9,6 +9,7 @@ const tabs = ['dashboard', 'history', 'log', 'review'] as const;
 type Tab = (typeof tabs)[number];
 type LogMode = 'trade' | 'no_trade' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd';
+type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HelpKey = 'classification' | 'family' | 'model';
 type HelpItem = readonly [string, string];
 
@@ -118,6 +119,7 @@ type TradeDraft = {
   r_multiple_decimal: string;
   minutes_in_trade: string;
   emotional_pressure: string;
+  is_paper_trade: boolean;
   mistake_tags: string[];
   notes: string;
 };
@@ -148,7 +150,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [error, setError] = useState('');
   const [weekInput, setWeekInput] = useState(currentWeekInput());
-  const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '' });
+  const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
   const [detail, setDetail] = useState<DetailState>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [addTradeFamily, setAddTradeFamily] = useState<string>('Bounce');
@@ -163,6 +165,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
+  const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
+  const [historyTradeFilter, setHistoryTradeFilter] = useState<TradeTypeFilter>('all');
+  const [reviewTradeFilter, setReviewTradeFilter] = useState<TradeTypeFilter>('live');
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
     ticker: 'MES',
@@ -174,6 +179,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     r_multiple_decimal: '00',
     minutes_in_trade: '',
     emotional_pressure: '1',
+    is_paper_trade: false,
     mistake_tags: [],
     notes: ''
   }));
@@ -237,6 +243,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
     const normalizedTrades = ((((t.data || []) as TradeRow[]) || []).map((trade) => ({
       ...trade,
+      is_paper_trade: Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade),
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
     setTrades(normalizedTrades);
@@ -283,11 +290,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
 
-  const netPnl = trades.reduce((s, t) => s + Number(t.pnl || 0), 0);
-  const wins = trades.filter((t) => t.pnl > 0).length;
-  const avgEmotionalPressure = trades.length ? (trades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / trades.length) : 0;
   const periodRange = getPeriodRange(dashboardPeriod, dashboardAnchor);
-  const periodTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
+  const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
+  const netPnl = dashboardTrades.reduce((s, t) => s + Number(t.pnl || 0), 0);
+  const wins = dashboardTrades.filter((t) => t.pnl > 0).length;
+  const avgEmotionalPressure = dashboardTrades.length ? (dashboardTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / dashboardTrades.length) : 0;
+  const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
   const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
@@ -335,7 +343,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   );
   const emotionalInsight = getEmotionalInsight(periodTrades);
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
-  const calendarCells = buildCalendarCells(calendarMonth, trades, noTrades);
+  const calendarCells = buildCalendarCells(calendarMonth, dashboardTrades, noTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
@@ -368,21 +376,25 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (createdA !== createdB) return createdB.localeCompare(createdA);
     return a.id.localeCompare(b.id);
   });
+  const filteredActivityItems = activityItems.filter((item) => item.type !== 'trade' || matchesTradeTypeFilter(item.trade, historyTradeFilter));
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
+  const weekLiveTrades = weekTrades.filter((t) => !isPaperTrade(t));
+  const weekPaperTrades = weekTrades.filter((t) => isPaperTrade(t));
+  const weekTradesForReview = filterTradesByType(weekTrades, reviewTradeFilter);
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
 
   useEffect(() => {
-    setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '' });
+    setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
   }, [reviewRow?.id, selectedWeekKey]);
 
   useEffect(() => {
     if (tab !== 'review') return;
     const paths = attachments
-      .filter((a) => weekTrades.some((t) => t.id === a.trade_id) || weekNoTrades.some((n) => n.id === a.no_trade_day_id))
+      .filter((a) => weekTradesForReview.some((t) => t.id === a.trade_id) || weekNoTrades.some((n) => n.id === a.no_trade_day_id))
       .map((a) => a.file_path);
     if (!paths.length) {
       setReviewSignedUrls({});
@@ -400,7 +412,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       });
       setReviewSignedUrls(next);
     });
-  }, [tab, selectedWeekKey, attachments, weekTrades, weekNoTrades, supabase]);
+  }, [tab, selectedWeekKey, attachments, weekTradesForReview, weekNoTrades, supabase]);
 
   async function addTrade(formData: FormData) {
     setError('');
@@ -418,6 +430,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
+      is_paper_trade: Boolean(tradeDraft.is_paper_trade),
       mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
       notes: String(tradeDraft.notes || '')
     };
@@ -543,8 +556,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const { error: upsertError } = await supabase
       .from('weekly_reviews')
       .upsert(payload, { onConflict: 'user_id,week_key' });
-    if (upsertError) setError(normalizeSupabaseError(upsertError.message));
-    else await loadAll();
+    if (!upsertError) {
+      await loadAll();
+      return;
+    }
+    if (!isWeeklyReviewPaperSchemaMismatch(upsertError.message)) {
+      setError(normalizeSupabaseError(upsertError.message));
+      return;
+    }
+    const fallbackPayload = { user_id: userId, week_key: selectedWeekKey, q1: reviewAnswers.q1, q2: reviewAnswers.q2, q3: reviewAnswers.q3 };
+    const { error: fallbackError } = await supabase
+      .from('weekly_reviews')
+      .upsert(fallbackPayload, { onConflict: 'user_id,week_key' });
+    if (fallbackError) {
+      setError(normalizeSupabaseError(fallbackError.message));
+      return;
+    }
+    await loadAll();
   }
 
   async function saveSettings(next: SettingsRow) {
@@ -596,6 +624,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple_decimal: '00',
       minutes_in_trade: '',
       emotional_pressure: '1',
+      is_paper_trade: false,
       mistake_tags: [],
       notes: ''
     });
@@ -620,6 +649,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
+      is_paper_trade: Boolean(trade.is_paper_trade),
       mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
@@ -985,15 +1015,21 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
             <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <span className="small muted">Trade type</span>
+              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('all')}>{dashboardTradeFilter === 'all' ? '✓ ' : ''}All</button>
+              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('live')}>{dashboardTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
+              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('paper')}>{dashboardTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next</button>
             </div>
           </section>
           <div className="grid">
-            <article className="card"><div className="muted small">Total trades</div><div>{trades.length}</div></article>
+            <article className="card"><div className="muted small">Total trades</div><div>{dashboardTrades.length}</div></article>
             <article className="card"><div className="muted small">Net P&L</div><div style={{ color: netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{netPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (trades.length ? (wins / trades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{trades.length ? Math.round((wins / trades.length) * 100) : 0}%</div></article>
+            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (dashboardTrades.length ? (wins / dashboardTrades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{dashboardTrades.length ? Math.round((wins / dashboardTrades.length) * 100) : 0}%</div></article>
             <article className="card"><div className="muted small">No-trade days</div><div>{noTrades.length}</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{avgEmotionalPressure.toFixed(2)} / 5</div></article>
           </div>
@@ -1038,6 +1074,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </button>
               <span className="small muted">Overlays</span>
             </div>
+            {!periodTrades.length ? <div className="small muted">No trades for the selected period + trade type filter.</div> : null}
             <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} />
           </section>
 
@@ -1220,12 +1257,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'history' && (
         <section className="card stack">
-          {activityItems.map((item) => (
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <div className="small muted">Trade type filter</div>
+            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('all')}>{historyTradeFilter === 'all' ? '✓ ' : ''}All</button>
+            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('live')}>{historyTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
+            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('paper')}>{historyTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+          </div>
+          {filteredActivityItems.map((item) => (
             item.type === 'trade' ? (
               <Fragment key={`trade-row-${item.id}`}>
                 <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
-                  <div className="small muted"><span className="badge">Trade</span> {item.trade.family} · {item.trade.model}</div>
+                  <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model}</div>
                   <div className="small">
                     {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
                   </div>
@@ -1248,6 +1291,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     </div>
                     <div className="stack">
                       <div className="small muted">{item.trade.trade_date} · {item.trade.ticker}</div>
+                      <div className="small"><span className="badge">{isPaperTrade(item.trade) ? 'Paper trade' : 'Live trade'}</span></div>
                       <div className="small">Family: {item.trade.family}</div>
                       <div className="small">Model: {item.trade.model}</div>
                       <div className="small">Classification: {item.trade.classification}</div>
@@ -1341,6 +1385,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             )
           ))}
+          {!filteredActivityItems.length ? <div className="small muted">No history entries for the selected trade-type filter yet.</div> : null}
         </section>
       )}
 
@@ -1429,6 +1474,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               ))}
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
+            <label className="row">
+              <span>Paper trade</span>
+              <input
+                type="checkbox"
+                checked={tradeDraft.is_paper_trade}
+                onChange={(e) => setTradeDraft((p) => ({ ...p, is_paper_trade: e.target.checked }))}
+              />
+            </label>
+            <div className="small muted">OFF = live trade. ON = paper/simulated execution.</div>
             <label className="small muted">Mistake tags</label>
             <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
               {normalizeMistakeTags(tradeDraft.mistake_tags).length ? normalizeMistakeTags(tradeDraft.mistake_tags).map((tag) => (
@@ -1728,7 +1782,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
           </div>
           <div className="chip">{reviewStatus}</div>
-          <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTrades.length} trade(s), {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTrades.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <span className="small muted">Trade type</span>
+            <button className="inline" type="button" onClick={() => setReviewTradeFilter('all')}>{reviewTradeFilter === 'all' ? '✓ ' : ''}All</button>
+            <button className="inline" type="button" onClick={() => setReviewTradeFilter('live')}>{reviewTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
+            <button className="inline" type="button" onClick={() => setReviewTradeFilter('paper')}>{reviewTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+          </div>
+          <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
           <RichTextEditor
             label="1) Reflection on mistakes"
             helperText="What patterns drove mistakes this week?"
@@ -1753,6 +1813,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             placeholder=""
             minRows={5}
           />
+          {weekPaperTrades.length ? (
+            <RichTextEditor
+              label="Paper trades: What made me choose to paper trade, and what was I testing?"
+              helperText="Concise reflection for this week only."
+              value={reviewAnswers.q_paper}
+              onChange={(next) => setReviewAnswers((s) => ({ ...s, q_paper: next }))}
+              placeholder=""
+              minRows={3}
+            />
+          ) : null}
           <section className="trade stack">
             <div className="row">
               <strong>This week's entries reference</strong>
@@ -1763,9 +1833,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small muted">Read-only journal context for this selected week.</div>
             {reviewEntriesOpen ? (
               <div className="stack" style={{ maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
-                {weekTrades.map((t) => (
+                {weekTradesForReview.map((t) => (
                   <article key={t.id} className="trade">
-                    <div className="small muted">{t.trade_date} · {t.ticker}</div>
+                    <div className="small muted">{t.trade_date} · {t.ticker} · <span className="badge">{isPaperTrade(t) ? 'Paper' : 'Live'}</span></div>
                     <div className="small">{t.family} · {t.model} · {t.classification}</div>
                     <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span></div>
                     <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
@@ -1789,7 +1859,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
                   </article>
                 ))}
-                {!weekTrades.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week.</div>}
+                {!weekTradesForReview.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week and trade-type filter.</div>}
               </div>
             ) : null}
           </section>
@@ -3403,6 +3473,19 @@ function mutateLines(source: string, start: number, end: number, transform: (lin
   return { text: `${source.slice(0, lineStart)}${updated}${source.slice(lineEnd)}`, nextStart: lineStart, nextEnd: lineStart + updated.length };
 }
 
+function isPaperTrade(trade: TradeRow) {
+  return Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade);
+}
+
+function matchesTradeTypeFilter(trade: TradeRow, filter: TradeTypeFilter) {
+  if (filter === 'all') return true;
+  return filter === 'paper' ? isPaperTrade(trade) : !isPaperTrade(trade);
+}
+
+function filterTradesByType(trades: TradeRow[], filter: TradeTypeFilter) {
+  return trades.filter((trade) => matchesTradeTypeFilter(trade, filter));
+}
+
 function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
   const raw = item.type === 'trade'
     ? (item.trade as TradeRow & { created_at?: string }).created_at
@@ -3566,9 +3649,16 @@ function isSettingsCatalogSchemaMismatch(message: string) {
     || /column .*?(instruments|mistake_catalog|mistake_catalog_hidden).*? does not exist/i.test(text);
 }
 
+function isWeeklyReviewPaperSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(q_paper).*?schema cache/i.test(text)
+    || /column .*?(q_paper).*? does not exist/i.test(text);
+}
+
 function isRecoverableSchemaError(message: string) {
   const text = String(message || '');
   return isSettingsCatalogSchemaMismatch(text)
+    || isWeeklyReviewPaperSchemaMismatch(text)
     || /schema cache/i.test(text)
     || /column .* does not exist/i.test(text)
     || /relation .* does not exist/i.test(text)

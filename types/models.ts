@@ -18,6 +18,7 @@ export type TradeRow = {
   r_multiple: number;
   minutes_in_trade: number;
   emotional_pressure: number | null;
+  is_paper_trade?: boolean | null;
   mistake_tags: string[];
   notes: string | null;
 };
@@ -37,6 +38,7 @@ export type WeeklyReviewRow = {
   q1: string;
   q2: string;
   q3: string;
+  q_paper?: string;
 };
 
 export type SessionRow = {

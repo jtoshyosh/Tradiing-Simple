@@ -23,6 +23,7 @@ create table if not exists public.trades (
   r_multiple numeric not null default 0,
   minutes_in_trade integer not null default 0,
   emotional_pressure integer check (emotional_pressure between 1 and 5),
+  is_paper_trade boolean not null default false,
   mistake_tags text[] not null default '{}',
   notes text,
   created_at timestamptz not null default now(),
@@ -31,6 +32,9 @@ create table if not exists public.trades (
 
 alter table public.trades
   add column if not exists emotional_pressure integer;
+
+alter table public.trades
+  add column if not exists is_paper_trade boolean not null default false;
 
 do $$
 begin
@@ -66,6 +70,7 @@ create table if not exists public.weekly_reviews (
   q1 text not null default '',
   q2 text not null default '',
   q3 text not null default '',
+  q_paper text not null default '',
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique(user_id, week_key)
@@ -83,6 +88,9 @@ create table if not exists public.sessions (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.weekly_reviews
+  add column if not exists q_paper text not null default '';
 
 create table if not exists public.user_settings (
   user_id uuid primary key references auth.users(id) on delete cascade,
