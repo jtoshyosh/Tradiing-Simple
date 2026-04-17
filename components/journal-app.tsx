@@ -267,6 +267,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodRange = getPeriodRange(dashboardPeriod, dashboardAnchor);
   const periodTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
+  const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
+  const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
+  const periodJournalSessions = periodSessions.filter((s) => s.session_type === 'journal');
+  const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+  const periodJournalMinutes = periodJournalSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
   const periodNetPnl = periodTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
   const periodNetR = periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
   const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
@@ -790,6 +795,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <button
             className="inline"
             type="button"
+            aria-expanded={accountOpen}
             style={{ width: 42, height: 42, borderRadius: '999px', padding: 0 }}
             onClick={() => setAccountOpen((open) => !open)}
           >
@@ -797,11 +803,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </button>
         </div>
       </header>
+      {accountOpen ? <button className="account-backdrop" aria-label="Close account menu" type="button" onClick={() => setAccountOpen(false)} /> : null}
       {accountOpen && (
-        <section className="card stack" style={{ marginTop: -6 }}>
-          <div className="small muted">First name: {accountFirstName || '—'}</div>
-          <div className="small muted">Last name: {accountLastName || '—'}</div>
-          <div className="small muted">Email: {email || '—'}</div>
+        <section className="card stack account-flyout" style={{ marginTop: -6 }}>
+          <div className="row">
+            <strong>Account</strong>
+            <span className="badge">{initials}</span>
+          </div>
+          <div className="small muted">Signed in as {email || '—'}</div>
+          <div className="small muted">Profile name: {[accountFirstName, accountLastName].join(' ').trim() || 'Not set'}</div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <button className="inline" type="button" onClick={() => { setShowAccountSettings(true); setAccountOpen(false); }}>Settings</button>
             <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
@@ -814,12 +824,27 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <strong>Account settings</strong>
             <button className="inline" type="button" onClick={() => setShowAccountSettings(false)}>Close</button>
           </div>
-          <input placeholder="First name" value={accountFirstName} onChange={(e) => setAccountFirstName(e.target.value)} />
-          <input placeholder="Last name" value={accountLastName} onChange={(e) => setAccountLastName(e.target.value)} />
-          <input value={email || ''} disabled />
-          <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => setSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
-          <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => setSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
-          <input value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
+          <article className="trade stack">
+            <strong>Profile & account</strong>
+            <div className="small muted">Used for avatar initials and profile display.</div>
+            <label className="small muted" htmlFor="account-first-name">First name</label>
+            <input id="account-first-name" placeholder="First name" value={accountFirstName} onChange={(e) => setAccountFirstName(e.target.value)} />
+            <label className="small muted" htmlFor="account-last-name">Last name</label>
+            <input id="account-last-name" placeholder="Last name" value={accountLastName} onChange={(e) => setAccountLastName(e.target.value)} />
+            <label className="small muted" htmlFor="account-email">Email</label>
+            <input id="account-email" value={email || ''} disabled />
+            <label className="small muted" htmlFor="default-risk">Default risk ($)</label>
+            <input id="default-risk" value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Reminder settings</strong>
+              <span className="badge">Coming soon</span>
+            </div>
+            <div className="small muted">Reminders are not active yet. These switches are saved but currently do not trigger notifications.</div>
+            <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => setSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
+            <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => setSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
+          </article>
           <article className="trade stack">
             <div className="row">
               <strong>Mistake catalog</strong>
@@ -885,16 +910,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </details>
             ) : null}
           </article>
-          <button
-            className="inline"
-            type="button"
-            onClick={() => {
-              const nextDisplay = [accountFirstName, accountLastName].join(' ').trim() || settings.display_name;
-              void saveSettings({ ...settings, display_name: nextDisplay });
-            }}
-          >
-            Save settings
-          </button>
+          <article className="trade stack">
+            <strong>Account actions</strong>
+            <div className="small muted">Saving updates profile and settings above. Sign out ends the current session on this device.</div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="inline"
+                type="button"
+                onClick={() => {
+                  const nextDisplay = [accountFirstName, accountLastName].join(' ').trim() || settings.display_name;
+                  void saveSettings({ ...settings, display_name: nextDisplay });
+                }}
+              >
+                Save settings
+              </button>
+              <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
+            </div>
+          </article>
         </section>
       )}
 
@@ -951,6 +983,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <article className="card"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
             <article className="card"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+            <article className="card">
+              <div className="muted small">Chart sessions (period)</div>
+              <div>{periodChartSessions.length}</div>
+              <div className="small muted">{formatMinutesLabel(periodChartMinutes)} total</div>
+            </article>
+            <article className="card">
+              <div className="muted small">Journal sessions (period)</div>
+              <div>{periodJournalSessions.length}</div>
+              <div className="small muted">{formatMinutesLabel(periodJournalMinutes)} total</div>
+            </article>
             <article className="card"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
             <article className="card"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
           </section>
@@ -1229,11 +1271,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             ) : (
               <Fragment key={`session-row-${item.id}`}>
-                <article className="trade" ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
                   <div className="row"><strong>{titleCase(item.session.session_type)} session</strong><span>{item.session.session_date}</span></div>
-                  <div className="small muted">{item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {item.session.duration_minutes}m</div>
+                  <div className="small muted">
+                    <span className="badge">{item.session.session_type === 'chart' ? 'Chart study' : 'Journal work'}</span>{' '}
+                    {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
+                  </div>
+                  {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
                   <div className="row">
-                    <div className="small muted">Notes: {item.session.notes ? 'Yes' : 'No'}</div>
+                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'}</div>
                     <div className="row">
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
                       <button className="inline" type="button" onClick={() => {
@@ -1253,7 +1299,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   </div>
                 </article>
                 {detail?.kind === 'session' && detail.id === item.session.id && (
-                  <article className="trade" style={{ marginTop: -4 }}>
+                  <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
                     <div className="row">
                       <strong>Session detail</strong>
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
@@ -1262,7 +1308,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small muted">{item.session.session_date} · {titleCase(item.session.session_type)} session</div>
                       <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
-                      <div className="small">Duration: {item.session.duration_minutes} minutes</div>
+                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
                     </div>
@@ -1604,7 +1650,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   });
                 }}>Cancel edit</button> : null}
               </div>
-              <div className="small muted">Session type (required)</div>
+              <div className="small muted">What kind of session did you run? (required)</div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <button className="inline" type="button" onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'chart' }))}>
                   {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
@@ -1613,21 +1659,22 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
                 </button>
               </div>
-              <div className="small muted">Use Chart session for chart study/backtesting. Use Journal session for writing/reviewing journal notes.</div>
+              <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
               <label className="small muted">Date</label>
               <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="stack">
-                  <label className="small muted">Start time</label>
+                  <label className="small muted">Start time (local)</label>
                   <input type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
                 </div>
                 <div className="stack">
-                  <label className="small muted">End time</label>
+                  <label className="small muted">End time (local)</label>
                   <input type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
                 </div>
               </div>
-              <div className="small muted">Duration: {calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time)} minutes</div>
-              <textarea placeholder="Session notes (optional)" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+              <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
+              <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
               <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
             </form>
           )}
@@ -3526,4 +3573,13 @@ function calculateDurationMinutes(startTime: string, endTime: string) {
   const end = parse(endTime);
   const diff = end - start;
   return diff >= 0 ? diff : 24 * 60 + diff;
+}
+
+function formatMinutesLabel(totalMinutes: number) {
+  const safe = Math.max(0, Number(totalMinutes || 0));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (!hours) return `${minutes}m`;
+  if (!minutes) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
 }
