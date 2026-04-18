@@ -215,6 +215,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
+  const [exportScope, setExportScope] = useState<'all_time' | 'selected_period'>('all_time');
 
   useEffect(() => {
     const [first, last] = splitDisplayName(settings?.display_name || '', email);
@@ -842,6 +843,198 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
   }
 
+  function getExportCollections(scope: 'all_time' | 'selected_period') {
+    if (scope === 'all_time') {
+      return {
+        exportTrades: trades,
+        exportNoTrades: noTrades,
+        exportSessions: sessions,
+        exportReviews: reviews,
+        exportAttachments: attachments
+      };
+    }
+    const rangeStart = periodRange.start;
+    const rangeEnd = periodRange.end;
+    const exportTrades = trades.filter((trade) => inDateRange(trade.trade_date, rangeStart, rangeEnd));
+    const exportNoTrades = noTrades.filter((day) => inDateRange(day.day_date, rangeStart, rangeEnd));
+    const exportSessions = sessions.filter((session) => inDateRange(session.session_date, rangeStart, rangeEnd));
+    const exportReviews = reviews.filter((review) => inDateRange(review.week_key, rangeStart, rangeEnd));
+    const tradeIds = new Set(exportTrades.map((trade) => trade.id));
+    const noTradeIds = new Set(exportNoTrades.map((day) => day.id));
+    const exportAttachments = attachments.filter((file) => (
+      (file.trade_id && tradeIds.has(file.trade_id)) || (file.no_trade_day_id && noTradeIds.has(file.no_trade_day_id))
+    ));
+    return { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments };
+  }
+
+  function downloadExportJson(scope: 'all_time' | 'selected_period') {
+    const { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments } = getExportCollections(scope);
+    const payload = {
+      exported_at: new Date().toISOString(),
+      user_id: userId,
+      email: email || null,
+      scope,
+      selected_period: scope === 'selected_period' ? { start: periodRange.start, end: periodRange.end, period_type: dashboardPeriod } : null,
+      includes: {
+        trades: exportTrades.length,
+        no_trade_days: exportNoTrades.length,
+        sessions: exportSessions.length,
+        weekly_reviews: exportReviews.length,
+        attachments: exportAttachments.length
+      },
+      notes: [
+        'Attachment binaries are not included in this export.',
+        'Attachment metadata includes file_path and linked row IDs for manual backup/restore workflows.'
+      ],
+      trades: exportTrades,
+      no_trade_days: exportNoTrades,
+      sessions: exportSessions,
+      weekly_reviews: exportReviews,
+      attachments: exportAttachments
+    };
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadTextFile(`journal_export_${scope}_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  }
+
+  function downloadExportCsv(scope: 'all_time' | 'selected_period') {
+    const { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments } = getExportCollections(scope);
+    const rows: Record<string, string | number | null | undefined>[] = [
+      ...exportTrades.map((trade) => ({
+        record_type: 'trade',
+        date: trade.trade_date,
+        ticker: trade.ticker,
+        family: trade.family,
+        model: trade.model,
+        classification: trade.classification,
+        result_usd: Number(trade.pnl || 0),
+        r_multiple: Number(trade.r_multiple || 0),
+        emotional_pressure: trade.emotional_pressure ?? '',
+        mistake_tags: normalizeMistakeTags(trade.mistake_tags).join('|'),
+        trade_mode: isPaperTrade(trade) ? 'paper' : 'live',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: trade.notes || ''
+      })),
+      ...exportNoTrades.map((entry) => ({
+        record_type: 'no_trade_day',
+        date: entry.day_date,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: entry.reason,
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: entry.notes || ''
+      })),
+      ...exportSessions.map((session) => ({
+        record_type: 'session',
+        date: session.session_date,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: session.session_type,
+        session_duration_minutes: Number(session.duration_minutes || 0),
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: session.notes || ''
+      })),
+      ...exportReviews.map((review) => ({
+        record_type: 'weekly_review',
+        date: review.week_key,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: review.week_key,
+        review_q1: review.q1 || '',
+        review_q2: review.q2 || '',
+        review_q3: review.q3 || '',
+        review_q_paper: review.q_paper || '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: ''
+      })),
+      ...exportAttachments.map((file) => ({
+        record_type: 'attachment_metadata',
+        date: '',
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: file.file_name,
+        attachment_file_path: file.file_path,
+        attachment_mime_type: file.mime_type,
+        attachment_byte_size: Number(file.byte_size || 0),
+        notes: `linked_trade_id:${file.trade_id || ''};linked_no_trade_day_id:${file.no_trade_day_id || ''}`
+      }))
+    ];
+    const csv = recordsToCsv(rows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadTextFile(`journal_export_${scope}_${stamp}.csv`, csv, 'text/csv;charset=utf-8');
+  }
+
   function onChangeFamily(value: string) {
     setAddTradeFamily(value);
     const options = familyModels[value] || [NA_MODEL];
@@ -1114,6 +1307,35 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <div>5) Verify Dashboard/History/Review each show the new items correctly.</div>
               </div>
             </details>
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Backup & export</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">Export includes journal activity for <strong>{email || userId}</strong>. Choose scope, then download CSV (spreadsheet) or JSON (full-fidelity backup).</div>
+            <div style={{ maxWidth: 280 }}>
+              <label className="small muted" htmlFor="export-scope">Export scope</label>
+              <select id="export-scope" value={exportScope} onChange={(e) => setExportScope(e.target.value as 'all_time' | 'selected_period')}>
+                <option value="all_time">All time</option>
+                <option value="selected_period">Selected dashboard period</option>
+              </select>
+            </div>
+            {exportScope === 'selected_period' ? (
+              <div className="small muted">Selected period: {formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
+            ) : (
+              <div className="small muted">All-time export includes all rows visible to this signed-in user.</div>
+            )}
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" onClick={() => downloadExportCsv(exportScope)}>Export CSV</button>
+              <button className="inline" type="button" onClick={() => downloadExportJson(exportScope)}>Export JSON</button>
+            </div>
+            <div className="small muted">
+              Included data types: trades, no-trade days, sessions, weekly reviews, and attachment metadata.
+            </div>
+            <div className="small muted">
+              Attachments: file binaries are not bundled in CSV/JSON. Export includes file metadata + storage paths only; private attachment access behavior is unchanged.
+            </div>
           </article>
         </section>
       )}
@@ -3943,6 +4165,37 @@ function writeSettingsCache(settings: SettingsRow) {
   } catch {
     // ignore local storage write failures
   }
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  if (typeof window === 'undefined') return;
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+function recordsToCsv(records: Record<string, string | number | null | undefined>[]) {
+  if (!records.length) return 'record_type\n';
+  const headers = Array.from(records.reduce((set, row) => {
+    Object.keys(row).forEach((key) => set.add(key));
+    return set;
+  }, new Set<string>()));
+  const escapeCsv = (value: string | number | null | undefined) => {
+    const normalized = value == null ? '' : String(value);
+    if (/[",\n]/.test(normalized)) return `"${normalized.replace(/"/g, '""')}"`;
+    return normalized;
+  };
+  const lines = [
+    headers.join(','),
+    ...records.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))
+  ];
+  return lines.join('\n');
 }
 
 function normalizeSupabaseError(message: string) {
