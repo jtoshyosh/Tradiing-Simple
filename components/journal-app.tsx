@@ -312,7 +312,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
   const lifetimeTrades = dashboardTrades;
   const lifetimeNoTrades = noTrades;
-  const lifetimeSessions = sessions;
   const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
@@ -1405,7 +1404,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </select>
               </div>
             </div>
-            <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
@@ -1419,10 +1417,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <strong>Lifetime snapshot (by trade type)</strong>
             <div className="small muted">Scope: trade type filter only.</div>
             <div className="grid">
-              <article className="trade"><div className="muted small">Lifetime trades</div><div>{lifetimeTrades.length}</div></article>
-              <article className="trade"><div className="muted small">Lifetime net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
-              <article className="trade"><div className="muted small">Lifetime win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
-              <article className="trade"><div className="muted small">Lifetime activity days</div><div>{lifetimeNoTrades.length + lifetimeTrades.length}</div></article>
+              <article className="trade"><div className="muted small">Trades</div><div>{lifetimeTrades.length}</div></article>
+              <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
+              <article className="trade"><div className="muted small">No-trade days</div><div>{lifetimeNoTrades.length}</div></article>
             </div>
           </section>
 
@@ -1430,10 +1428,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <strong>Performance (by trade type & period)</strong>
             <div className="small muted">Scope: trade type filter + selected period.</div>
             <div className="grid">
-              <article className="trade"><div className="muted small">Period net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
-              <article className="trade"><div className="muted small">Period net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
-              <article className="trade"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
-              <article className="trade"><div className="muted small">Avg R / trade (period)</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
+              <article className="trade"><div className="muted small">Avg R / trade</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
               <article className="trade"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
               <article className="trade"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
               <article className="trade"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
@@ -1449,18 +1447,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article className="trade"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
               <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
               <article className="trade">
-                <div className="muted small">Chart sessions (period)</div>
-                <div>{formatMinutesLabel(periodChartMinutes)}</div>
-                <div className="small muted">Avg {formatMinutesLabel(periodChartSessions.length ? Math.round(periodChartMinutes / periodChartSessions.length) : 0)} / session</div>
-                <div className="small muted">{periodChartSessions.length} {periodChartSessions.length === 1 ? 'session' : 'sessions'}</div>
-              </article>
-              <article className="trade">
-                <div className="muted small">Journal sessions (period)</div>
+                <div className="muted small">Journal sessions</div>
                 <div>{formatMinutesLabel(periodJournalMinutes)}</div>
                 <div className="small muted">Avg {formatMinutesLabel(periodJournalSessions.length ? Math.round(periodJournalMinutes / periodJournalSessions.length) : 0)} / session</div>
                 <div className="small muted">{periodJournalSessions.length} {periodJournalSessions.length === 1 ? 'session' : 'sessions'}</div>
               </article>
-              <article className="trade"><div className="muted small">Logged sessions (lifetime)</div><div>{lifetimeSessions.length}</div></article>
+              <article className="trade">
+                <div className="muted small">Chart sessions</div>
+                <div>{formatMinutesLabel(periodChartMinutes)}</div>
+                <div className="small muted">Avg {formatMinutesLabel(periodChartSessions.length ? Math.round(periodChartMinutes / periodChartSessions.length) : 0)} / session</div>
+                <div className="small muted">{periodChartSessions.length} {periodChartSessions.length === 1 ? 'session' : 'sessions'}</div>
+              </article>
             </div>
           </section>
 
