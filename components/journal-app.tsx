@@ -1413,7 +1413,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ) : null}
           </section>
           <section className="card stack">
-            <strong>Lifetime snapshot (filtered)</strong>
+            <strong>Lifetime snapshot (by trade type)</strong>
+            <div className="small muted">Scope: trade type filter only.</div>
             <div className="grid">
               <article className="trade"><div className="muted small">Lifetime trades</div><div>{lifetimeTrades.length}</div></article>
               <article className="trade"><div className="muted small">Lifetime net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
@@ -1423,7 +1424,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack">
-            <strong>Performance (selected period)</strong>
+            <strong>Performance (by trade type & period)</strong>
+            <div className="small muted">Scope: trade type filter + selected period.</div>
             <div className="grid">
               <article className="trade"><div className="muted small">Period net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
               <article className="trade"><div className="muted small">Period net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
@@ -1437,7 +1439,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack">
-            <strong>Activity & process (selected period)</strong>
+            <strong>Activity & process (by trade type & period)</strong>
+            <div className="small muted">Scope: trade type filter + selected period.</div>
             <div className="grid">
               <article className="trade"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
               <article className="trade"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
@@ -1730,7 +1733,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </details>
           </section>
 
-          <div className="card small muted">Passkeys are not implemented yet. Auth structure is now Supabase-based so passkey support can be added next via WebAuthn flows.</div>
         </section>
       )}
 
