@@ -1450,13 +1450,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
               <article className="trade">
                 <div className="muted small">Chart sessions (period)</div>
-                <div>{periodChartSessions.length}</div>
-                <div className="small muted">{formatMinutesLabel(periodChartMinutes)} total</div>
+                <div>{formatMinutesLabel(periodChartMinutes)}</div>
+                <div className="small muted">Avg {formatMinutesLabel(periodChartSessions.length ? Math.round(periodChartMinutes / periodChartSessions.length) : 0)} / session</div>
+                <div className="small muted">{periodChartSessions.length} {periodChartSessions.length === 1 ? 'session' : 'sessions'}</div>
               </article>
               <article className="trade">
                 <div className="muted small">Journal sessions (period)</div>
-                <div>{periodJournalSessions.length}</div>
-                <div className="small muted">{formatMinutesLabel(periodJournalMinutes)} total</div>
+                <div>{formatMinutesLabel(periodJournalMinutes)}</div>
+                <div className="small muted">Avg {formatMinutesLabel(periodJournalSessions.length ? Math.round(periodJournalMinutes / periodJournalSessions.length) : 0)} / session</div>
+                <div className="small muted">{periodJournalSessions.length} {periodJournalSessions.length === 1 ? 'session' : 'sessions'}</div>
               </article>
               <article className="trade"><div className="muted small">Logged sessions (lifetime)</div><div>{lifetimeSessions.length}</div></article>
             </div>
