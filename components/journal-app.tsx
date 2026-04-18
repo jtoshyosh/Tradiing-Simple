@@ -1431,19 +1431,32 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
             {logType === 'trade_log' ? (
               <>
-                <label className="small muted" htmlFor="trade-log-subtype">Subtype</label>
-                <select
-                  id="trade-log-subtype"
-                  value={tradeLogSubtype}
-                  onChange={(e) => {
-                    const nextSubtype = e.target.value as 'trade' | 'no_trade';
-                    setTradeLogSubtype(nextSubtype);
-                    setLogMode(nextSubtype);
-                  }}
-                >
-                  <option value="trade">Trade</option>
-                  <option value="no_trade">No-trade day</option>
-                </select>
+                <div className="small muted">Subtype</div>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('trade');
+                      setLogMode('trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'trade' ? '✓ ' : ''}Trade
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'no_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('no_trade');
+                      setLogMode('no_trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'no_trade' ? '✓ ' : ''}No-trade day
+                  </button>
+                </div>
+                <div className="small muted">Selected subtype: <strong>{tradeLogSubtype === 'trade' ? 'Trade' : 'No-trade day'}</strong></div>
               </>
             ) : null}
           </div>
