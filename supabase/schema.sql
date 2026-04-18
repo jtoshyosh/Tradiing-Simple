@@ -23,6 +23,8 @@ create table if not exists public.trades (
   r_multiple numeric not null default 0,
   minutes_in_trade integer not null default 0,
   emotional_pressure integer check (emotional_pressure between 1 and 5),
+  trading_emotion text,
+  trading_emotions text[] not null default '{}',
   is_paper_trade boolean not null default false,
   mistake_tags text[] not null default '{}',
   notes text,
@@ -32,6 +34,12 @@ create table if not exists public.trades (
 
 alter table public.trades
   add column if not exists emotional_pressure integer;
+
+alter table public.trades
+  add column if not exists trading_emotion text;
+
+alter table public.trades
+  add column if not exists trading_emotions text[] not null default '{}';
 
 alter table public.trades
   add column if not exists is_paper_trade boolean not null default false;
@@ -54,6 +62,8 @@ create table if not exists public.no_trade_days (
   user_id uuid not null references auth.users(id) on delete cascade,
   day_date date not null,
   reason text not null,
+  trading_emotion text,
+  trading_emotions text[] not null default '{}',
   notes text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -62,6 +72,12 @@ create table if not exists public.no_trade_days (
 
 alter table public.no_trade_days
   add column if not exists notes text;
+
+alter table public.no_trade_days
+  add column if not exists trading_emotion text;
+
+alter table public.no_trade_days
+  add column if not exists trading_emotions text[] not null default '{}';
 
 create table if not exists public.weekly_reviews (
   id uuid primary key default gen_random_uuid(),

@@ -11,7 +11,7 @@ type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
-type HelpKey = 'classification' | 'family' | 'model';
+type HelpKey = 'classification' | 'family' | 'model' | 'trading_emotion';
 type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
@@ -31,6 +31,22 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const tradingEmotionOptions = [
+  'Optimism',
+  'Excitement',
+  'Thrill',
+  'Euphoria',
+  'Anxiety',
+  'Denial',
+  'Fear',
+  'Desperation',
+  'Panic',
+  'Capitulation',
+  'Despondency',
+  'Hope',
+  'Relief'
+] as const;
+type TradingEmotion = (typeof tradingEmotionOptions)[number];
 const DEFAULT_MISTAKE_CATALOG = [
   'FOMO entry',
   'Early entry',
@@ -94,6 +110,21 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
     ['HTF continuation pullback', 'Enter pullback aligned with higher timeframe trend.'],
     ['N/A / None', 'Use when trade is intentionally marked with no valid setup.']
   ],
+  trading_emotion: [
+    ['Optimism', 'Confidence is rising; stay process-focused and avoid sizing up too early.'],
+    ['Excitement', 'Momentum feels strong; keep entries rule-based, not impulse-based.'],
+    ['Thrill', 'Fast wins feel rewarding; protect discipline before chasing extra trades.'],
+    ['Euphoria', 'Overconfidence risk is highest; cut size and follow hard risk limits.'],
+    ['Anxiety', 'Uncertainty is building; simplify criteria and wait for clean setups.'],
+    ['Denial', 'Market feedback is being ignored; pause and re-check invalidation levels.'],
+    ['Fear', 'Loss avoidance dominates; execute the plan instead of freezing.'],
+    ['Desperation', 'Urgency to recover appears; reduce frequency and protect capital.'],
+    ['Panic', 'Emotion is driving decisions; stop trading and reset before re-entry.'],
+    ['Capitulation', 'Confidence breaks after pain; focus on process reps, not outcome.'],
+    ['Despondency', 'Motivation is low; use smaller goals and strict checklist execution.'],
+    ['Hope', 'Stabilization starts; stay selective and avoid forcing bounce-back trades.'],
+    ['Relief', 'Pressure eases after restraint; keep consistency instead of overtrading.']
+  ],
   classification: [
     ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
     ['Valid setup, poor execution', 'Use this when setup was valid but execution quality was poor.'],
@@ -120,6 +151,7 @@ type TradeDraft = {
   r_multiple_decimal: string;
   minutes_in_trade: string;
   emotional_pressure: string;
+  trading_emotions: TradingEmotion[];
   is_paper_trade: boolean;
   mistake_tags: string[];
   notes: string;
@@ -163,7 +195,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
   const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
-  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
+  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; trading_emotions: TradingEmotion[]; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
@@ -180,6 +212,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     r_multiple_decimal: '00',
     minutes_in_trade: '',
     emotional_pressure: '1',
+    trading_emotions: [],
     is_paper_trade: false,
     mistake_tags: [],
     notes: ''
@@ -188,8 +221,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [newMistakeTag, setNewMistakeTag] = useState('');
   const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
   const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
+  const [tradeEmotionPickerOpen, setTradeEmotionPickerOpen] = useState(false);
+  const [noTradeEmotionPickerOpen, setNoTradeEmotionPickerOpen] = useState(false);
   const [logMode, setLogMode] = useState<LogMode>('trade');
-  const [tradeLogSubtype, setTradeLogSubtype] = useState<'trade' | 'no_trade'>('trade');
+  const [tradeLogSubtype, setTradeLogSubtype] = useState<'live_trade' | 'paper_trade' | 'no_trade'>('live_trade');
   const [accountOpen, setAccountOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [accountFirstName, setAccountFirstName] = useState('');
@@ -227,10 +262,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }, [settings?.display_name, email]);
 
   useEffect(() => {
-    if (logMode === 'trade' || logMode === 'no_trade') {
-      setTradeLogSubtype(logMode);
+    if (logMode === 'trade') {
+      setTradeLogSubtype(tradeDraft.is_paper_trade ? 'paper_trade' : 'live_trade');
+      return;
     }
-  }, [logMode]);
+    if (logMode === 'no_trade') setTradeLogSubtype('no_trade');
+  }, [logMode, tradeDraft.is_paper_trade]);
 
   useEffect(() => {
     void loadAll();
@@ -259,11 +296,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
     const normalizedTrades = ((((t.data || []) as TradeRow[]) || []).map((trade) => ({
       ...trade,
+      trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion),
       is_paper_trade: Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade),
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
     setTrades(normalizedTrades);
-    setNoTrades(((n.data || []) as NoTradeDayRow[]) || []);
+    const normalizedNoTrades = (((n.data || []) as NoTradeDayRow[]) || []).map((entry) => ({
+      ...entry,
+      trading_emotions: normalizeTradingEmotions((entry as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (entry as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion)
+    }));
+    setNoTrades(normalizedNoTrades);
     setSessions(((sessionResult.data || []) as SessionRow[]) || []);
     setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
     const baseSettings = ((s.data as SettingsRow | null) ?? {
@@ -479,6 +521,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
+      trading_emotions: normalizeTradingEmotions(tradeDraft.trading_emotions),
       is_paper_trade: Boolean(tradeDraft.is_paper_trade),
       mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
       notes: String(tradeDraft.notes || '')
@@ -532,6 +575,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       user_id: userId,
       day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
       reason: noTradeDraft.reason || 'No A+ setup',
+      trading_emotions: normalizeTradingEmotions(noTradeDraft.trading_emotions),
       notes: String(noTradeDraft.notes || '')
     };
     const upsert = editingNoTradeId
@@ -564,8 +608,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
 
     await loadAll();
-    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
+    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
     setNoTradeExtract(null);
+    setNoTradeEmotionPickerOpen(false);
     setEditingNoTradeId(null);
     setTab('history');
   }
@@ -629,7 +674,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...next,
       instruments: normalizeUniqueInstruments(next.instruments || []),
       mistake_catalog: normalizeActiveMistakeCatalog(next.mistake_catalog, next.mistake_catalog_hidden),
-      mistake_catalog_hidden: normalizeLegacyMistakeCatalog(next.mistake_catalog_hidden, next.mistake_catalog)
+      mistake_catalog_hidden: normalizeHiddenMistakeCatalog(next.mistake_catalog_hidden, next.mistake_catalog)
     };
     const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
     if (!upsertError) {
@@ -673,18 +718,22 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple_decimal: '00',
       minutes_in_trade: '',
       emotional_pressure: '1',
+      trading_emotions: [],
       is_paper_trade: false,
       mistake_tags: [],
       notes: ''
     });
     setTradeExtract(null);
     setMistakePickerOpen(false);
+    setTradeEmotionPickerOpen(false);
+    setTradeLogSubtype('live_trade');
   }
 
   function startEditTrade(trade: TradeRow) {
     setEditingTradeId(trade.id);
     setEditingNoTradeId(null);
     setTab('log');
+    setLogMode('trade');
     setAddTradeClassification(trade.classification);
     setAddTradeFamily(trade.family);
     setAddTradeModel(trade.model);
@@ -698,17 +747,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
+      trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion),
       is_paper_trade: Boolean(trade.is_paper_trade),
       mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
     setMistakePickerOpen(false);
+    setTradeEmotionPickerOpen(false);
+    setTradeLogSubtype(Boolean(trade.is_paper_trade) ? 'paper_trade' : 'live_trade');
   }
 
   function startEditNoTrade(noTrade: NoTradeDayRow) {
     setEditingNoTradeId(noTrade.id);
-    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, notes: noTrade.notes || '' });
+    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, trading_emotions: normalizeTradingEmotions((noTrade as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (noTrade as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion), notes: noTrade.notes || '' });
+    setNoTradeEmotionPickerOpen(false);
+    setTradeLogSubtype('no_trade');
     setTab('log');
+    setLogMode('no_trade');
   }
 
   async function deleteTrade(tradeId: string) {
@@ -741,7 +796,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
     if (editingNoTradeId === noTradeId) {
       setEditingNoTradeId(null);
-      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' });
+      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
     }
     await loadAll();
   }
@@ -937,6 +992,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: Number(trade.pnl || 0),
         r_multiple: Number(trade.r_multiple || 0),
         emotional_pressure: trade.emotional_pressure ?? '',
+        trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion),
         mistake_tags: normalizeMistakeTags(trade.mistake_tags).join('|'),
         trade_mode: isPaperTrade(trade) ? 'paper' : 'live',
         no_trade_reason: '',
@@ -963,6 +1019,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
+        trading_emotions: normalizeTradingEmotions((entry as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (entry as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion).join('|'),
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: entry.reason,
@@ -989,6 +1046,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
+        trading_emotions: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1015,6 +1073,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
+        trading_emotions: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1041,6 +1100,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
+        trading_emotions: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1201,7 +1261,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <strong>Mistake catalog</strong>
               <span className="small muted">{activeMistakeCatalog.length} active</span>
             </div>
-            <div className="small muted">Active mistakes are shown in Log → Trade selection. Hidden items remain available in historical entries.</div>
+            <div className="small muted">Active mistakes are shown in Log → Trade selection. Hidden items stay out of pickers but remain on existing records.</div>
             <div className="stack">
               {activeMistakeCatalog.length ? activeMistakeCatalog.map((tag) => (
                 <div key={`active-${tag}`} className="row" style={{ gap: 8 }}>
@@ -1211,7 +1271,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     type="button"
                     onClick={() => {
                       const nextActive = activeMistakeCatalog.filter((item) => item !== tag);
-                      const nextHidden = normalizeLegacyMistakeCatalog([...(settings.mistake_catalog_hidden || []), tag], nextActive);
+                      const nextHidden = normalizeHiddenMistakeCatalog([...(settings.mistake_catalog_hidden || []), tag], nextActive);
                       void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
                     }}
                   >
@@ -1229,7 +1289,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   const next = normalizeTag(newCatalogMistakeTag);
                   if (!next) return;
                   const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden);
-                  const nextHidden = normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), nextActive);
+                  const nextHidden = normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), nextActive);
                   void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
                   setNewCatalogMistakeTag('');
                 }}
@@ -1239,7 +1299,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
             {hiddenMistakeCatalog.length ? (
               <details>
-                <summary className="small muted">Hidden / legacy mistakes ({hiddenMistakeCatalog.length})</summary>
+                <summary className="small muted">Hidden mistakes ({hiddenMistakeCatalog.length})</summary>
                 <div className="stack" style={{ marginTop: 8 }}>
                   {hiddenMistakeCatalog.map((tag) => (
                     <div key={`hidden-${tag}`} className="row" style={{ gap: 8 }}>
@@ -1249,7 +1309,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                         type="button"
                         onClick={() => {
                           const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), tag], settings.mistake_catalog_hidden);
-                          const nextHidden = normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== tag), nextActive);
+                          const nextHidden = normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== tag), nextActive);
                           void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
                         }}
                       >
@@ -1769,6 +1829,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
                   </div>
                   <div className="small muted">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
+                  <div className="small muted">Trading emotions: {formatTradingEmotions((item.trade as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                   <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
@@ -1795,6 +1856,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">R multiple: <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span></div>
                       <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
                       <div className="small">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
+                      <div className="small">Trading emotions: {formatTradingEmotions((item.trade as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                       <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
@@ -1808,6 +1870,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
                   <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
                   <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
+                  <div className="small muted">Trading emotions: {formatTradingEmotions((item.noTrade as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === item.noTrade.id).length}</div>
                     <div className="row">
@@ -1826,6 +1889,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="stack">
                       <div className="small muted">{item.noTrade.day_date}</div>
                       <div className="small">Reason: {item.noTrade.reason}</div>
+                      <div className="small">Trading emotions: {formatTradingEmotions((item.noTrade as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.noTrade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -1897,7 +1961,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 if (nextType === 'session') {
                   setLogMode('session');
                 } else {
-                  setLogMode(tradeLogSubtype);
+                  setLogMode(tradeLogSubtype === 'no_trade' ? 'no_trade' : 'trade');
                 }
               }}
             >
@@ -1911,13 +1975,26 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <button
                     className="inline"
                     type="button"
-                    style={tradeLogSubtype === 'trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    style={tradeLogSubtype === 'live_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
                     onClick={() => {
-                      setTradeLogSubtype('trade');
+                      setTradeLogSubtype('live_trade');
+                      setTradeDraft((p) => ({ ...p, is_paper_trade: false }));
                       setLogMode('trade');
                     }}
                   >
-                    {tradeLogSubtype === 'trade' ? '✓ ' : ''}Trade
+                    {tradeLogSubtype === 'live_trade' ? '✓ ' : ''}Live trade
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'paper_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('paper_trade');
+                      setTradeDraft((p) => ({ ...p, is_paper_trade: true }));
+                      setLogMode('trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'paper_trade' ? '✓ ' : ''}Paper trade
                   </button>
                   <button
                     className="inline"
@@ -1931,7 +2008,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     {tradeLogSubtype === 'no_trade' ? '✓ ' : ''}No-trade day
                   </button>
                 </div>
-                <div className="small muted">Selected subtype: <strong>{tradeLogSubtype === 'trade' ? 'Trade' : 'No-trade day'}</strong></div>
+                <div className="small muted">Selected subtype: <strong>{tradeLogSubtype === 'live_trade' ? 'Live trade' : tradeLogSubtype === 'paper_trade' ? 'Paper trade' : 'No-trade day'}</strong></div>
               </>
             ) : null}
           </div>
@@ -2012,15 +2089,36 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               ))}
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
-            <label className="row">
-              <span>Paper trade</span>
-              <input
-                type="checkbox"
-                checked={tradeDraft.is_paper_trade}
-                onChange={(e) => setTradeDraft((p) => ({ ...p, is_paper_trade: e.target.checked }))}
-              />
-            </label>
-            <div className="small muted">OFF = live trade. ON = paper/simulated execution.</div>
+            <div className="row">
+              <label className="small muted">Trading emotions</label>
+              <button className="info-btn" aria-label="Trading emotion help" type="button" onClick={() => setOpenHelp('trading_emotion')}>i</button>
+            </div>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {tradeDraft.trading_emotions.length ? tradeDraft.trading_emotions.map((emotion) => (
+                <button key={emotion} className="inline" type="button" onClick={() => setTradeDraft((p) => ({ ...p, trading_emotions: p.trading_emotions.filter((item) => item !== emotion) }))}>
+                  {emotion} ✕
+                </button>
+              )) : <span className="small muted">No emotions selected.</span>}
+            </div>
+            <div className="stack">
+              <button className="inline" type="button" onClick={() => setTradeEmotionPickerOpen((open) => !open)}>
+                {tradeEmotionPickerOpen ? 'Done selecting emotion' : 'Select trading emotion'}
+              </button>
+              {tradeEmotionPickerOpen ? (
+                <div className="trade stack" style={{ maxHeight: 220, overflow: 'auto' }}>
+                  {tradingEmotionOptions.map((emotion) => (
+                    <button
+                      key={emotion}
+                      className="inline"
+                      type="button"
+                      onClick={() => setTradeDraft((p) => ({ ...p, trading_emotions: toggleTradingEmotion(p.trading_emotions, emotion) }))}
+                    >
+                      {tradeDraft.trading_emotions.includes(emotion) ? '✓ ' : ''}{emotion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <label className="small muted">Mistake tags</label>
             <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
               {normalizeMistakeTags(tradeDraft.mistake_tags).length ? normalizeMistakeTags(tradeDraft.mistake_tags).map((tag) => (
@@ -2069,7 +2167,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   ? {
                     ...settings,
                     mistake_catalog: normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden),
-                    mistake_catalog_hidden: normalizeLegacyMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), [...(settings.mistake_catalog || []), next])
+                    mistake_catalog_hidden: normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), [...(settings.mistake_catalog || []), next])
                   }
                   : null;
                 if (nextSettings) void saveSettings(nextSettings);
@@ -2185,10 +2283,40 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
             <div className="row">
               <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
-              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], notes: '' }); }}>Cancel edit</button> : null}
+              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' }); }}>Cancel edit</button> : null}
             </div>
             <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
+            <div className="row">
+              <label className="small muted">Trading emotions</label>
+              <button className="info-btn" aria-label="Trading emotion help" type="button" onClick={() => setOpenHelp('trading_emotion')}>i</button>
+            </div>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {noTradeDraft.trading_emotions.length ? noTradeDraft.trading_emotions.map((emotion) => (
+                <button key={emotion} className="inline" type="button" onClick={() => setNoTradeDraft((p) => ({ ...p, trading_emotions: p.trading_emotions.filter((item) => item !== emotion) }))}>
+                  {emotion} ✕
+                </button>
+              )) : <span className="small muted">No emotions selected.</span>}
+            </div>
+            <div className="stack">
+              <button className="inline" type="button" onClick={() => setNoTradeEmotionPickerOpen((open) => !open)}>
+                {noTradeEmotionPickerOpen ? 'Done selecting emotion' : 'Select trading emotion'}
+              </button>
+              {noTradeEmotionPickerOpen ? (
+                <div className="trade stack" style={{ maxHeight: 220, overflow: 'auto' }}>
+                  {tradingEmotionOptions.map((emotion) => (
+                    <button
+                      key={emotion}
+                      className="inline"
+                      type="button"
+                      onClick={() => setNoTradeDraft((p) => ({ ...p, trading_emotions: toggleTradingEmotion(p.trading_emotions, emotion) }))}
+                    >
+                      {noTradeDraft.trading_emotions.includes(emotion) ? '✓ ' : ''}{emotion}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <RichTextEditor
               label="No-trade notes"
               value={noTradeDraft.notes}
@@ -2395,7 +2523,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <article key={t.id} className="trade">
                     <div className="small muted">{t.trade_date} · {t.ticker} · <span className="badge">{isPaperTrade(t) ? 'Paper' : 'Live'}</span></div>
                     <div className="small">{t.family} · {t.model} · {t.classification}</div>
-                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span></div>
+                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span> · Emotions {formatTradingEmotions((t as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                     <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={t.notes || ''} emptyLabel="—" />
@@ -2406,6 +2534,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <article key={n.id} className="trade no-trade">
                     <div className="small muted">{n.day_date}</div>
                     <div className="small">Reason: {n.reason}</div>
+                    <div className="small">Trading emotions: {formatTradingEmotions((n as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={n.notes || ''} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -2435,7 +2564,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 ? 'Trade classification definitions'
                 : openHelp === 'family'
                   ? 'Setup family definitions'
-                  : 'Setup model definitions'}
+                  : openHelp === 'trading_emotion'
+                    ? 'Trading emotion cycle definitions'
+                    : 'Setup model definitions'}
             </strong>
             <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
           </div>
@@ -4362,18 +4493,49 @@ function normalizeTag(value: string) {
 }
 
 function normalizeMistakeTags(value: unknown): string[] {
+  const sanitize = (values: string[]) => normalizeUniqueTags(values).filter((tag) => !isInactiveMistakeTag(tag));
   if (Array.isArray(value)) {
-    return normalizeUniqueTags(value.map((item) => normalizeTag(String(item ?? ''))));
+    return sanitize(value.map((item) => normalizeTag(String(item ?? ''))));
   }
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (!trimmed) return [];
     const tokens = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
-    return normalizeUniqueTags(tokens.map((token) => normalizeTag(token)));
+    return sanitize(tokens.map((token) => normalizeTag(token)));
   }
   if (value == null) return [];
   if (typeof value === 'object') return [];
-  return normalizeUniqueTags([normalizeTag(String(value))]);
+  return sanitize([normalizeTag(String(value))]);
+}
+
+function normalizeTradingEmotions(value: unknown): TradingEmotion[] {
+  const source = Array.isArray(value)
+    ? value.map((item) => normalizeTag(String(item || '')))
+    : typeof value === 'string'
+      ? [normalizeTag(value)]
+      : [];
+  const seen = new Set<string>();
+  const selected = source.filter((item) => {
+    const match = tradingEmotionOptions.find((emotion) => emotion.toLowerCase() === item.toLowerCase());
+    if (!match) return false;
+    const key = match.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return tradingEmotionOptions.filter((emotion) => selected.some((item) => item.toLowerCase() === emotion.toLowerCase()));
+}
+
+function toggleTradingEmotion(current: TradingEmotion[], emotion: TradingEmotion): TradingEmotion[] {
+  const next = current.includes(emotion)
+    ? current.filter((item) => item !== emotion)
+    : [...current, emotion];
+  return normalizeTradingEmotions(next);
+}
+
+function formatTradingEmotions(value: unknown): string {
+  const normalized = normalizeTradingEmotions(value);
+  return normalized.length ? normalized.join(', ') : 'None';
 }
 
 function normalizeUniqueInstruments(values: string[]) {
@@ -4405,7 +4567,7 @@ function isInactiveMistakeTag(tag: string) {
   return INACTIVE_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
 }
 
-function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unknown, historicalTags: unknown = []): { active: string[]; hidden: string[]; legacy: string[] } {
+function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unknown, historicalTags: unknown = []): { active: string[]; hidden: string[] } {
   const hiddenSeed = normalizeMistakeTags(hiddenCatalog);
   const hiddenSet = new Set(hiddenSeed.map((item) => item.toLowerCase()));
   const sourceActive = normalizeMistakeTags(activeCatalog);
@@ -4416,34 +4578,30 @@ function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unkno
     sourceActive.filter((tag) => !isInactiveMistakeTag(tag) && !hiddenSet.has(tag.toLowerCase()))
   );
   const hasReasonableDefaultCoverage = cleanedActive.filter((tag) => defaultSet.has(tag.toLowerCase())).length >= 2;
-  const looksStaleLegacyOnly = cleanedActive.length <= 1 && !hasReasonableDefaultCoverage;
+  const looksStaleOnly = cleanedActive.length <= 1 && !hasReasonableDefaultCoverage;
   const fallbackActive = normalizeUniqueTags([
     ...DEFAULT_MISTAKE_CATALOG.filter((tag) => !hiddenSet.has(tag.toLowerCase())),
     ...cleanedActive
   ]);
   const active = normalizeUniqueTags(
-    (looksStaleLegacyOnly ? fallbackActive : (cleanedActive.length ? cleanedActive : fallbackActive))
+    (looksStaleOnly ? fallbackActive : (cleanedActive.length ? cleanedActive : fallbackActive))
       .filter((tag) => !hiddenSet.has(tag.toLowerCase()))
   );
   const activeSet = new Set(active.map((tag) => tag.toLowerCase()));
 
   const hidden = normalizeUniqueTags([
     ...hiddenSeed,
-    ...sourceActive.filter((tag) => isInactiveMistakeTag(tag)),
-    ...(looksStaleLegacyOnly ? sourceActive : [])
+    ...historical.filter((tag) => !defaultSet.has(tag.toLowerCase())),
+    ...(looksStaleOnly ? sourceActive : [])
   ]).filter((tag) => !activeSet.has(tag.toLowerCase()));
-
-  const hiddenSetFinal = new Set(hidden.map((tag) => tag.toLowerCase()));
-  const legacy = normalizeUniqueTags(historical.filter((tag) => !activeSet.has(tag.toLowerCase()) && !hiddenSetFinal.has(tag.toLowerCase())));
-
-  return { active, hidden, legacy };
+  return { active, hidden };
 }
 
 function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: unknown): string[] {
   return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).active;
 }
 
-function normalizeLegacyMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
+function normalizeHiddenMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
   return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).hidden;
 }
 
