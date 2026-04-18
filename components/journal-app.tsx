@@ -209,7 +209,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
   const [overlayR, setOverlayR] = useState(false);
   const [overlayTradeCount, setOverlayTradeCount] = useState(true);
-  const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count'>('trade_count');
+  const [overlayChartTime, setOverlayChartTime] = useState(false);
+  const [overlayJournalTime, setOverlayJournalTime] = useState(false);
+  const [overlaySessionTime, setOverlaySessionTime] = useState(false);
+  const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time'>('trade_count');
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
   const [reviewEntriesOpen, setReviewEntriesOpen] = useState(false);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
@@ -383,7 +386,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
-  const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
+  const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, periodSessions, dashboardPeriod);
   const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
   const selectedPeriodTakeaway = !periodTrades.length
     ? 'No trades in this selection. Use Jump to or Trade type to load a period with activity.'
@@ -1475,23 +1478,39 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <button className="inline" type="button" onClick={() => setOverlayTradeCount((v) => !v)} style={overlayTradeCount ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
                 {overlayTradeCount ? '✓ ' : ''}Trade count
               </button>
+              <button className="inline" type="button" onClick={() => setOverlayChartTime((v) => !v)} style={overlayChartTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayChartTime ? '✓ ' : ''}Chart time
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlayJournalTime((v) => !v)} style={overlayJournalTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayJournalTime ? '✓ ' : ''}Journal time
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlaySessionTime((v) => !v)} style={overlaySessionTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlaySessionTime ? '✓ ' : ''}Total session time
+              </button>
             </div>
-            {(overlayR || overlayTradeCount) ? (
-              <div style={{ maxWidth: 220 }}>
-                <label className="small muted" htmlFor="chart-right-axis">Right axis focus</label>
-                <select
-                  id="chart-right-axis"
-                  value={chartRightAxisMode}
-                  onChange={(e) => setChartRightAxisMode(e.target.value as 'r' | 'trade_count')}
-                >
-                  <option value="r">R</option>
-                  <option value="trade_count">Trade count</option>
-                </select>
-                <div className="small muted">{chartRightAxisMode === 'r' ? 'Right axis is scaled for R values.' : 'Right axis is scaled for trade-count values.'}</div>
+            {(overlayR || overlayTradeCount || overlayChartTime || overlayJournalTime || overlaySessionTime) ? (
+              <div className="stack" style={{ gap: 6 }}>
+                <div className="small muted">Right axis focus</div>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'r' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('r')}>R</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'trade_count' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('trade_count')}>Trade count</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'chart_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('chart_time')}>Chart time</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'journal_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('journal_time')}>Journal time</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'session_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('session_time')}>Total time</button>
+                </div>
               </div>
             ) : null}
             {!periodTrades.length ? <div className="small muted">No trades for the selected period + trade type filter.</div> : null}
-            <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} rightAxisMode={chartRightAxisMode} />
+            <PerformanceChart
+              points={chartBuckets}
+              view={chartView}
+              showROverlay={overlayR}
+              showTradeCountOverlay={overlayTradeCount}
+              showChartTimeOverlay={overlayChartTime}
+              showJournalTimeOverlay={overlayJournalTime}
+              showSessionTimeOverlay={overlaySessionTime}
+              rightAxisMode={chartRightAxisMode}
+            />
           </section>
 
           <section className="card stack control-card">
@@ -2686,11 +2705,32 @@ type TimelinePoint = {
   dailyPnl: number;
   dailyR: number;
   tradeCount: number;
+  chartMinutes: number;
+  journalMinutes: number;
+  totalSessionMinutes: number;
   explicitNoTrade: boolean;
   bucketType: 'day' | 'week';
 };
 
-function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, rightAxisMode }: { points: TimelinePoint[]; view: 'daily' | 'cumulative'; showROverlay: boolean; showTradeCountOverlay: boolean; rightAxisMode: 'r' | 'trade_count' }) {
+function PerformanceChart({
+  points,
+  view,
+  showROverlay,
+  showTradeCountOverlay,
+  showChartTimeOverlay,
+  showJournalTimeOverlay,
+  showSessionTimeOverlay,
+  rightAxisMode
+}: {
+  points: TimelinePoint[];
+  view: 'daily' | 'cumulative';
+  showROverlay: boolean;
+  showTradeCountOverlay: boolean;
+  showChartTimeOverlay: boolean;
+  showJournalTimeOverlay: boolean;
+  showSessionTimeOverlay: boolean;
+  rightAxisMode: 'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time';
+}) {
   const [activeIndex, setActiveIndex] = useState<number | null>(points.length ? points.length - 1 : null);
   if (!points.length) return <div className="small muted">No data in selected period.</div>;
   const mainSeries = points.map((point, idx) => {
@@ -2716,6 +2756,19 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
   const baseline = mapValueToY(0, yMin, yMax, plotTop, plotBottom);
   const maxTradeCount = Math.max(1, ...points.map((p) => p.tradeCount));
   const maxRAbs = Math.max(1, ...rSeries.map((v) => Math.abs(v)), 0.01);
+  const chartMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.chartMinutes, 0) : point.chartMinutes;
+  });
+  const journalMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.journalMinutes, 0) : point.journalMinutes;
+  });
+  const sessionMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.totalSessionMinutes, 0) : point.totalSessionMinutes;
+  });
+  const maxSessionMinutes = Math.max(1, ...sessionMinutesSeries, ...chartMinutesSeries, ...journalMinutesSeries);
   const xForIndex = (idx: number) => plotLeft + (idx / Math.max(1, points.length - 1)) * plotWidth;
   const yForValue = (value: number) => mapValueToY(value, yMin, yMax, plotTop, plotBottom);
   const polyline = points.map((point, idx) => {
@@ -2731,9 +2784,14 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
   const xTickIndexes = buildAxisTickIndexes(points.length, 5);
   const yTicks = [yMax, yMax / 2, 0, yMin / 2, yMin];
   const tradeCountTicks = [maxTradeCount, Math.ceil(maxTradeCount / 2), 0];
-  const rightAxisMetric = rightAxisMode === 'r'
-    ? (showROverlay ? 'r' : (showTradeCountOverlay ? 'trade_count' : null))
-    : (showTradeCountOverlay ? 'trade_count' : (showROverlay ? 'r' : null));
+  const enabledRightMetrics = [
+    showROverlay ? 'r' : null,
+    showTradeCountOverlay ? 'trade_count' : null,
+    showChartTimeOverlay ? 'chart_time' : null,
+    showJournalTimeOverlay ? 'journal_time' : null,
+    showSessionTimeOverlay ? 'session_time' : null
+  ].filter(Boolean) as Array<'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time'>;
+  const rightAxisMetric = enabledRightMetrics.includes(rightAxisMode) ? rightAxisMode : (enabledRightMetrics[0] || null);
   const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
   const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
   const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
@@ -2795,6 +2853,51 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
             })}
           </>
         )}
+        {showChartTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#facc15"
+              strokeWidth={rightAxisMetric === 'chart_time' ? 1.7 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(chartMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(chartMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return chartMinutesSeries[idx] > 0 ? <circle key={`chart-time-${point.key}`} cx={x} cy={y} r={2.2} fill="#fde68a" /> : null;
+            })}
+          </>
+        )}
+        {showJournalTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#2dd4bf"
+              strokeWidth={rightAxisMetric === 'journal_time' ? 1.7 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(journalMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(journalMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return journalMinutesSeries[idx] > 0 ? <circle key={`journal-time-${point.key}`} cx={x} cy={y} r={2.2} fill="#99f6e4" /> : null;
+            })}
+          </>
+        )}
+        {showSessionTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#f59e0b"
+              strokeWidth={rightAxisMetric === 'session_time' ? 1.8 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(sessionMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(sessionMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return sessionMinutesSeries[idx] > 0 ? <circle key={`session-time-${point.key}`} cx={x} cy={y} r={2.5} fill="#fcd34d" /> : null;
+            })}
+          </>
+        )}
         {rightAxisMetric === 'trade_count' && tradeCountTicks.map((tick) => {
           const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
           return <text key={`right-y-count-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{tick}</text>;
@@ -2802,6 +2905,10 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
         {rightAxisMetric === 'r' && [maxRAbs, maxRAbs / 2, 0, -maxRAbs / 2, -maxRAbs].map((tick) => {
           const y = mapValueToY(tick, -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
           return <text key={`right-y-r-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{formatMetricValue(tick, 'r')}</text>;
+        })}
+        {(rightAxisMetric === 'chart_time' || rightAxisMetric === 'journal_time' || rightAxisMetric === 'session_time') && [maxSessionMinutes, Math.ceil(maxSessionMinutes / 2), 0].map((tick) => {
+          const y = mapValueToY(tick, 0, maxSessionMinutes, plotTop, plotBottom);
+          return <text key={`right-y-time-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{formatMinutesLabel(tick)}</text>;
         })}
         {points.map((point, idx) => {
           if (!point.explicitNoTrade) return null;
@@ -2833,19 +2940,27 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
           {' · '}
           <span>R {(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R</span>
           {' · '}
-          <span>{activePoint.tradeCount > 0 ? `Trade day (${activePoint.tradeCount})` : activePoint.explicitNoTrade ? 'Explicit no-trade day' : 'Blank day (no logged activity)'}</span>
+          <span>Trades {activePoint.tradeCount}</span>
+          {(showChartTimeOverlay || showSessionTimeOverlay || rightAxisMetric === 'chart_time') ? <><span>{' · '}</span><span>Chart {formatMinutesLabel(view === 'cumulative' ? chartMinutesSeries[safeActiveIndex ?? 0] : activePoint.chartMinutes)}</span></> : null}
+          {(showJournalTimeOverlay || showSessionTimeOverlay || rightAxisMetric === 'journal_time') ? <><span>{' · '}</span><span>Journal {formatMinutesLabel(view === 'cumulative' ? journalMinutesSeries[safeActiveIndex ?? 0] : activePoint.journalMinutes)}</span></> : null}
+          {(showSessionTimeOverlay || rightAxisMetric === 'session_time') ? <><span>{' · '}</span><span>Total session {formatMinutesLabel(view === 'cumulative' ? sessionMinutesSeries[safeActiveIndex ?? 0] : activePoint.totalSessionMinutes)}</span></> : null}
+          {' · '}
+          <span>{activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'Explicit no-trade day' : 'Blank day (no logged activity)'}</span>
         </div>
       )}
-      <div className="small muted">Legend: green +$, red -$, gray tick explicit no-trade, empty = blank day{showROverlay ? ' · slate line = R' : ''}{showTradeCountOverlay ? ' · lavender line = trade count' : ''}{rightAxisMetric === 'r' ? ' · right axis: R' : rightAxisMetric === 'trade_count' ? ' · right axis: trade count' : ''}.</div>
+      <div className="small muted">Legend: green +$, red -$, gray tick explicit no-trade, empty = blank day{showROverlay ? ' · slate line = R' : ''}{showTradeCountOverlay ? ' · lavender = trade count' : ''}{showChartTimeOverlay ? ' · yellow = chart time' : ''}{showJournalTimeOverlay ? ' · teal = journal time' : ''}{showSessionTimeOverlay ? ' · amber = total session time' : ''}{rightAxisMetric === 'r' ? ' · right axis: R' : rightAxisMetric === 'trade_count' ? ' · right axis: trade count' : rightAxisMetric === 'chart_time' ? ' · right axis: chart time' : rightAxisMetric === 'journal_time' ? ' · right axis: journal time' : rightAxisMetric === 'session_time' ? ' · right axis: total session time' : ''}.</div>
     </div>
   );
 }
 
-function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], periodType: DashboardPeriod): TimelinePoint[] {
+function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], periodSessions: SessionRow[], periodType: DashboardPeriod): TimelinePoint[] {
   const dates = enumerateDates(start, end);
   if (periodType === 'weekly' || periodType === 'monthly') {
     return dates.map((date) => {
       const dayTrades = periodTrades.filter((t) => t.trade_date === date);
+      const daySessions = periodSessions.filter((s) => s.session_date === date);
+      const chartMinutes = daySessions.filter((s) => s.session_type === 'chart').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+      const journalMinutes = daySessions.filter((s) => s.session_type === 'journal').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
       return {
         key: date,
         label: formatAxisDate(date),
@@ -2854,6 +2969,9 @@ function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[],
         dailyPnl: dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
         dailyR: dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
         tradeCount: dayTrades.length,
+        chartMinutes,
+        journalMinutes,
+        totalSessionMinutes: chartMinutes + journalMinutes,
         explicitNoTrade: periodNoTrades.some((n) => n.day_date === date),
         bucketType: 'day'
       };
@@ -2872,6 +2990,9 @@ function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[],
   });
   return Array.from(weeks.entries()).map(([key, value]) => {
     const bucketTrades = periodTrades.filter((t) => value.dates.includes(t.trade_date));
+    const bucketSessions = periodSessions.filter((s) => value.dates.includes(s.session_date));
+    const chartMinutes = bucketSessions.filter((s) => s.session_type === 'chart').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+    const journalMinutes = bucketSessions.filter((s) => s.session_type === 'journal').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
     const hasNoTrade = periodNoTrades.some((n) => value.dates.includes(n.day_date));
     return {
       key,
@@ -2881,6 +3002,9 @@ function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[],
       dailyPnl: bucketTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
       dailyR: bucketTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
       tradeCount: bucketTrades.length,
+      chartMinutes,
+      journalMinutes,
+      totalSessionMinutes: chartMinutes + journalMinutes,
       explicitNoTrade: hasNoTrade,
       bucketType: 'week'
     };
