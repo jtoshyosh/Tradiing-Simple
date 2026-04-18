@@ -1195,17 +1195,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <input id="account-last-name" placeholder="Last name" value={accountLastName} onChange={(e) => setAccountLastName(e.target.value)} />
             <label className="small muted" htmlFor="account-email">Email</label>
             <input id="account-email" value={email || ''} disabled />
-            <label className="small muted" htmlFor="default-risk">Default risk ($)</label>
-            <input id="default-risk" value={settings.default_risk} onChange={(e) => setSettings({ ...settings, default_risk: Number(e.target.value || 0) })} type="number" placeholder="Default risk" />
-          </article>
-          <article className="trade stack">
-            <div className="row">
-              <strong>Reminder settings</strong>
-              <span className="badge">Coming soon</span>
-            </div>
-            <div className="small muted">Reminders are not active yet. These switches are saved but currently do not trigger notifications.</div>
-            <label className="row"><span>Daily reminder</span><input type="checkbox" checked={settings.daily_reminder} onChange={(e) => setSettings({ ...settings, daily_reminder: e.target.checked })} /></label>
-            <label className="row"><span>Weekly reminder</span><input type="checkbox" checked={settings.weekly_reminder} onChange={(e) => setSettings({ ...settings, weekly_reminder: e.target.checked })} /></label>
           </article>
           <article className="trade stack">
             <div className="row">
@@ -1301,7 +1290,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               Deletes: trades, no-trade days, sessions, weekly reviews, and attachment records + storage file cleanup attempts.
             </div>
             <div className="small muted">
-              Preserves: auth identity, profile name, default risk, instrument catalog, and active/hidden mistake catalog.
+              Preserves: auth identity, profile name, instrument catalog, and active/hidden mistake catalog.
             </div>
             <button className="inline danger-button" type="button" onClick={() => setResetActivityOpen((open) => !open)}>
               {resetActivityOpen ? 'Cancel reset' : 'Reset activity data'}
@@ -2524,7 +2513,8 @@ function RichTextEditor({
   }, [value]);
 
   function applyMutation(
-    transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number }
+    transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number },
+    options?: { collapseSelection?: boolean }
   ) {
     const node = textareaRef.current;
     if (!node) return;
@@ -2536,7 +2526,7 @@ function RichTextEditor({
     requestAnimationFrame(() => {
       if (!textareaRef.current) return;
       const nextStart = next.nextStart ?? start;
-      const nextEnd = next.nextEnd ?? end;
+      const nextEnd = options?.collapseSelection ? nextStart : (next.nextEnd ?? end);
       textareaRef.current.focus();
       textareaRef.current.setSelectionRange(nextStart, nextEnd);
     });
@@ -2545,10 +2535,10 @@ function RichTextEditor({
   const controls: Array<{ key: string; label: string; run: () => void }> = [
     { key: 'bold', label: 'Bold', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
     { key: 'underline', label: 'Underline', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
-    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet')) },
-    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered')) },
-    { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2)) },
-    { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2)) }
+    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet'), { collapseSelection: true }) },
+    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered'), { collapseSelection: true }) },
+    { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2), { collapseSelection: true }) },
+    { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2), { collapseSelection: true }) }
   ];
 
   function handleEnterListContinuation(event: KeyboardEvent<HTMLTextAreaElement>) {
