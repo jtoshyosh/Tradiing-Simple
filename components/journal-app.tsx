@@ -11,7 +11,7 @@ type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
-type HelpKey = 'classification' | 'family' | 'model' | 'trading_emotion';
+type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset';
 type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
@@ -31,22 +31,28 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
-const tradingEmotionOptions = [
-  'Optimism',
-  'Excitement',
-  'Thrill',
-  'Euphoria',
-  'Anxiety',
-  'Denial',
-  'Fear',
-  'Desperation',
-  'Panic',
-  'Capitulation',
-  'Despondency',
-  'Hope',
-  'Relief'
+const entryEmotionOptions = [
+  { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
+  { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
+  { value: 'FOMO / Impatient', label: "FOMO / Impatient (rushed, didn't want to miss it)" },
+  { value: 'Revengeful / Tilted', label: 'Revengeful / Tilted (emotionally compensating)' },
+  { value: 'Greedy', label: 'Greedy (wanted more than plan justified)' }
 ] as const;
-type TradingEmotion = (typeof tradingEmotionOptions)[number];
+const inTradeEmotionOptions = [
+  { value: 'Calm', label: 'Calm (stuck to plan during management)' },
+  { value: 'Confident', label: 'Confident (trusted the trade plan)' },
+  { value: 'Surprised', label: 'Surprised (market reacted differently than expected)' },
+  { value: 'Greedy', label: 'Greedy (pushed for more than planned)' },
+  { value: 'Panicked', label: 'Panicked (interfered impulsively with TP/SL)' }
+] as const;
+const noTradeMindsetOptions = [
+  { value: 'Present but disappointed', label: 'Present but disappointed (I was engaged and waiting, but no valid setup came)' },
+  { value: 'Not fully present', label: 'Not fully present (I wasn't really locked in or actively tracking the session)' },
+  { value: 'Accepting / indifferent', label: 'Accepting / indifferent (if the setup came I'd take it, if not I was okay with that)' }
+] as const;
+type EntryEmotion = (typeof entryEmotionOptions)[number]['value'];
+type InTradeEmotion = (typeof inTradeEmotionOptions)[number]['value'];
+type NoTradeMindset = (typeof noTradeMindsetOptions)[number]['value'];
 const DEFAULT_MISTAKE_CATALOG = [
   'FOMO entry',
   'Early entry',
@@ -110,20 +116,24 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
     ['HTF continuation pullback', 'Enter pullback aligned with higher timeframe trend.'],
     ['N/A / None', 'Use when trade is intentionally marked with no valid setup.']
   ],
-  trading_emotion: [
-    ['Optimism', 'Confidence is rising; stay process-focused and avoid sizing up too early.'],
-    ['Excitement', 'Momentum feels strong; keep entries rule-based, not impulse-based.'],
-    ['Thrill', 'Fast wins feel rewarding; protect discipline before chasing extra trades.'],
-    ['Euphoria', 'Overconfidence risk is highest; cut size and follow hard risk limits.'],
-    ['Anxiety', 'Uncertainty is building; simplify criteria and wait for clean setups.'],
-    ['Denial', 'Market feedback is being ignored; pause and re-check invalidation levels.'],
-    ['Fear', 'Loss avoidance dominates; execute the plan instead of freezing.'],
-    ['Desperation', 'Urgency to recover appears; reduce frequency and protect capital.'],
-    ['Panic', 'Emotion is driving decisions; stop trading and reset before re-entry.'],
-    ['Capitulation', 'Confidence breaks after pain; focus on process reps, not outcome.'],
-    ['Despondency', 'Motivation is low; use smaller goals and strict checklist execution.'],
-    ['Hope', 'Stabilization starts; stay selective and avoid forcing bounce-back trades.'],
-    ['Relief', 'Pressure eases after restraint; keep consistency instead of overtrading.']
+  entry_emotion: [
+    ['Calm', 'Steady before entry, aligned with checklist and risk plan.'],
+    ['Confident', 'You saw clear confluence and entered with measured conviction.'],
+    ['FOMO / Impatient', 'You felt urgency and entered early to avoid missing the move.'],
+    ['Revengeful / Tilted', 'Entry was emotionally driven by prior outcome, not clean signal.'],
+    ['Greedy', 'You entered with outcome focus and stretched beyond planned edge.']
+  ],
+  in_trade_emotion: [
+    ['Calm', 'Management stayed mechanical: follow planned stop/targets with discipline.'],
+    ['Confident', 'You trusted the plan and avoided unnecessary interference.'],
+    ['Surprised', 'Price behavior differed from expectation and increased decision pressure.'],
+    ['Greedy', 'You pushed for extra beyond plan and delayed planned exits.'],
+    ['Panicked', 'You reacted impulsively and interfered with TP/SL management.']
+  ],
+  no_trade_mindset: [
+    ['Present but disappointed', 'You were engaged and selective, but accepted no valid setup occurred.'],
+    ['Not fully present', 'Focus and session engagement were limited, reducing decision quality.'],
+    ['Accepting / indifferent', 'You stayed process-oriented and neutral about whether a setup appeared.']
   ],
   classification: [
     ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
@@ -151,7 +161,8 @@ type TradeDraft = {
   r_multiple_decimal: string;
   minutes_in_trade: string;
   emotional_pressure: string;
-  trading_emotions: TradingEmotion[];
+  entry_emotion: EntryEmotion;
+  in_trade_emotion: InTradeEmotion;
   is_paper_trade: boolean;
   mistake_tags: string[];
   notes: string;
@@ -195,7 +206,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
   const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
-  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; trading_emotions: TradingEmotion[]; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
+  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; no_trade_mindset: NoTradeMindset; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
@@ -212,7 +223,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     r_multiple_decimal: '00',
     minutes_in_trade: '',
     emotional_pressure: '1',
-    trading_emotions: [],
+    entry_emotion: entryEmotionOptions[0].value,
+    in_trade_emotion: inTradeEmotionOptions[0].value,
     is_paper_trade: false,
     mistake_tags: [],
     notes: ''
@@ -221,8 +233,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [newMistakeTag, setNewMistakeTag] = useState('');
   const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
   const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
-  const [tradeEmotionPickerOpen, setTradeEmotionPickerOpen] = useState(false);
-  const [noTradeEmotionPickerOpen, setNoTradeEmotionPickerOpen] = useState(false);
   const [logMode, setLogMode] = useState<LogMode>('trade');
   const [tradeLogSubtype, setTradeLogSubtype] = useState<'live_trade' | 'paper_trade' | 'no_trade'>('live_trade');
   const [accountOpen, setAccountOpen] = useState(false);
@@ -296,14 +306,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
     const normalizedTrades = ((((t.data || []) as TradeRow[]) || []).map((trade) => ({
       ...trade,
-      trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion),
+      entry_emotion: resolveEntryEmotion(trade as TradeRow),
+      in_trade_emotion: resolveInTradeEmotion(trade as TradeRow),
       is_paper_trade: Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade),
       mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
     })));
     setTrades(normalizedTrades);
     const normalizedNoTrades = (((n.data || []) as NoTradeDayRow[]) || []).map((entry) => ({
       ...entry,
-      trading_emotions: normalizeTradingEmotions((entry as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (entry as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion)
+      no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow)
     }));
     setNoTrades(normalizedNoTrades);
     setSessions(((sessionResult.data || []) as SessionRow[]) || []);
@@ -521,7 +532,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
       minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
       emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
-      trading_emotions: normalizeTradingEmotions(tradeDraft.trading_emotions),
+      entry_emotion: normalizeEntryEmotion(tradeDraft.entry_emotion),
+      in_trade_emotion: normalizeInTradeEmotion(tradeDraft.in_trade_emotion),
       is_paper_trade: Boolean(tradeDraft.is_paper_trade),
       mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
       notes: String(tradeDraft.notes || '')
@@ -575,7 +587,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       user_id: userId,
       day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
       reason: noTradeDraft.reason || 'No A+ setup',
-      trading_emotions: normalizeTradingEmotions(noTradeDraft.trading_emotions),
+      no_trade_mindset: normalizeNoTradeMindset(noTradeDraft.no_trade_mindset),
       notes: String(noTradeDraft.notes || '')
     };
     const upsert = editingNoTradeId
@@ -608,9 +620,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
 
     await loadAll();
-    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
+    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
     setNoTradeExtract(null);
-    setNoTradeEmotionPickerOpen(false);
     setEditingNoTradeId(null);
     setTab('history');
   }
@@ -718,14 +729,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple_decimal: '00',
       minutes_in_trade: '',
       emotional_pressure: '1',
-      trading_emotions: [],
+      entry_emotion: entryEmotionOptions[0].value,
+    in_trade_emotion: inTradeEmotionOptions[0].value,
       is_paper_trade: false,
       mistake_tags: [],
       notes: ''
     });
     setTradeExtract(null);
     setMistakePickerOpen(false);
-    setTradeEmotionPickerOpen(false);
     setTradeLogSubtype('live_trade');
   }
 
@@ -747,20 +758,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
-      trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion),
+      entry_emotion: resolveEntryEmotion(trade as TradeRow),
+      in_trade_emotion: resolveInTradeEmotion(trade as TradeRow),
       is_paper_trade: Boolean(trade.is_paper_trade),
       mistake_tags: normalizeMistakeTags(trade.mistake_tags),
       notes: trade.notes || ''
     });
     setMistakePickerOpen(false);
-    setTradeEmotionPickerOpen(false);
     setTradeLogSubtype(Boolean(trade.is_paper_trade) ? 'paper_trade' : 'live_trade');
   }
 
   function startEditNoTrade(noTrade: NoTradeDayRow) {
     setEditingNoTradeId(noTrade.id);
-    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, trading_emotions: normalizeTradingEmotions((noTrade as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (noTrade as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion), notes: noTrade.notes || '' });
-    setNoTradeEmotionPickerOpen(false);
+    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, no_trade_mindset: resolveNoTradeMindset(noTrade), notes: noTrade.notes || '' });
     setTradeLogSubtype('no_trade');
     setTab('log');
     setLogMode('no_trade');
@@ -796,7 +806,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
     if (editingNoTradeId === noTradeId) {
       setEditingNoTradeId(null);
-      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' });
+      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
     }
     await loadAll();
   }
@@ -992,7 +1002,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: Number(trade.pnl || 0),
         r_multiple: Number(trade.r_multiple || 0),
         emotional_pressure: trade.emotional_pressure ?? '',
-        trading_emotions: normalizeTradingEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion).join(', '),
+        entry_emotion: resolveEntryEmotion(trade),
+        in_trade_emotion: resolveInTradeEmotion(trade),
+        no_trade_mindset: '',
         mistake_tags: normalizeMistakeTags(trade.mistake_tags).join('|'),
         trade_mode: isPaperTrade(trade) ? 'paper' : 'live',
         no_trade_reason: '',
@@ -1019,7 +1031,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
-        trading_emotions: normalizeTradingEmotions((entry as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (entry as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion).join(', '),
+        no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow),
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: entry.reason,
@@ -1046,7 +1058,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
-        trading_emotions: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1073,7 +1087,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
-        trading_emotions: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1100,7 +1116,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         result_usd: '',
         r_multiple: '',
         emotional_pressure: '',
-        trading_emotions: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
         mistake_tags: '',
         trade_mode: '',
         no_trade_reason: '',
@@ -1829,7 +1847,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
                   </div>
                   <div className="small muted">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
-                  <div className="small muted">Trading emotions: {formatTradingEmotions((item.trade as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                  <div className="small muted">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
                   <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
@@ -1856,7 +1874,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">R multiple: <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span></div>
                       <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
                       <div className="small">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
-                      <div className="small">Trading emotions: {formatTradingEmotions((item.trade as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                      <div className="small">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
                       <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
@@ -1870,7 +1888,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
                   <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
                   <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
-                  <div className="small muted">Trading emotions: {formatTradingEmotions((item.noTrade as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                  <div className="small muted">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
                   <div className="row">
                     <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === item.noTrade.id).length}</div>
                     <div className="row">
@@ -1889,7 +1907,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="stack">
                       <div className="small muted">{item.noTrade.day_date}</div>
                       <div className="small">Reason: {item.noTrade.reason}</div>
-                      <div className="small">Trading emotions: {formatTradingEmotions((item.noTrade as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                      <div className="small">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.noTrade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -2090,35 +2108,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
             <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
             <div className="row">
-              <label className="small muted">Trading emotions</label>
-              <button className="info-btn" aria-label="Trading emotion help" type="button" onClick={() => setOpenHelp('trading_emotion')}>i</button>
+              <label className="small muted">Entry emotion</label>
+              <button className="info-btn" aria-label="Entry emotion help" type="button" onClick={() => setOpenHelp('entry_emotion')}>i</button>
             </div>
-            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
-              {tradeDraft.trading_emotions.length ? tradeDraft.trading_emotions.map((emotion) => (
-                <button key={emotion} className="inline" type="button" onClick={() => setTradeDraft((p) => ({ ...p, trading_emotions: p.trading_emotions.filter((item) => item !== emotion) }))}>
-                  {emotion} ✕
-                </button>
-              )) : <span className="small muted">No emotions selected.</span>}
+            <select name="entry_emotion" value={tradeDraft.entry_emotion} onChange={(e) => setTradeDraft((p) => ({ ...p, entry_emotion: normalizeEntryEmotion(e.target.value) }))}>
+              {entryEmotionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">In-trade emotion</label>
+              <button className="info-btn" aria-label="In-trade emotion help" type="button" onClick={() => setOpenHelp('in_trade_emotion')}>i</button>
             </div>
-            <div className="stack">
-              <button className="inline" type="button" onClick={() => setTradeEmotionPickerOpen((open) => !open)}>
-                {tradeEmotionPickerOpen ? 'Done selecting emotion' : 'Select trading emotion'}
-              </button>
-              {tradeEmotionPickerOpen ? (
-                <div className="trade stack" style={{ maxHeight: 220, overflow: 'auto' }}>
-                  {tradingEmotionOptions.map((emotion) => (
-                    <button
-                      key={emotion}
-                      className="inline"
-                      type="button"
-                      onClick={() => setTradeDraft((p) => ({ ...p, trading_emotions: toggleTradingEmotion(p.trading_emotions, emotion) }))}
-                    >
-                      {tradeDraft.trading_emotions.includes(emotion) ? '✓ ' : ''}{emotion}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <select name="in_trade_emotion" value={tradeDraft.in_trade_emotion} onChange={(e) => setTradeDraft((p) => ({ ...p, in_trade_emotion: normalizeInTradeEmotion(e.target.value) }))}>
+              {inTradeEmotionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
             <label className="small muted">Mistake tags</label>
             <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
               {normalizeMistakeTags(tradeDraft.mistake_tags).length ? normalizeMistakeTags(tradeDraft.mistake_tags).map((tag) => (
@@ -2283,40 +2285,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
             <div className="row">
               <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
-              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], trading_emotions: [], notes: '' }); }}>Cancel edit</button> : null}
+              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' }); }}>Cancel edit</button> : null}
             </div>
             <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
             <div className="row">
-              <label className="small muted">Trading emotions</label>
-              <button className="info-btn" aria-label="Trading emotion help" type="button" onClick={() => setOpenHelp('trading_emotion')}>i</button>
+              <label className="small muted">No-trade mindset</label>
+              <button className="info-btn" aria-label="No-trade mindset help" type="button" onClick={() => setOpenHelp('no_trade_mindset')}>i</button>
             </div>
-            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
-              {noTradeDraft.trading_emotions.length ? noTradeDraft.trading_emotions.map((emotion) => (
-                <button key={emotion} className="inline" type="button" onClick={() => setNoTradeDraft((p) => ({ ...p, trading_emotions: p.trading_emotions.filter((item) => item !== emotion) }))}>
-                  {emotion} ✕
-                </button>
-              )) : <span className="small muted">No emotions selected.</span>}
-            </div>
-            <div className="stack">
-              <button className="inline" type="button" onClick={() => setNoTradeEmotionPickerOpen((open) => !open)}>
-                {noTradeEmotionPickerOpen ? 'Done selecting emotion' : 'Select trading emotion'}
-              </button>
-              {noTradeEmotionPickerOpen ? (
-                <div className="trade stack" style={{ maxHeight: 220, overflow: 'auto' }}>
-                  {tradingEmotionOptions.map((emotion) => (
-                    <button
-                      key={emotion}
-                      className="inline"
-                      type="button"
-                      onClick={() => setNoTradeDraft((p) => ({ ...p, trading_emotions: toggleTradingEmotion(p.trading_emotions, emotion) }))}
-                    >
-                      {noTradeDraft.trading_emotions.includes(emotion) ? '✓ ' : ''}{emotion}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <select name="no_trade_mindset" value={noTradeDraft.no_trade_mindset} onChange={(e) => setNoTradeDraft((p) => ({ ...p, no_trade_mindset: normalizeNoTradeMindset(e.target.value) }))}>
+              {noTradeMindsetOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
             <RichTextEditor
               label="No-trade notes"
               value={noTradeDraft.notes}
@@ -2523,7 +2502,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <article key={t.id} className="trade">
                     <div className="small muted">{t.trade_date} · {t.ticker} · <span className="badge">{isPaperTrade(t) ? 'Paper' : 'Live'}</span></div>
                     <div className="small">{t.family} · {t.model} · {t.classification}</div>
-                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span> · Emotions {formatTradingEmotions((t as TradeRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span> · Entry {resolveEntryEmotion(t)} · In-trade {resolveInTradeEmotion(t)}</div>
                     <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={t.notes || ''} emptyLabel="—" />
@@ -2534,7 +2513,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <article key={n.id} className="trade no-trade">
                     <div className="small muted">{n.day_date}</div>
                     <div className="small">Reason: {n.reason}</div>
-                    <div className="small">Trading emotions: {formatTradingEmotions((n as NoTradeDayRow & { trading_emotions?: unknown }).trading_emotions)}</div>
+                    <div className="small">No-trade mindset: {resolveNoTradeMindset(n)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={n.notes || ''} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -2564,9 +2543,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 ? 'Trade classification definitions'
                 : openHelp === 'family'
                   ? 'Setup family definitions'
-                  : openHelp === 'trading_emotion'
-                    ? 'Trading emotion cycle definitions'
-                    : 'Setup model definitions'}
+                  : openHelp === 'entry_emotion'
+                    ? 'Entry emotion definitions'
+                    : openHelp === 'in_trade_emotion'
+                      ? 'In-trade emotion definitions'
+                      : openHelp === 'no_trade_mindset'
+                        ? 'No-trade mindset definitions'
+                        : 'Setup model definitions'}
             </strong>
             <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
           </div>
@@ -4508,34 +4491,67 @@ function normalizeMistakeTags(value: unknown): string[] {
   return sanitize([normalizeTag(String(value))]);
 }
 
-function normalizeTradingEmotions(value: unknown): TradingEmotion[] {
-  const source = Array.isArray(value)
-    ? value.map((item) => normalizeTag(String(item || '')))
-    : typeof value === 'string'
-      ? [normalizeTag(value)]
-      : [];
-  const seen = new Set<string>();
-  const selected = source.filter((item) => {
-    const match = tradingEmotionOptions.find((emotion) => emotion.toLowerCase() === item.toLowerCase());
-    if (!match) return false;
-    const key = match.toLowerCase();
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
-  return tradingEmotionOptions.filter((emotion) => selected.some((item) => item.toLowerCase() === emotion.toLowerCase()));
+function normalizeEntryEmotion(value: unknown): EntryEmotion {
+  const normalized = normalizeTag(String(value || ''));
+  const match = entryEmotionOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || entryEmotionOptions[0].value) as EntryEmotion;
 }
 
-function toggleTradingEmotion(current: TradingEmotion[], emotion: TradingEmotion): TradingEmotion[] {
-  const next = current.includes(emotion)
-    ? current.filter((item) => item !== emotion)
-    : [...current, emotion];
-  return normalizeTradingEmotions(next);
+function normalizeInTradeEmotion(value: unknown): InTradeEmotion {
+  const normalized = normalizeTag(String(value || ''));
+  const match = inTradeEmotionOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || inTradeEmotionOptions[0].value) as InTradeEmotion;
 }
 
-function formatTradingEmotions(value: unknown): string {
-  const normalized = normalizeTradingEmotions(value);
-  return normalized.length ? normalized.join(', ') : 'None';
+function normalizeNoTradeMindset(value: unknown): NoTradeMindset {
+  const normalized = normalizeTag(String(value || ''));
+  const match = noTradeMindsetOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || noTradeMindsetOptions[0].value) as NoTradeMindset;
+}
+
+function legacyEmotions(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => normalizeTag(String(item || ''))).filter(Boolean);
+  if (typeof value === 'string') {
+    const token = normalizeTag(value);
+    return token ? [token] : [];
+  }
+  return [];
+}
+
+function resolveEntryEmotion(trade: TradeRow): EntryEmotion {
+  const explicit = normalizeTag(String((trade as TradeRow & { entry_emotion?: unknown }).entry_emotion || ''));
+  if (explicit) return normalizeEntryEmotion(explicit);
+  const firstLegacy = legacyEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion)[0] || '';
+  const key = firstLegacy.toLowerCase();
+  if (key.includes('panic')) return 'Revengeful / Tilted';
+  if (key.includes('fear') || key.includes('anxiety')) return 'FOMO / Impatient';
+  if (key.includes('euphoria') || key.includes('thrill')) return 'Greedy';
+  if (key.includes('confidence') || key.includes('optimism') || key.includes('hope') || key.includes('relief')) return 'Confident';
+  return normalizeEntryEmotion(firstLegacy || 'Calm');
+}
+
+function resolveInTradeEmotion(trade: TradeRow): InTradeEmotion {
+  const explicit = normalizeTag(String((trade as TradeRow & { in_trade_emotion?: unknown }).in_trade_emotion || ''));
+  if (explicit) return normalizeInTradeEmotion(explicit);
+  const legacy = legacyEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion);
+  const source = legacy[1] || legacy[0] || '';
+  const key = source.toLowerCase();
+  if (key.includes('panic') || key.includes('fear')) return 'Panicked';
+  if (key.includes('surprise')) return 'Surprised';
+  if (key.includes('greed') || key.includes('euphoria') || key.includes('thrill')) return 'Greedy';
+  if (key.includes('confidence') || key.includes('optimism') || key.includes('relief')) return 'Confident';
+  return normalizeInTradeEmotion(source || 'Calm');
+}
+
+function resolveNoTradeMindset(noTrade: NoTradeDayRow): NoTradeMindset {
+  const explicit = normalizeTag(String((noTrade as NoTradeDayRow & { no_trade_mindset?: unknown }).no_trade_mindset || ''));
+  if (explicit) return normalizeNoTradeMindset(explicit);
+  const firstLegacy = legacyEmotions((noTrade as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (noTrade as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion)[0] || '';
+  const key = firstLegacy.toLowerCase();
+  if (key.includes('disappoint')) return 'Present but disappointed';
+  if (key.includes('not') || key.includes('absent')) return 'Not fully present';
+  if (key.includes('accept') || key.includes('indifferent') || key.includes('relief')) return 'Accepting / indifferent';
+  return normalizeNoTradeMindset(firstLegacy || 'Present but disappointed');
 }
 
 function normalizeUniqueInstruments(values: string[]) {

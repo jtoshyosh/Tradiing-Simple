@@ -19,6 +19,8 @@ export type TradeRow = {
   minutes_in_trade: number;
   emotional_pressure: number | null;
   trading_emotions?: string[] | null;
+  entry_emotion?: string | null;
+  in_trade_emotion?: string | null;
   is_paper_trade?: boolean | null;
   mistake_tags: string[];
   notes: string | null;
@@ -30,6 +32,7 @@ export type NoTradeDayRow = {
   day_date: string;
   reason: string;
   trading_emotions?: string[] | null;
+  no_trade_mindset?: string | null;
   notes: string | null;
 };
 
