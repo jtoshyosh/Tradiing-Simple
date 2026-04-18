@@ -207,6 +207,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
   const [overlayR, setOverlayR] = useState(false);
   const [overlayTradeCount, setOverlayTradeCount] = useState(true);
+  const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count'>('trade_count');
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
   const [reviewEntriesOpen, setReviewEntriesOpen] = useState(false);
 
@@ -383,6 +384,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const weekLiveTrades = weekTrades.filter((t) => !isPaperTrade(t));
   const weekPaperTrades = weekTrades.filter((t) => isPaperTrade(t));
   const weekTradesForReview = filterTradesByType(weekTrades, reviewTradeFilter);
+  const selectedReviewEndKey = addDaysKey(selectedWeekKey, 6);
+  const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
@@ -1014,11 +1017,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
             </div>
             <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <span className="small muted">Trade type</span>
-              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('all')}>{dashboardTradeFilter === 'all' ? '✓ ' : ''}All</button>
-              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('live')}>{dashboardTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
-              <button className="inline" type="button" onClick={() => setDashboardTradeFilter('paper')}>{dashboardTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+            <div style={{ maxWidth: 220 }}>
+              <label className="small muted" htmlFor="dashboard-trade-filter">Trade type</label>
+              <select id="dashboard-trade-filter" value={dashboardTradeFilter} onChange={(e) => setDashboardTradeFilter(e.target.value as TradeTypeFilter)}>
+                <option value="all">All</option>
+                <option value="live">Live only</option>
+                <option value="paper">Paper only</option>
+              </select>
             </div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
@@ -1074,8 +1079,21 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </button>
               <span className="small muted">Overlays</span>
             </div>
+            {(overlayR || overlayTradeCount) ? (
+              <div style={{ maxWidth: 180 }}>
+                <label className="small muted" htmlFor="chart-right-axis">Right axis</label>
+                <select
+                  id="chart-right-axis"
+                  value={chartRightAxisMode}
+                  onChange={(e) => setChartRightAxisMode(e.target.value as 'r' | 'trade_count')}
+                >
+                  <option value="r">R</option>
+                  <option value="trade_count">Trade count</option>
+                </select>
+              </div>
+            ) : null}
             {!periodTrades.length ? <div className="small muted">No trades for the selected period + trade type filter.</div> : null}
-            <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} />
+            <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} rightAxisMode={chartRightAxisMode} />
           </section>
 
           <section className="card stack">
@@ -1170,7 +1188,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               ) : <div className="small muted" style={{ marginTop: 8 }}>No mistake tags logged in this period.</div>}
             </details>
 
-            <details>
+            <details open>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 <div className="small muted"><strong>By setup family</strong></div>
@@ -1196,7 +1214,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
             </details>
 
-            <details>
+            <details open>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 {emotionBreakdown.length ? emotionBreakdown.map((row) => (
@@ -1212,32 +1230,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
             </details>
 
-            <details>
+            <details open>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong></summary>
               <div className="grid" style={{ marginTop: 8 }}>
-                <article className="trade">
-                  <div className="small muted">Current win streak</div>
-                  <div>{allTimeStreaks.currentWin}</div>
+                <article className="trade" style={streakCardStyle(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}>
+                  <div className="small muted">Current streak</div>
+                  <div style={{ color: streakColor(allTimeStreaks.currentWin, allTimeStreaks.currentLoss) }}>{formatStreakLabel(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}</div>
                 </article>
-                <article className="trade">
-                  <div className="small muted">Current loss streak</div>
-                  <div>{allTimeStreaks.currentLoss}</div>
+                <article className="trade" style={streakCardStyle(periodStreaks.currentWin, periodStreaks.currentLoss)}>
+                  <div className="small muted">Period streak</div>
+                  <div style={{ color: streakColor(periodStreaks.currentWin, periodStreaks.currentLoss) }}>{formatStreakLabel(periodStreaks.currentWin, periodStreaks.currentLoss)}</div>
                 </article>
-                <article className="trade">
+                <article className="trade" style={{ background: 'rgba(74,214,109,0.10)', borderColor: '#2f6f4a' }}>
                   <div className="small muted">Longest win streak</div>
-                  <div>{allTimeStreaks.longestWin}</div>
+                  <div style={{ color: '#4ad66d' }}>{allTimeStreaks.longestWin}</div>
                 </article>
-                <article className="trade">
+                <article className="trade" style={{ background: 'rgba(255,107,107,0.10)', borderColor: '#7a3f3f' }}>
                   <div className="small muted">Longest loss streak</div>
-                  <div>{allTimeStreaks.longestLoss}</div>
-                </article>
-                <article className="trade">
-                  <div className="small muted">Period win streak</div>
-                  <div>{periodStreaks.currentWin}</div>
-                </article>
-                <article className="trade">
-                  <div className="small muted">Period loss streak</div>
-                  <div>{periodStreaks.currentLoss}</div>
+                  <div style={{ color: '#ff6b6b' }}>{allTimeStreaks.longestLoss}</div>
                 </article>
                 <article className="trade">
                   <div className="small muted">Expectancy / trade ($)</div>
@@ -1257,11 +1267,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'history' && (
         <section className="card stack">
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <div className="small muted">Trade type filter</div>
-            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('all')}>{historyTradeFilter === 'all' ? '✓ ' : ''}All</button>
-            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('live')}>{historyTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
-            <button className="inline" type="button" onClick={() => setHistoryTradeFilter('paper')}>{historyTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+          <div style={{ maxWidth: 220 }}>
+            <label className="small muted" htmlFor="history-trade-filter">Trade type filter</label>
+            <select id="history-trade-filter" value={historyTradeFilter} onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}>
+              <option value="all">All</option>
+              <option value="live">Live only</option>
+              <option value="paper">Paper only</option>
+            </select>
           </div>
           {filteredActivityItems.map((item) => (
             item.type === 'trade' ? (
@@ -1782,13 +1794,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
           </div>
           <div className="chip">{reviewStatus}</div>
-          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <span className="small muted">Trade type</span>
-            <button className="inline" type="button" onClick={() => setReviewTradeFilter('all')}>{reviewTradeFilter === 'all' ? '✓ ' : ''}All</button>
-            <button className="inline" type="button" onClick={() => setReviewTradeFilter('live')}>{reviewTradeFilter === 'live' ? '✓ ' : ''}Live only</button>
-            <button className="inline" type="button" onClick={() => setReviewTradeFilter('paper')}>{reviewTradeFilter === 'paper' ? '✓ ' : ''}Paper only</button>
+          <div style={{ maxWidth: 220 }}>
+            <label className="small muted" htmlFor="review-trade-filter">Trade type</label>
+            <select id="review-trade-filter" value={reviewTradeFilter} onChange={(e) => setReviewTradeFilter(e.target.value as TradeTypeFilter)}>
+              <option value="all">All</option>
+              <option value="live">Live only</option>
+              <option value="paper">Paper only</option>
+            </select>
           </div>
-          <div className="trade small muted">Selected week: {selectedWeekKey}. Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          <div className="trade small muted">Review week: {selectedReviewRangeLabel} (Sunday–Saturday). Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
           <RichTextEditor
             label="1) Reflection on mistakes"
             helperText="What patterns drove mistakes this week?"
@@ -2144,7 +2158,7 @@ type TimelinePoint = {
   bucketType: 'day' | 'week';
 };
 
-function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }: { points: TimelinePoint[]; view: 'daily' | 'cumulative'; showROverlay: boolean; showTradeCountOverlay: boolean }) {
+function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, rightAxisMode }: { points: TimelinePoint[]; view: 'daily' | 'cumulative'; showROverlay: boolean; showTradeCountOverlay: boolean; rightAxisMode: 'r' | 'trade_count' }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(points.length ? points.length - 1 : null);
   if (!points.length) return <div className="small muted">No data in selected period.</div>;
   const mainSeries = points.map((point, idx) => {
@@ -2185,6 +2199,9 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
   const xTickIndexes = buildAxisTickIndexes(points.length, 5);
   const yTicks = [yMax, yMax / 2, 0, yMin / 2, yMin];
   const tradeCountTicks = [maxTradeCount, Math.ceil(maxTradeCount / 2), 0];
+  const rightAxisMetric = rightAxisMode === 'r'
+    ? (showROverlay ? 'r' : (showTradeCountOverlay ? 'trade_count' : null))
+    : (showTradeCountOverlay ? 'trade_count' : (showROverlay ? 'r' : null));
   const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
   const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
   const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
@@ -2220,7 +2237,7 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
             <polyline
               fill="none"
               stroke="#94a3b8"
-              strokeWidth={1.5}
+              strokeWidth={rightAxisMetric === 'r' ? 1.7 : 1}
               points={rPolyline}
             />
             {points.map((point, idx) => {
@@ -2236,7 +2253,7 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
             <polyline
               fill="none"
               stroke="#a5b4fc"
-              strokeWidth={1.5}
+              strokeWidth={rightAxisMetric === 'trade_count' ? 1.7 : 1}
               points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom)}`).join(' ')}
             />
             {points.map((point, idx) => {
@@ -2244,12 +2261,16 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
               const y = mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom);
               return point.tradeCount > 0 ? <circle key={`count-${point.key}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
             })}
-            {tradeCountTicks.map((tick) => {
-              const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
-              return <text key={`right-y-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{tick}</text>;
-            })}
           </>
         )}
+        {rightAxisMetric === 'trade_count' && tradeCountTicks.map((tick) => {
+          const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
+          return <text key={`right-y-count-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{tick}</text>;
+        })}
+        {rightAxisMetric === 'r' && [maxRAbs, maxRAbs / 2, 0, -maxRAbs / 2, -maxRAbs].map((tick) => {
+          const y = mapValueToY(tick, -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
+          return <text key={`right-y-r-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{formatMetricValue(tick, 'r')}</text>;
+        })}
         {points.map((point, idx) => {
           if (!point.explicitNoTrade) return null;
           const x = xForIndex(idx) - 3;
@@ -2274,10 +2295,10 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay }:
       </svg>
       {activePoint && (
         <div className="small muted" style={{ marginTop: 4 }}>
-          {formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''} · {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')}{showROverlay ? ` · R: ${(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R` : ''} · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'No-trade day' : 'No logged activity'} · trade count: {activePoint.tradeCount}
+          {formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''} · {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')} · R: {(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'No-trade day' : 'No logged activity'} · trade count: {activePoint.tradeCount}
         </div>
       )}
-      <div className="small muted">Legend: green=positive $, red=negative $, gray tick=explicit no-trade, blank=no logged activity{showROverlay ? ', slate line/dots=R overlay' : ''}{showTradeCountOverlay ? ', purple line/dots=trade count (right axis)' : ''}.</div>
+      <div className="small muted">Legend: green=positive $, red=negative $, gray tick=explicit no-trade, blank=no logged activity{showROverlay ? ', slate line/dots=R overlay' : ''}{showTradeCountOverlay ? ', purple line/dots=trade count overlay' : ''}{rightAxisMetric === 'r' ? ', right axis = R' : rightAxisMetric === 'trade_count' ? ', right axis = trade count' : ''}.</div>
     </div>
   );
 }
@@ -2393,10 +2414,21 @@ function formatAxisDate(dateStr: string) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
 }
 
+function formatDateShort(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
 function sundayWeekStart(dateStr: string) {
   const date = new Date(`${dateStr}T00:00:00Z`);
   const day = date.getUTCDay();
   date.setUTCDate(date.getUTCDate() - day);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysKey(dateStr: string, days: number) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);
 }
 
@@ -3486,6 +3518,24 @@ function filterTradesByType(trades: TradeRow[], filter: TradeTypeFilter) {
   return trades.filter((trade) => matchesTradeTypeFilter(trade, filter));
 }
 
+function formatStreakLabel(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return `Win ${currentWin}`;
+  if (currentLoss > 0) return `Loss ${currentLoss}`;
+  return 'Neutral 0';
+}
+
+function streakColor(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return '#4ad66d';
+  if (currentLoss > 0) return '#ff6b6b';
+  return '#9eaac4';
+}
+
+function streakCardStyle(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return { background: 'rgba(74,214,109,0.10)', borderColor: '#2f6f4a' };
+  if (currentLoss > 0) return { background: 'rgba(255,107,107,0.10)', borderColor: '#7a3f3f' };
+  return undefined;
+}
+
 function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
   const raw = item.type === 'trade'
     ? (item.trade as TradeRow & { created_at?: string }).created_at
@@ -3666,26 +3716,19 @@ function isRecoverableSchemaError(message: string) {
 }
 
 function currentWeekKey() {
-  const now = new Date();
-  const monday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const d = monday.getUTCDay() || 7;
-  monday.setUTCDate(monday.getUTCDate() - d + 1);
-  return monday.toISOString().slice(0, 10);
+  return sundayWeekStart(new Date().toISOString().slice(0, 10));
 }
 
 function weekKeyFromDate(dateStr: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return '';
-  const [y, m, d] = String(dateStr).split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  const w = dt.getUTCDay() || 7;
-  dt.setUTCDate(dt.getUTCDate() - w + 1);
-  return dt.toISOString().slice(0, 10);
+  return sundayWeekStart(dateStr);
 }
 
 function weekInputFromKey(weekKey: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekKey || ''))) return '';
-  const [y, m, d] = weekKey.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
+  const sundayDate = new Date(`${weekKey}T00:00:00Z`);
+  sundayDate.setUTCDate(sundayDate.getUTCDate() + 1);
+  const dt = new Date(Date.UTC(sundayDate.getUTCFullYear(), sundayDate.getUTCMonth(), sundayDate.getUTCDate()));
   const jan4 = new Date(Date.UTC(dt.getUTCFullYear(), 0, 4));
   const jan4Day = jan4.getUTCDay() || 7;
   const week1 = new Date(jan4);
@@ -3705,6 +3748,7 @@ function weekKeyFromInput(weekInput: string) {
   week1.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
   const monday = new Date(week1);
   monday.setUTCDate(week1.getUTCDate() + (week - 1) * 7);
+  monday.setUTCDate(monday.getUTCDate() - 1);
   return monday.toISOString().slice(0, 10);
 }
 
