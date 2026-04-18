@@ -8,6 +8,7 @@ const APP_VERSION = 'v1.0';
 const tabs = ['dashboard', 'history', 'log', 'review'] as const;
 type Tab = (typeof tabs)[number];
 type LogMode = 'trade' | 'no_trade' | 'session';
+type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HelpKey = 'classification' | 'family' | 'model';
@@ -188,6 +189,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
   const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
   const [logMode, setLogMode] = useState<LogMode>('trade');
+  const [tradeLogSubtype, setTradeLogSubtype] = useState<'trade' | 'no_trade'>('trade');
   const [accountOpen, setAccountOpen] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [accountFirstName, setAccountFirstName] = useState('');
@@ -216,6 +218,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setAccountFirstName(first);
     setAccountLastName(last);
   }, [settings?.display_name, email]);
+
+  useEffect(() => {
+    if (logMode === 'trade' || logMode === 'no_trade') {
+      setTradeLogSubtype(logMode);
+    }
+  }, [logMode]);
 
   useEffect(() => {
     void loadAll();
@@ -837,7 +845,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
   const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
   const initials = buildInitials(accountFirstName, accountLastName, email);
-  const logModeTitle = logMode === 'trade' ? 'Trade' : logMode === 'no_trade' ? 'No-trade day' : 'Session';
+  const logType: LogType = logMode === 'session' ? 'session' : 'trade_log';
 
   return (
     <main className="app">
@@ -1406,12 +1414,38 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         <section className="stack">
           <div className="card stack">
             <label className="small muted" htmlFor="log-mode-select">Log type</label>
-            <select id="log-mode-select" value={logMode} onChange={(e) => setLogMode(e.target.value as LogMode)}>
-              <option value="trade">Trade</option>
-              <option value="no_trade">No-trade day</option>
+            <select
+              id="log-mode-select"
+              value={logType}
+              onChange={(e) => {
+                const nextType = e.target.value as LogType;
+                if (nextType === 'session') {
+                  setLogMode('session');
+                } else {
+                  setLogMode(tradeLogSubtype);
+                }
+              }}
+            >
+              <option value="trade_log">Trade log</option>
               <option value="session">Session</option>
             </select>
-            <div className="chip">Logging: {logModeTitle}</div>
+            {logType === 'trade_log' ? (
+              <>
+                <label className="small muted" htmlFor="trade-log-subtype">Subtype</label>
+                <select
+                  id="trade-log-subtype"
+                  value={tradeLogSubtype}
+                  onChange={(e) => {
+                    const nextSubtype = e.target.value as 'trade' | 'no_trade';
+                    setTradeLogSubtype(nextSubtype);
+                    setLogMode(nextSubtype);
+                  }}
+                >
+                  <option value="trade">Trade</option>
+                  <option value="no_trade">No-trade day</option>
+                </select>
+              </>
+            ) : null}
           </div>
           {logMode === 'trade' && (
           <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
