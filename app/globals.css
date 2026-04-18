@@ -257,15 +257,6 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   border-color: rgba(88, 111, 147, 0.8);
   padding: 12px 12px 14px;
 }
-.editor-preview {
-  border: 1px solid rgba(67, 90, 127, 0.48);
-  border-radius: 11px;
-  padding: 9px 10px;
-  background: rgba(11, 20, 33, 0.74);
-}
-.editor-preview .rich-content {
-  line-height: 1.45;
-}
 .editor-footnote {
   border-top: 1px solid rgba(66, 88, 125, 0.45);
   padding-top: 7px;

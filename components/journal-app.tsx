@@ -9,7 +9,7 @@ const tabs = ['dashboard', 'history', 'log', 'review'] as const;
 type Tab = (typeof tabs)[number];
 type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
-type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd';
+type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HelpKey = 'classification' | 'family' | 'model';
 type HelpItem = readonly [string, string];
@@ -303,18 +303,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
   }
 
-  const periodRange = getPeriodRange(dashboardPeriod, dashboardAnchor);
+  const periodRange = dashboardPeriod === 'lifetime'
+    ? getLifetimeRange(trades, noTrades, sessions, reviews)
+    : getPeriodRange(dashboardPeriod, dashboardAnchor);
   const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
+  const lifetimeTrades = dashboardTrades;
+  const lifetimeNoTrades = noTrades;
+  const lifetimeSessions = sessions;
   const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
-  const netPnl = periodTrades.reduce((s, t) => s + Number(t.pnl || 0), 0);
-  const wins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
-  const avgEmotionalPressure = periodTrades.length ? (periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length) : 0;
   const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
   const periodJournalSessions = periodSessions.filter((s) => s.session_type === 'journal');
   const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
   const periodJournalMinutes = periodJournalSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+  const lifetimeWins = lifetimeTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const lifetimeNetPnl = lifetimeTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const lifetimeWinRate = lifetimeTrades.length ? (lifetimeWins / lifetimeTrades.length) * 100 : 0;
   const periodNetPnl = periodTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
   const periodNetR = periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
   const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
@@ -1371,6 +1376,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <option value="quarterly">Quarter</option>
                   <option value="annual">Year</option>
                   <option value="ytd">YTD</option>
+                  <option value="lifetime">All time (lifetime)</option>
                 </select>
               </div>
               <div className="dashboard-control-item">
@@ -1406,35 +1412,48 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <div className="small muted dashboard-empty-state">No trades, no-trade days, or sessions match this period/filter yet.</div>
             ) : null}
           </section>
-          <div className="grid">
-            <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
-            <article className="card"><div className="muted small">Net P&L</div><div style={{ color: netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{netPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (periodTrades.length ? (wins / periodTrades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodTrades.length ? Math.round((wins / periodTrades.length) * 100) : 0}%</div></article>
-            <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
-            <article className="card"><div className="muted small">Avg emotional pressure</div><div>{avgEmotionalPressure.toFixed(2)} / 5</div></article>
-          </div>
-          <section className="grid">
-            <article className="card"><div className="muted small">Period Net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Period Net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
-            <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
-            <article className="card"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
-            <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
-            <article className="card"><div className="muted small">Avg R</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
-            <article className="card"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
-            <article className="card"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
-            <article className="card">
-              <div className="muted small">Chart sessions (period)</div>
-              <div>{periodChartSessions.length}</div>
-              <div className="small muted">{formatMinutesLabel(periodChartMinutes)} total</div>
-            </article>
-            <article className="card">
-              <div className="muted small">Journal sessions (period)</div>
-              <div>{periodJournalSessions.length}</div>
-              <div className="small muted">{formatMinutesLabel(periodJournalMinutes)} total</div>
-            </article>
-            <article className="card"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
+          <section className="card stack">
+            <strong>Lifetime snapshot (filtered)</strong>
+            <div className="grid">
+              <article className="trade"><div className="muted small">Lifetime trades</div><div>{lifetimeTrades.length}</div></article>
+              <article className="trade"><div className="muted small">Lifetime net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Lifetime win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
+              <article className="trade"><div className="muted small">Lifetime activity days</div><div>{lifetimeNoTrades.length + lifetimeTrades.length}</div></article>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Performance (selected period)</strong>
+            <div className="grid">
+              <article className="trade"><div className="muted small">Period net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Period net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Period win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
+              <article className="trade"><div className="muted small">Avg R / trade (period)</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Activity & process (selected period)</strong>
+            <div className="grid">
+              <article className="trade"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
+              <article className="trade"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
+              <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+              <article className="trade">
+                <div className="muted small">Chart sessions (period)</div>
+                <div>{periodChartSessions.length}</div>
+                <div className="small muted">{formatMinutesLabel(periodChartMinutes)} total</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Journal sessions (period)</div>
+                <div>{periodJournalSessions.length}</div>
+                <div className="small muted">{formatMinutesLabel(periodJournalMinutes)} total</div>
+              </article>
+              <article className="trade"><div className="muted small">Logged sessions (lifetime)</div><div>{lifetimeSessions.length}</div></article>
+            </div>
           </section>
 
           <section className="card stack control-card">
@@ -2472,7 +2491,6 @@ function RichTextEditor({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [textValue, setTextValue] = useState(() => toEditorText(value || ''));
-  const [showPreview, setShowPreview] = useState(true);
 
   useEffect(() => {
     const next = toEditorText(value || '');
@@ -2587,14 +2605,6 @@ function RichTextEditor({
             {control.label}
           </button>
         ))}
-        <button
-          className="inline"
-          type="button"
-          onClick={() => setShowPreview((open) => !open)}
-          style={{ width: 'auto', minWidth: 102 }}
-        >
-          {showPreview ? 'Hide preview' : 'Show preview'}
-        </button>
       </div>
       <textarea
         className="editor-textarea"
@@ -2609,12 +2619,6 @@ function RichTextEditor({
         rows={minRows}
         style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
       />
-      {showPreview ? (
-        <div className="editor-preview stack">
-          <div className="small muted">Formatted preview (saved formatting view)</div>
-          <RichTextContent value={textValue} emptyLabel="Start typing to preview formatted notes." />
-        </div>
-      ) : null}
       <div className="small muted editor-footnote">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
     </div>
   );
@@ -2893,6 +2897,13 @@ function enumerateDates(start: string, end: string) {
 }
 
 function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') {
+    const selectedAnchor = new Date();
+    return {
+      selected: 'all_time',
+      options: [{ value: 'all_time', label: 'All time (lifetime)', anchor: selectedAnchor }]
+    };
+  }
   const options: Array<{ value: string; label: string; anchor: Date }> = [];
   const selectedAnchor = normalizeAnchorForPeriod(period, anchor);
   const selected = jumpValueForAnchor(period, selectedAnchor);
@@ -2954,6 +2965,7 @@ function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
 }
 
 function jumpValueForAnchor(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') return 'all_time';
   if (period === 'weekly') return weekKeyFromDate(anchor.toISOString().slice(0, 10));
   if (period === 'monthly') return `${anchor.getUTCFullYear()}-${String(anchor.getUTCMonth() + 1).padStart(2, '0')}`;
   if (period === 'quarterly') return `${anchor.getUTCFullYear()}-Q${Math.floor(anchor.getUTCMonth() / 3) + 1}`;
@@ -2961,6 +2973,7 @@ function jumpValueForAnchor(period: DashboardPeriod, anchor: Date) {
 }
 
 function normalizeAnchorForPeriod(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') return new Date();
   if (period === 'weekly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()));
   if (period === 'monthly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
   if (period === 'quarterly') return new Date(Date.UTC(anchor.getUTCFullYear(), Math.floor(anchor.getUTCMonth() / 3) * 3, 1));
@@ -3606,6 +3619,9 @@ function formatOcrStatus(status: OcrDebugState['ocrStatus']) {
 }
 
 function getPeriodRange(period: DashboardPeriod, anchor: Date): { start: string; end: string } {
+  if (period === 'lifetime') {
+    return { start: '2000-01-01', end: new Date().toISOString().slice(0, 10) };
+  }
   const y = anchor.getUTCFullYear();
   const m = anchor.getUTCMonth();
   const d = anchor.getUTCDate();
@@ -3635,6 +3651,7 @@ function getPeriodRange(period: DashboardPeriod, anchor: Date): { start: string;
 }
 
 function shiftPeriod(anchor: Date, period: DashboardPeriod, direction: number): Date {
+  if (period === 'lifetime') return new Date(anchor);
   const next = new Date(anchor);
   if (period === 'weekly') next.setUTCDate(next.getUTCDate() + 7 * direction);
   else if (period === 'monthly') next.setUTCMonth(next.getUTCMonth() + direction);
@@ -3916,10 +3933,14 @@ function periodTypeLabel(period: DashboardPeriod) {
   if (period === 'monthly') return 'Month';
   if (period === 'quarterly') return 'Quarter';
   if (period === 'annual') return 'Year';
+  if (period === 'lifetime') return 'Lifetime';
   return 'YTD';
 }
 
 function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string, end: string) {
+  if (period === 'lifetime') {
+    return `All time · ${formatDateShort(start)} to ${formatDateShort(end)}`;
+  }
   if (period === 'weekly') {
     const startDate = new Date(`${start}T00:00:00Z`);
     const endDate = new Date(`${end}T00:00:00Z`);
@@ -3929,6 +3950,23 @@ function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string,
   if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
   if (period === 'annual') return String(anchor.getUTCFullYear());
   return `Year to date · ${anchor.getUTCFullYear()}`;
+}
+
+function getLifetimeRange(
+  trades: TradeRow[],
+  noTrades: NoTradeDayRow[],
+  sessions: SessionRow[],
+  reviews: WeeklyReviewRow[]
+) {
+  const allDates = [
+    ...trades.map((t) => t.trade_date),
+    ...noTrades.map((n) => n.day_date),
+    ...sessions.map((s) => s.session_date),
+    ...reviews.map((r) => r.week_key)
+  ].filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))).sort();
+  const today = new Date().toISOString().slice(0, 10);
+  if (!allDates.length) return { start: today, end: today };
+  return { start: allDates[0], end: allDates[allDates.length - 1] };
 }
 
 function buildRWholeOptions() {
