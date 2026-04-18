@@ -355,6 +355,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
+  const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
+  const selectedPeriodTakeaway = !periodTrades.length
+    ? 'No trades in this selection. Use Jump to or Trade type to load a period with activity.'
+    : periodNetPnl >= 0
+      ? `Strongest setup edge: ${bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`
+      : `Biggest drag: ${worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`;
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
   const resolvedMistakeCatalog = resolveMistakeCatalogState(
     settings?.mistake_catalog,
@@ -998,9 +1004,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'dashboard' && (
         <section className="stack">
-          <section className="card stack">
-            <div className="row" style={{ gap: 8, flexWrap: 'nowrap' }}>
-              <div style={{ flex: 1 }}>
+          <section className="card stack dashboard-controls">
+            <div className="dashboard-controls-grid">
+              <div className="dashboard-control-item">
                 <label className="small muted" htmlFor="period-type">Period type</label>
                 <select id="period-type" value={dashboardPeriod} onChange={(e) => setDashboardPeriod(e.target.value as DashboardPeriod)}>
                   <option value="weekly">Week</option>
@@ -1010,7 +1016,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <option value="ytd">YTD</option>
                 </select>
               </div>
-              <div style={{ flex: 1 }}>
+              <div className="dashboard-control-item">
                 <label className="small muted">Jump to</label>
                 <select
                   value={periodJumpOptions.selected}
@@ -1024,21 +1030,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   ))}
                 </select>
               </div>
+              <div className="dashboard-control-item">
+                <label className="small muted" htmlFor="dashboard-trade-filter">Trade type</label>
+                <select id="dashboard-trade-filter" value={dashboardTradeFilter} onChange={(e) => setDashboardTradeFilter(e.target.value as TradeTypeFilter)}>
+                  <option value="all">All</option>
+                  <option value="live">Live only</option>
+                  <option value="paper">Paper only</option>
+                </select>
+              </div>
             </div>
             <div className="small muted">{formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
-            <div style={{ maxWidth: 220 }}>
-              <label className="small muted" htmlFor="dashboard-trade-filter">Trade type</label>
-              <select id="dashboard-trade-filter" value={dashboardTradeFilter} onChange={(e) => setDashboardTradeFilter(e.target.value as TradeTypeFilter)}>
-                <option value="all">All</option>
-                <option value="live">Live only</option>
-                <option value="paper">Paper only</option>
-              </select>
-            </div>
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
               <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next</button>
             </div>
+            {!periodHasActivity ? (
+              <div className="small muted dashboard-empty-state">No trades, no-trade days, or sessions match this period/filter yet.</div>
+            ) : null}
           </section>
           <div className="grid">
             <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
@@ -1079,18 +1088,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <option value="cumulative">Cumulative</option>
               </select>
             </div>
-            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              <button className="inline" type="button" onClick={() => setOverlayR((v) => !v)} style={{ width: 'auto' }}>
-                {overlayR ? '✓ ' : ''}R
+            <div className="chart-overlay-controls">
+              <span className="small muted">Overlays</span>
+              <button className="inline" type="button" onClick={() => setOverlayR((v) => !v)} style={overlayR ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayR ? '✓ ' : ''}R line
               </button>
-              <button className="inline" type="button" onClick={() => setOverlayTradeCount((v) => !v)} style={{ width: 'auto' }}>
+              <button className="inline" type="button" onClick={() => setOverlayTradeCount((v) => !v)} style={overlayTradeCount ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
                 {overlayTradeCount ? '✓ ' : ''}Trade count
               </button>
-              <span className="small muted">Overlays</span>
             </div>
             {(overlayR || overlayTradeCount) ? (
-              <div style={{ maxWidth: 180 }}>
-                <label className="small muted" htmlFor="chart-right-axis">Right axis</label>
+              <div style={{ maxWidth: 220 }}>
+                <label className="small muted" htmlFor="chart-right-axis">Right axis focus</label>
                 <select
                   id="chart-right-axis"
                   value={chartRightAxisMode}
@@ -1099,6 +1108,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <option value="r">R</option>
                   <option value="trade_count">Trade count</option>
                 </select>
+                <div className="small muted">{chartRightAxisMode === 'r' ? 'Right axis is scaled for R values.' : 'Right axis is scaled for trade-count values.'}</div>
               </div>
             ) : null}
             {!periodTrades.length ? <div className="small muted">No trades for the selected period + trade type filter.</div> : null}
@@ -1107,30 +1117,46 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
           <section className="card stack">
             <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
-            <div className="row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
-              <div className="row" style={{ gap: 6, width: 'auto' }}>
-                <button className="inline" type="button" onClick={() => setCalendarView('month')}>{calendarView === 'month' ? '✓ ' : ''}Month view</button>
-                <button className="inline" type="button" onClick={() => setCalendarView('weekly')}>{calendarView === 'weekly' ? '✓ ' : ''}Weekly view</button>
+            <div className="row calendar-toggle-row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <div className="stack" style={{ gap: 6, width: 'auto' }}>
+                <div className="small muted">Range view</div>
+                <div className="row" style={{ gap: 6, width: 'auto' }}>
+                  <button className="inline" type="button" style={calendarView === 'month' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarView('month')}>{calendarView === 'month' ? '✓ ' : ''}Month</button>
+                  <button className="inline" type="button" style={calendarView === 'weekly' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarView('weekly')}>{calendarView === 'weekly' ? '✓ ' : ''}Weekly</button>
+                </div>
               </div>
-              <div className="row" style={{ gap: 6, width: 'auto' }}>
-                <button className="inline" type="button" onClick={() => setCalendarMetric('pnl')}>{calendarMetric === 'pnl' ? '✓ ' : ''}$</button>
-                <button className="inline" type="button" onClick={() => setCalendarMetric('r')}>{calendarMetric === 'r' ? '✓ ' : ''}R</button>
+              <div className="stack" style={{ gap: 6, width: 'auto' }}>
+                <div className="small muted">Calendar metric</div>
+                <div className="row" style={{ gap: 6, width: 'auto' }}>
+                  <button className="inline" type="button" style={calendarMetric === 'pnl' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarMetric('pnl')}>{calendarMetric === 'pnl' ? '✓ ' : ''}$</button>
+                  <button className="inline" type="button" style={calendarMetric === 'r' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarMetric('r')}>{calendarMetric === 'r' ? '✓ ' : ''}R</button>
+                </div>
               </div>
             </div>
+            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day.</div>
             <div className="small muted">
               {dashboardPeriod === 'monthly'
                 ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
                 : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
             </div>
             {calendarView === 'month' ? (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0,1fr))', gap: 4 }}>
+              <div className="calendar-grid">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
                 {calendarCells.map((cell) => {
                   const metricValue = calendarMetric === 'pnl' ? cell.pnl : cell.rTotal;
+                  const calendarCellTone = cell.isOutside
+                    ? 'calendar-cell-outside'
+                    : metricValue > 0
+                      ? 'calendar-cell-positive'
+                      : metricValue < 0
+                        ? 'calendar-cell-negative'
+                        : cell.noTrade
+                          ? 'calendar-cell-no-trade'
+                          : 'calendar-cell-blank';
                   return (
-                    <article key={cell.date} className="trade" style={{ padding: 6, minHeight: 56, background: cell.isOutside ? '#0f1724' : metricValue > 0 ? 'rgba(74,214,109,0.17)' : metricValue < 0 ? 'rgba(255,107,107,0.18)' : cell.noTrade ? 'rgba(148,163,184,0.2)' : '#0f1622', borderColor: cell.tradeCount || cell.noTrade ? undefined : '#223045' }}>
-                      <div className="small muted">{cell.day}</div>
-                      {cell.tradeCount > 0 ? <div className="small">{calendarMetric === 'pnl' ? `$${cell.pnl.toFixed(0)}` : `${cell.rTotal.toFixed(1)}R`}</div> : null}
+                    <article key={cell.date} className={`trade calendar-cell ${calendarCellTone}`}>
+                      <div className="small muted calendar-day-label">{cell.day}</div>
+                      {cell.tradeCount > 0 ? <div className="small calendar-main-metric">{calendarMetric === 'pnl' ? `$${cell.pnl.toFixed(0)}` : `${cell.rTotal.toFixed(1)}R`}</div> : null}
                       {cell.tradeCount > 0 ? <div className="small muted">T{cell.tradeCount}</div> : null}
                       {cell.noTrade ? <div className="small muted">NT</div> : null}
                     </article>
@@ -1161,16 +1187,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
           <section className="card stack">
             <strong>Selected period insights</strong>
-            <div className="small muted">Most common mistakes: {topMistakes.length ? topMistakes.map(([tag, count]) => `${tag} (${count})`).join(', ') : 'None'}</div>
-            <div className="small muted">Best setup family: {bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}</div>
-            <div className="small muted">Best setup model: {bestModel ? `${bestModel.key} (${bestModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
-            <div className="small muted">Worst setup family: {worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}</div>
-            <div className="small muted">Worst setup model: {worstModel ? `${worstModel.key} (${worstModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
-            <div className="small muted">Highest win-rate families: {topWinFamilies.length ? topWinFamilies.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
-            <div className="small muted">Highest win-rate models: {topWinModels.length ? topWinModels.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
-            <div className="small muted">Emotional pressure distribution: {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
-            <div className="small muted">High pressure (4-5) avg P&L: <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span></div>
-            <div className="small muted">Low pressure (1-2) avg P&L: <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
+            <article className="trade">
+              <div className="small muted">Primary takeaway</div>
+              <div>{selectedPeriodTakeaway}</div>
+            </article>
+            <div className="small muted"><strong>Mistakes:</strong> {topMistakes.length ? topMistakes.map(([tag, count]) => `${tag} (${count})`).join(', ') : 'None logged'}</div>
+            <div className="small muted"><strong>Setup edge:</strong> Best family {bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Best model {bestModel ? `${bestModel.key} (${bestModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted"><strong>Setup drag:</strong> Worst family {worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Worst model {worstModel ? `${worstModel.key} (${worstModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted"><strong>Win-rate leaders:</strong> Families {topWinFamilies.length ? topWinFamilies.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'} · Models {topWinModels.length ? topWinModels.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
+            <div className="small muted"><strong>Pressure mix:</strong> {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
+            <div className="small muted"><strong>Pressure impact:</strong> High (4-5) avg P&L <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span> · Low (1-2) avg P&L <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
           </section>
 
           <section className="card stack">
@@ -1180,7 +1206,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
 
             <details open>
-              <summary className="small" style={{ cursor: 'pointer' }}><strong>Mistake impact</strong></summary>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Mistake impact</strong> <span className="muted">· behavior cost profile</span></summary>
               {mistakeImpact.length ? (
                 <div className="stack" style={{ marginTop: 8 }}>
                   {mistakeImpact.map((row) => (
@@ -1198,7 +1224,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </details>
 
             <details open>
-              <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong></summary>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong> <span className="muted">· where edge is strongest</span></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 <div className="small muted"><strong>By setup family</strong></div>
                 {familyBreakdown.length ? familyBreakdown.map((row) => (
@@ -1224,7 +1250,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </details>
 
             <details open>
-              <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong></summary>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong> <span className="muted">· state vs outcome</span></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 {emotionBreakdown.length ? emotionBreakdown.map((row) => (
                   <article key={row.key} className="trade">
@@ -1240,7 +1266,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </details>
 
             <details open>
-              <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong></summary>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong> <span className="muted">· momentum context</span></summary>
               <div className="grid" style={{ marginTop: 8 }}>
                 <article className="trade" style={streakCardStyle(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}>
                   <div className="small muted">Current streak</div>
@@ -2361,10 +2387,16 @@ function PerformanceChart({ points, view, showROverlay, showTradeCountOverlay, r
       </svg>
       {activePoint && (
         <div className="small muted" style={{ marginTop: 4 }}>
-          {formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''} · {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')} · R: {(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R · {activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'No-trade day' : 'No logged activity'} · trade count: {activePoint.tradeCount}
+          <strong>{formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''}</strong>
+          {' · '}
+          <span>P&L {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')}</span>
+          {' · '}
+          <span>R {(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R</span>
+          {' · '}
+          <span>{activePoint.tradeCount > 0 ? `Trade day (${activePoint.tradeCount})` : activePoint.explicitNoTrade ? 'Explicit no-trade day' : 'Blank day (no logged activity)'}</span>
         </div>
       )}
-      <div className="small muted">Legend: green=positive $, red=negative $, gray tick=explicit no-trade, blank=no logged activity{showROverlay ? ', slate line/dots=R overlay' : ''}{showTradeCountOverlay ? ', purple line/dots=trade count overlay' : ''}{rightAxisMetric === 'r' ? ', right axis = R' : rightAxisMetric === 'trade_count' ? ', right axis = trade count' : ''}.</div>
+      <div className="small muted">Legend: green +$, red -$, gray tick explicit no-trade, empty = blank day{showROverlay ? ' · slate line = R' : ''}{showTradeCountOverlay ? ' · lavender line = trade count' : ''}{rightAxisMetric === 'r' ? ' · right axis: R' : rightAxisMetric === 'trade_count' ? ' · right axis: trade count' : ''}.</div>
     </div>
   );
 }
