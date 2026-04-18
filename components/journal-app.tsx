@@ -293,12 +293,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
   const periodRange = getPeriodRange(dashboardPeriod, dashboardAnchor);
   const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
-  const netPnl = dashboardTrades.reduce((s, t) => s + Number(t.pnl || 0), 0);
-  const wins = dashboardTrades.filter((t) => t.pnl > 0).length;
-  const avgEmotionalPressure = dashboardTrades.length ? (dashboardTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / dashboardTrades.length) : 0;
   const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
+  const netPnl = periodTrades.reduce((s, t) => s + Number(t.pnl || 0), 0);
+  const wins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const avgEmotionalPressure = periodTrades.length ? (periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length) : 0;
   const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
   const periodJournalSessions = periodSessions.filter((s) => s.session_type === 'journal');
   const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
@@ -333,7 +333,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
   const periodExpectancyPnl = periodTrades.length ? periodNetPnl / periodTrades.length : 0;
   const periodExpectancyR = periodTrades.length ? periodNetR / periodTrades.length : 0;
-  const allTimeStreaks = computeStreaks(trades);
+  const allTimeStreaks = computeStreaks(dashboardTrades);
   const periodStreaks = computeStreaks(periodTrades);
   const mistakeImpact = computeMistakeImpact(periodTrades);
   const familyBreakdown = computePerformanceBreakdown(periodTrades, (trade) => trade.family);
@@ -344,7 +344,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   );
   const emotionalInsight = getEmotionalInsight(periodTrades);
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
-  const calendarCells = buildCalendarCells(calendarMonth, dashboardTrades, noTrades);
+  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, dashboardPeriod);
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
@@ -1032,10 +1032,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           </section>
           <div className="grid">
-            <article className="card"><div className="muted small">Total trades</div><div>{dashboardTrades.length}</div></article>
+            <article className="card"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
             <article className="card"><div className="muted small">Net P&L</div><div style={{ color: netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{netPnl.toFixed(2)}</div></article>
-            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (dashboardTrades.length ? (wins / dashboardTrades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{dashboardTrades.length ? Math.round((wins / dashboardTrades.length) * 100) : 0}%</div></article>
-            <article className="card"><div className="muted small">No-trade days</div><div>{noTrades.length}</div></article>
+            <article className="card"><div className="muted small">Win rate</div><div style={{ color: (periodTrades.length ? (wins / periodTrades.length) * 100 : 0) >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodTrades.length ? Math.round((wins / periodTrades.length) * 100) : 0}%</div></article>
+            <article className="card"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
             <article className="card"><div className="muted small">Avg emotional pressure</div><div>{avgEmotionalPressure.toFixed(2)} / 5</div></article>
           </div>
           <section className="grid">
@@ -1790,7 +1790,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               {[currentWeekInput(), ...reviews.map((r) => weekInputFromKey(r.week_key))]
                 .filter((v, i, a) => v && a.indexOf(v) === i)
                 .sort((a, b) => b.localeCompare(a))
-                .map((w) => <option value={w} key={w}>{w}</option>)}
+                .map((w) => {
+                  const sunday = weekKeyFromInput(w);
+                  const saturday = addDaysKey(sunday, 6);
+                  return <option value={w} key={w}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${w})`}</option>;
+                })}
             </select>
           </div>
           <div className="chip">{reviewStatus}</div>
@@ -2362,22 +2366,60 @@ function enumerateDates(start: string, end: string) {
 
 function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
   const options: Array<{ value: string; label: string; anchor: Date }> = [];
-  const selected = jumpValueForAnchor(period, anchor);
-  const base = new Date(anchor);
-  const count = period === 'weekly' ? 24 : period === 'monthly' ? 24 : period === 'quarterly' ? 16 : 12;
-  for (let i = 0; i < count; i += 1) {
-    const next = shiftPeriod(base, period, -i);
-    options.push({
-      value: jumpValueForAnchor(period, next),
-      label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
-      anchor: normalizeAnchorForPeriod(period, next)
-    });
+  const selectedAnchor = normalizeAnchorForPeriod(period, anchor);
+  const selected = jumpValueForAnchor(period, selectedAnchor);
+  const now = new Date();
+  const latestYear = now.getUTCFullYear() + 1;
+  const earliestYear = Math.min(selectedAnchor.getUTCFullYear(), latestYear - 10);
+
+  if (period === 'weekly') {
+    const base = new Date(selectedAnchor);
+    for (let i = 0; i < 24; i += 1) {
+      const next = shiftPeriod(base, period, -i);
+      options.push({
+        value: jumpValueForAnchor(period, next),
+        label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+        anchor: normalizeAnchorForPeriod(period, next)
+      });
+    }
+  } else if (period === 'monthly') {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      for (let m = 11; m >= 0; m -= 1) {
+        const next = new Date(Date.UTC(y, m, 1));
+        options.push({
+          value: jumpValueForAnchor(period, next),
+          label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+          anchor: next
+        });
+      }
+    }
+  } else if (period === 'quarterly') {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      for (let q = 3; q >= 0; q -= 1) {
+        const next = new Date(Date.UTC(y, q * 3, 1));
+        options.push({
+          value: jumpValueForAnchor(period, next),
+          label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+          anchor: next
+        });
+      }
+    }
+  } else {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      const next = period === 'annual' ? new Date(Date.UTC(y, 0, 1)) : anchorForYtdYear(y);
+      options.push({
+        value: jumpValueForAnchor(period, next),
+        label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+        anchor: next
+      });
+    }
   }
+
   if (!options.some((opt) => opt.value === selected)) {
     options.unshift({
       value: selected,
-      label: formatPeriodLabel(period, anchor, getPeriodRange(period, anchor).start, getPeriodRange(period, anchor).end),
-      anchor: normalizeAnchorForPeriod(period, anchor)
+      label: formatPeriodLabel(period, selectedAnchor, getPeriodRange(period, selectedAnchor).start, getPeriodRange(period, selectedAnchor).end),
+      anchor: selectedAnchor
     });
   }
   return { selected, options };
@@ -3187,9 +3229,14 @@ function computeGroupStats(rows: TradeRow[], getKey: (trade: TradeRow) => string
 }
 
 function computeStreaks(rows: TradeRow[]) {
+  // Streak rule: use P&L sign only.
+  // Positive pnl => win streak, negative pnl => loss streak, zero pnl breaks streak.
   const sorted = [...rows].sort((a, b) => {
     const byDate = a.trade_date.localeCompare(b.trade_date);
     if (byDate !== 0) return byDate;
+    const createdA = Date.parse(String((a as TradeRow & { created_at?: string }).created_at || ''));
+    const createdB = Date.parse(String((b as TradeRow & { created_at?: string }).created_at || ''));
+    if (!Number.isNaN(createdA) && !Number.isNaN(createdB) && createdA !== createdB) return createdA - createdB;
     return a.id.localeCompare(b.id);
   });
   let currentWin = 0;
