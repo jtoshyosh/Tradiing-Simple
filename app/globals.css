@@ -165,6 +165,21 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; }
   background: #0f1724;
   opacity: 0.82;
 }
+.danger-zone {
+  border-color: #6b3a3a;
+  background: rgba(97, 38, 38, 0.18);
+}
+.danger-button {
+  background: #4b1f28;
+  border-color: #8d3b4b;
+  color: #ffe7ec;
+}
+.reset-panel {
+  border: 1px dashed #7a4a56;
+  border-radius: 12px;
+  padding: 10px;
+  background: rgba(20, 12, 16, 0.45);
+}
 @media(max-width:640px){
   .dashboard-controls-grid {
     grid-template-columns: 1fr;

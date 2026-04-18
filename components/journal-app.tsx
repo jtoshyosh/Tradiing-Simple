@@ -212,6 +212,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count'>('trade_count');
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
   const [reviewEntriesOpen, setReviewEntriesOpen] = useState(false);
+  const [resetActivityOpen, setResetActivityOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetStorageNotice, setResetStorageNotice] = useState('');
 
   useEffect(() => {
     const [first, last] = splitDisplayName(settings?.display_name || '', email);
@@ -772,6 +775,73 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
   }
 
+  async function resetActivityData() {
+    const requiredText = 'RESET';
+    if (resetConfirmText.trim().toUpperCase() !== requiredText) {
+      setError(`Type ${requiredText} to confirm activity reset.`);
+      return;
+    }
+    const approved = window.confirm(
+      `Reset activity data for current user only?\n\nUser: ${email || userId}\n\nThis will permanently delete trades, no-trade days, sessions, weekly reviews, and attachment records/files for this account.`
+    );
+    if (!approved) return;
+    setError('');
+    setResetStorageNotice('');
+    const attachmentPaths = attachments
+      .filter((file) => file.user_id === userId && file.file_path)
+      .map((file) => file.file_path);
+    const storageFailures: string[] = [];
+    if (attachmentPaths.length) {
+      for (let i = 0; i < attachmentPaths.length; i += 50) {
+        const batch = attachmentPaths.slice(i, i + 50);
+        const { error: removeError } = await supabase.storage.from('attachments').remove(batch);
+        if (removeError) storageFailures.push(removeError.message);
+      }
+    }
+    const { error: attachmentDeleteError } = await supabase.from('attachments').delete().eq('user_id', userId);
+    if (attachmentDeleteError) {
+      setError(normalizeSupabaseError(attachmentDeleteError.message));
+      return;
+    }
+    const { error: tradeDeleteError } = await supabase.from('trades').delete().eq('user_id', userId);
+    if (tradeDeleteError) {
+      setError(normalizeSupabaseError(tradeDeleteError.message));
+      return;
+    }
+    const { error: noTradeDeleteError } = await supabase.from('no_trade_days').delete().eq('user_id', userId);
+    if (noTradeDeleteError) {
+      setError(normalizeSupabaseError(noTradeDeleteError.message));
+      return;
+    }
+    const { error: sessionsDeleteError } = await supabase.from('sessions').delete().eq('user_id', userId);
+    if (sessionsDeleteError) {
+      setError(normalizeSupabaseError(sessionsDeleteError.message));
+      return;
+    }
+    const { error: reviewsDeleteError } = await supabase.from('weekly_reviews').delete().eq('user_id', userId);
+    if (reviewsDeleteError) {
+      setError(normalizeSupabaseError(reviewsDeleteError.message));
+      return;
+    }
+    setTrades([]);
+    setNoTrades([]);
+    setSessions([]);
+    setReviews([]);
+    setAttachments([]);
+    setDetail(null);
+    setSignedUrls({});
+    setReviewSignedUrls({});
+    setReviewEntriesOpen(false);
+    setEditingTradeId(null);
+    setEditingNoTradeId(null);
+    setEditingSessionId(null);
+    setResetConfirmText('');
+    setResetActivityOpen(false);
+    if (storageFailures.length) {
+      setResetStorageNotice(`Activity rows were cleared, but some storage files could not be deleted automatically. Check Supabase Storage bucket "attachments" under prefix ${userId}/ and remove leftovers manually.`);
+    }
+  }
+
   function onChangeFamily(value: string) {
     setAddTradeFamily(value);
     const options = familyModels[value] || [NA_MODEL];
@@ -998,6 +1068,52 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </button>
               <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
             </div>
+          </article>
+          <article className="trade stack danger-zone">
+            <div className="row">
+              <strong>Clean start (activity reset)</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">
+              Use this when preparing a clean go-live account. This removes activity data only for <strong>{email || userId}</strong>.
+            </div>
+            <div className="small muted">
+              Deletes: trades, no-trade days, sessions, weekly reviews, and attachment records + storage file cleanup attempts.
+            </div>
+            <div className="small muted">
+              Preserves: auth identity, profile name, default risk, instrument catalog, and active/hidden mistake catalog.
+            </div>
+            <button className="inline danger-button" type="button" onClick={() => setResetActivityOpen((open) => !open)}>
+              {resetActivityOpen ? 'Cancel reset' : 'Reset activity data'}
+            </button>
+            {resetActivityOpen ? (
+              <div className="stack reset-panel">
+                <label className="small muted" htmlFor="reset-confirm">
+                  Type <strong>RESET</strong> to confirm permanent deletion for this signed-in user.
+                </label>
+                <input
+                  id="reset-confirm"
+                  placeholder="Type RESET"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                />
+                <button className="danger-button" type="button" onClick={() => void resetActivityData()}>
+                  Confirm clean start
+                </button>
+                <div className="small muted">If storage file deletion is partially blocked, you will see a manual cleanup message.</div>
+              </div>
+            ) : null}
+            {resetStorageNotice ? <div className="small">{resetStorageNotice}</div> : null}
+            <details>
+              <summary className="small muted">Post-reset smoke test checklist</summary>
+              <div className="stack small muted" style={{ marginTop: 8 }}>
+                <div>1) Log one live trade and one paper trade in Log → Trade.</div>
+                <div>2) Log one no-trade day and one session.</div>
+                <div>3) Save one weekly review in Review tab.</div>
+                <div>4) Upload one attachment on a trade/no-trade entry.</div>
+                <div>5) Verify Dashboard/History/Review each show the new items correctly.</div>
+              </div>
+            </details>
           </article>
         </section>
       )}
@@ -1872,6 +1988,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'review' && (
         <section className="card stack">
           <strong>Weekly review</strong>
+          {!trades.length && !noTrades.length && !sessions.length ? (
+            <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
+          ) : null}
           <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
             <input type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
             <select value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
