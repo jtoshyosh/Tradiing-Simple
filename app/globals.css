@@ -71,8 +71,13 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   background:rgba(10,15,24,.9); border-top:1px solid var(--line);
   padding:10px 10px calc(10px + env(safe-area-inset-bottom));
 }
-.nav { max-width:940px; margin:0 auto; display:grid; grid-template-columns:repeat(5,1fr); gap:7px; }
+.nav { max-width:620px; margin:0 auto; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
 .nav button.active { background:#1b2f5d; }
+.nav button {
+  min-height: 42px;
+  font-size: 13px;
+  text-align: center;
+}
 .chip { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:12px; }
 .version { background:#17386f; color:#d8e6ff; border-color:#4568ad; font-weight:700; }
 .small { font-size:13px; }
@@ -244,13 +249,22 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   background: rgba(14, 24, 41, 0.7);
 }
 .editor-toolbar .inline {
-  min-width: 62px !important;
+  min-width: 72px !important;
 }
 .editor-textarea {
   min-height: 150px;
   background: rgba(10, 17, 29, 0.96);
   border-color: rgba(88, 111, 147, 0.8);
   padding: 12px 12px 14px;
+}
+.editor-preview {
+  border: 1px solid rgba(67, 90, 127, 0.48);
+  border-radius: 11px;
+  padding: 9px 10px;
+  background: rgba(11, 20, 33, 0.74);
+}
+.editor-preview .rich-content {
+  line-height: 1.45;
 }
 .editor-footnote {
   border-top: 1px solid rgba(66, 88, 125, 0.45);
@@ -276,8 +290,16 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
     padding: 7px 5px;
   }
   .editor-toolbar .inline {
-    min-width: 56px !important;
+    min-width: 70px !important;
     font-size: 11px;
+  }
+  .nav {
+    gap: 6px;
+  }
+  .nav button {
+    min-height: 40px;
+    font-size: 12px;
+    padding: 8px 4px;
   }
 }
 @media(min-width:641px){

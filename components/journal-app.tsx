@@ -2472,6 +2472,7 @@ function RichTextEditor({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [textValue, setTextValue] = useState(() => toEditorText(value || ''));
+  const [showPreview, setShowPreview] = useState(true);
 
   useEffect(() => {
     const next = toEditorText(value || '');
@@ -2498,8 +2499,8 @@ function RichTextEditor({
   }
 
   const controls: Array<{ key: string; label: string; run: () => void }> = [
-    { key: 'bold', label: 'B', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
-    { key: 'underline', label: 'U', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
+    { key: 'bold', label: 'Bold', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
+    { key: 'underline', label: 'Underline', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
     { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet')) },
     { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered')) },
     { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2)) },
@@ -2586,6 +2587,14 @@ function RichTextEditor({
             {control.label}
           </button>
         ))}
+        <button
+          className="inline"
+          type="button"
+          onClick={() => setShowPreview((open) => !open)}
+          style={{ width: 'auto', minWidth: 102 }}
+        >
+          {showPreview ? 'Hide preview' : 'Show preview'}
+        </button>
       </div>
       <textarea
         className="editor-textarea"
@@ -2600,6 +2609,12 @@ function RichTextEditor({
         rows={minRows}
         style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
       />
+      {showPreview ? (
+        <div className="editor-preview stack">
+          <div className="small muted">Formatted preview (saved formatting view)</div>
+          <RichTextContent value={textValue} emptyLabel="Start typing to preview formatted notes." />
+        </div>
+      ) : null}
       <div className="small muted editor-footnote">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
     </div>
   );
