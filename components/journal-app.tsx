@@ -315,6 +315,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
+  const periodSessionDays = new Set(periodSessions.map((session) => session.session_date)).size;
   const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
   const periodJournalSessions = periodSessions.filter((s) => s.session_type === 'journal');
   const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
@@ -1443,9 +1444,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <strong>Activity & process (by trade type & period)</strong>
             <div className="small muted">Scope: trade type filter + selected period.</div>
             <div className="grid">
-              <article className="trade"><div className="muted small">Period trades</div><div>{periodTrades.length}</div></article>
-              <article className="trade"><div className="muted small">Period no-trade days</div><div>{periodNoTrades.length}</div></article>
-              <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+              <article className="trade"><div className="muted small">Trades</div><div>{periodTrades.length}</div></article>
+              <article className="trade"><div className="muted small">No-trade days</div><div>{periodNoTrades.length}</div></article>
               <article className="trade">
                 <div className="muted small">Journal sessions</div>
                 <div>{formatMinutesLabel(periodJournalMinutes)}</div>
@@ -1458,6 +1458,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <div className="small muted">Avg {formatMinutesLabel(periodChartSessions.length ? Math.round(periodChartMinutes / periodChartSessions.length) : 0)} / session</div>
                 <div className="small muted">{periodChartSessions.length} {periodChartSessions.length === 1 ? 'session' : 'sessions'}</div>
               </article>
+              <article className="trade">
+                <div className="muted small">Session days</div>
+                <div>{periodSessionDays}</div>
+                <div className="small muted">Unique dates with at least one session</div>
+              </article>
+              <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
             </div>
           </section>
 
