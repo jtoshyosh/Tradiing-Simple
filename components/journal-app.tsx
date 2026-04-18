@@ -837,6 +837,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
   const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
   const initials = buildInitials(accountFirstName, accountLastName, email);
+  const logModeTitle = logMode === 'trade' ? 'Trade' : logMode === 'no_trade' ? 'No-trade day' : 'Session';
 
   return (
     <main className="app">
@@ -1403,11 +1404,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'log' && (
         <section className="stack">
-          <div className="card row" style={{ gap: 8, flexWrap: 'wrap' }}>
-            <div className="small muted" style={{ width: '100%' }}>Choose what you want to log:</div>
-            <button className="inline" type="button" onClick={() => setLogMode('trade')}>Trade</button>
-            <button className="inline" type="button" onClick={() => setLogMode('no_trade')}>No-trade day</button>
-            <button className="inline" type="button" onClick={() => setLogMode('session')}>Session (Chart / Journal)</button>
+          <div className="card stack">
+            <label className="small muted" htmlFor="log-mode-select">Log type</label>
+            <select id="log-mode-select" value={logMode} onChange={(e) => setLogMode(e.target.value as LogMode)}>
+              <option value="trade">Trade</option>
+              <option value="no_trade">No-trade day</option>
+              <option value="session">Session</option>
+            </select>
+            <div className="chip">Logging: {logModeTitle}</div>
           </div>
           {logMode === 'trade' && (
           <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
@@ -1752,13 +1756,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
               <div className="small muted">What kind of session did you run? (required)</div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <button className="inline" type="button" onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'chart' }))}>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionDraft.session_type === 'chart' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'chart' }))}
+                >
                   {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
                 </button>
-                <button className="inline" type="button" onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'journal' }))}>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionDraft.session_type === 'journal' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'journal' }))}
+                >
                   {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
                 </button>
               </div>
+              <div className="small muted">Selected subtype: <strong>{sessionDraft.session_type === 'chart' ? 'Chart session' : 'Journal session'}</strong></div>
               <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
               <label className="small muted">Date</label>
               <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
@@ -2370,7 +2385,7 @@ function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
   const selected = jumpValueForAnchor(period, selectedAnchor);
   const now = new Date();
   const latestYear = now.getUTCFullYear() + 1;
-  const earliestYear = Math.min(selectedAnchor.getUTCFullYear(), latestYear - 10);
+  const earliestYear = now.getUTCFullYear() - 10;
 
   if (period === 'weekly') {
     const base = new Date(selectedAnchor);
