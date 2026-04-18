@@ -1148,10 +1148,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <span className="chip">Connected</span>
           <span className="chip version">{APP_VERSION}</span>
           <button
-            className="inline"
+            className="inline account-avatar"
             type="button"
             aria-expanded={accountOpen}
-            style={{ width: 42, height: 42, borderRadius: '999px', padding: 0 }}
             onClick={() => setAccountOpen((open) => !open)}
           >
             {initials}
@@ -1174,7 +1173,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         </section>
       )}
       {showAccountSettings && settings && (
-        <section className="card stack">
+        <section className="card stack settings-root">
           <div className="row">
             <strong>Account settings</strong>
             <button className="inline" type="button" onClick={() => setShowAccountSettings(false)}>Close</button>
@@ -1362,7 +1361,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'dashboard' && (
         <section className="stack">
-          <section className="card stack dashboard-controls">
+          <section className="card stack dashboard-controls control-card">
             <div className="dashboard-controls-grid">
               <div className="dashboard-control-item">
                 <label className="small muted" htmlFor="period-type">Period type</label>
@@ -1438,7 +1437,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <article className="card"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
           </section>
 
-          <section className="card stack">
+          <section className="card stack control-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Performance chart</strong>
               <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto', maxWidth: 140 }}>
@@ -1473,7 +1472,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <PerformanceChart points={chartBuckets} view={chartView} showROverlay={overlayR} showTradeCountOverlay={overlayTradeCount} rightAxisMode={chartRightAxisMode} />
           </section>
 
-          <section className="card stack">
+          <section className="card stack control-card">
             <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
             <div className="row calendar-toggle-row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <div className="stack" style={{ gap: 6, width: 'auto' }}>
@@ -1717,7 +1716,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       )}
 
       {tab === 'history' && (
-        <section className="card stack">
+        <section className="card stack control-card">
           <div style={{ maxWidth: 220 }}>
             <label className="small muted" htmlFor="history-trade-filter">Trade type filter</label>
             <select id="history-trade-filter" value={historyTradeFilter} onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}>
@@ -1854,7 +1853,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'log' && (
         <section className="stack">
-          <div className="card stack">
+          <div className="card stack control-card">
             <label className="small muted" htmlFor="log-mode-select">Log type</label>
             <select
               id="log-mode-select"
@@ -2286,7 +2285,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       )}
 
       {tab === 'review' && (
-        <section className="card stack">
+        <section className="card stack control-card">
           <strong>Weekly review</strong>
           {!trades.length && !noTrades.length && !sessions.length ? (
             <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
@@ -2571,10 +2570,10 @@ function RichTextEditor({
   }
 
   return (
-    <div className="stack">
+    <div className="stack editor-shell">
       <label className="small muted">{label}</label>
-      {helperText ? <div className="small muted" style={{ fontStyle: 'italic' }}>{helperText}</div> : null}
-      <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+      {helperText ? <div className="small muted editor-helper">{helperText}</div> : null}
+      <div className="row editor-toolbar" style={{ gap: 6, flexWrap: 'wrap' }}>
         {controls.map((control) => (
           <button
             key={control.key}
@@ -2589,6 +2588,7 @@ function RichTextEditor({
         ))}
       </div>
       <textarea
+        className="editor-textarea"
         ref={textareaRef}
         value={textValue}
         onChange={(event) => {
@@ -2600,7 +2600,7 @@ function RichTextEditor({
         rows={minRows}
         style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
       />
-      <div className="small muted">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
+      <div className="small muted editor-footnote">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
     </div>
   );
 }
