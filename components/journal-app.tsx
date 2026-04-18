@@ -355,6 +355,26 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     (trade) => `Level ${Math.min(5, Math.max(1, Number(trade.emotional_pressure || 1)))}`
   );
   const emotionalInsight = getEmotionalInsight(periodTrades);
+  const topMistakeDrags = mistakeImpact
+    .filter((row) => row.trades >= 2)
+    .sort((a, b) => a.avgPnl - b.avgPnl || a.avgR - b.avgR || a.netPnl - b.netPnl)
+    .slice(0, 3);
+  const strongestFamilyCallout = pickStrongestSetupCallout(familyBreakdown, 3);
+  const strongestModelCallout = pickStrongestSetupCallout(modelBreakdown, 3);
+  const multiTradeDayInsight = getMultiTradeDayInsight(periodTrades);
+  const emotionCoachingNotes = getEmotionCoachingNotes(periodTrades);
+  const sessionCoachingNote = getSessionCoachingNote(periodTrades, periodSessions);
+  const coachingHelping = strongestFamilyCallout
+    ? `Best edge this period: ${strongestFamilyCallout.key} (${strongestFamilyCallout.trades} trade${strongestFamilyCallout.trades === 1 ? '' : 's'}, ${strongestFamilyCallout.winRate.toFixed(0)}% win rate, ${strongestFamilyCallout.avgR.toFixed(2)}R avg).${strongestFamilyCallout.limited ? ' Early signal (small sample).' : ''}`
+    : emotionCoachingNotes[0] || 'Not enough data to identify a stable edge yet.';
+  const coachingHurting = topMistakeDrags.length
+    ? `Largest drag: ${topMistakeDrags[0].key} (${topMistakeDrags[0].trades} tagged trade${topMistakeDrags[0].trades === 1 ? '' : 's'}, ${topMistakeDrags[0].avgPnl.toFixed(2)} avg P&L, ${topMistakeDrags[0].avgR.toFixed(2)}R avg).`
+    : (emotionCoachingNotes[1] || 'No repeat mistake drag signal yet.');
+  const coachingFocus = topMistakeDrags.length
+    ? `Focus next: reduce ${topMistakeDrags[0].key} first, then track whether avg R improves over the next 5 trades.`
+    : strongestFamilyCallout
+      ? `Focus next: prioritize ${strongestFamilyCallout.key} setups and avoid forcing low-quality variants.`
+      : 'Focus next: keep logging quality data so coaching signals can stabilize.';
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
   const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
@@ -1521,6 +1541,64 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 })}
               </div>
             )}
+          </section>
+
+          <section className="card stack">
+            <strong>Coaching summary</strong>
+            <article className="trade">
+              <div className="small muted">What is helping most?</div>
+              <div className="small">{coachingHelping}</div>
+            </article>
+            <article className="trade">
+              <div className="small muted">What is hurting most?</div>
+              <div className="small">{coachingHurting}</div>
+            </article>
+            <article className="trade">
+              <div className="small muted">What to focus on next?</div>
+              <div className="small">{coachingFocus}</div>
+            </article>
+            {multiTradeDayInsight ? <div className="small muted">{multiTradeDayInsight}</div> : null}
+          </section>
+
+          <section className="card stack">
+            <strong>Top 3 mistake drags</strong>
+            {topMistakeDrags.length ? (
+              <div className="stack">
+                {topMistakeDrags.map((row, idx) => (
+                  <article key={`mistake-drag-${row.key}`} className="trade">
+                    <div className="row">
+                      <strong>#{idx + 1} {row.key}</strong>
+                      <span className="small muted">{row.trades} tagged trade(s)</span>
+                    </div>
+                    <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Win rate: {row.winRate.toFixed(1)}%</div>
+                  </article>
+                ))}
+              </div>
+            ) : <div className="small muted">Need at least two tagged trades per mistake to rank drag reliably (small sample right now).</div>}
+          </section>
+
+          <section className="card stack">
+            <strong>Best edge callouts</strong>
+            <article className="trade">
+              <div className="small muted">Strongest setup family</div>
+              <div>{strongestFamilyCallout ? `${strongestFamilyCallout.key} · ${strongestFamilyCallout.trades} trades · ${strongestFamilyCallout.winRate.toFixed(0)}% win rate · ${strongestFamilyCallout.avgR.toFixed(2)}R avg` : 'Not enough setup family samples yet.'}</div>
+              {strongestFamilyCallout?.limited ? <div className="small muted">Early signal only (small sample).</div> : null}
+            </article>
+            <article className="trade">
+              <div className="small muted">Strongest setup model</div>
+              <div>{strongestModelCallout ? `${strongestModelCallout.key} · ${strongestModelCallout.trades} trades · ${strongestModelCallout.winRate.toFixed(0)}% win rate · ${strongestModelCallout.avgR.toFixed(2)}R avg` : 'Not enough setup model samples yet.'}</div>
+              {strongestModelCallout?.limited ? <div className="small muted">Early signal only (small sample).</div> : null}
+            </article>
+          </section>
+
+          <section className="card stack">
+            <strong>Emotional pressure coaching</strong>
+            {emotionCoachingNotes.length ? emotionCoachingNotes.map((line) => <div key={line} className="small muted">• {line}</div>) : <div className="small muted">Need a larger spread of pressure levels before drawing a coaching signal.</div>}
+          </section>
+
+          <section className="card stack">
+            <strong>Session habit coaching</strong>
+            <div className="small muted">{sessionCoachingNote || 'Log more sessions and trades in this period to unlock session-vs-outcome coaching.'}</div>
           </section>
 
           <section className="card stack">
@@ -3716,6 +3794,78 @@ function getEmotionalInsight(rows: TradeRow[]) {
   if (lowAvg - highAvg > 5) return 'Interpretation: lower emotional pressure (levels 1-2) is currently associated with stronger average outcomes than high-pressure trades.';
   if (highAvg - lowAvg > 5) return 'Interpretation: high-pressure trades are currently outperforming low-pressure trades; verify if this is sustained or sample noise.';
   return 'Interpretation: outcomes are currently similar across pressure ranges in this sample.';
+}
+
+function pickStrongestSetupCallout(rows: PerformanceBreakdownRow[], minSample: number) {
+  if (!rows.length) return null;
+  const eligible = rows.filter((row) => row.trades >= minSample);
+  const source = eligible.length ? eligible : rows.slice(0, Math.min(5, rows.length));
+  if (!source.length) return null;
+  const ranked = [...source].sort((a, b) => {
+    const scoreA = a.avgR * 100 + a.winRate * 1.2 + a.avgPnl * 0.5;
+    const scoreB = b.avgR * 100 + b.winRate * 1.2 + b.avgPnl * 0.5;
+    return scoreB - scoreA;
+  });
+  const top = ranked[0];
+  return { ...top, limited: top.trades < minSample };
+}
+
+function getMultiTradeDayInsight(rows: TradeRow[]) {
+  const byDate = rows.reduce<Record<string, { trades: number; pnl: number }>>((acc, trade) => {
+    const key = trade.trade_date;
+    if (!acc[key]) acc[key] = { trades: 0, pnl: 0 };
+    acc[key].trades += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    return acc;
+  }, {});
+  const days = Object.values(byDate);
+  if (days.length < 4) return '';
+  const heavy = days.filter((day) => day.trades >= 3);
+  const light = days.filter((day) => day.trades < 3 && day.trades > 0);
+  if (heavy.length < 2 || light.length < 2) return '';
+  const heavyAvg = heavy.reduce((sum, day) => sum + day.pnl, 0) / heavy.length;
+  const lightAvg = light.reduce((sum, day) => sum + day.pnl, 0) / light.length;
+  if (heavyAvg + 5 < lightAvg) return 'Trade pacing signal: days with 3+ trades underperformed lighter days this period.';
+  if (lightAvg + 5 < heavyAvg) return 'Trade pacing signal: 3+ trade days outperformed lighter days this period (worth validating over a larger sample).';
+  return 'Trade pacing signal: no clear performance gap yet between lighter days and 3+ trade days.';
+}
+
+function getEmotionCoachingNotes(rows: TradeRow[]) {
+  const notes: string[] = [];
+  const low = rows.filter((trade) => Number(trade.emotional_pressure || 0) <= 2);
+  const high = rows.filter((trade) => Number(trade.emotional_pressure || 0) >= 4);
+  if (low.length >= 2 && high.length >= 2) {
+    const lowAvgPnl = low.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / low.length;
+    const highAvgPnl = high.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / high.length;
+    if (lowAvgPnl - highAvgPnl > 5) notes.push(`Best average results came at pressure 1-2 (${lowAvgPnl.toFixed(2)} vs ${highAvgPnl.toFixed(2)} at pressure 4-5).`);
+    else if (highAvgPnl - lowAvgPnl > 5) notes.push(`Higher pressure (4-5) outperformed low pressure in this sample (${highAvgPnl.toFixed(2)} vs ${lowAvgPnl.toFixed(2)}); treat as early signal.`);
+    else notes.push('Pressure 1-2 vs 4-5 outcomes are currently similar (no strong edge yet).');
+    const avgTags = (sample: TradeRow[]) => sample.reduce((sum, trade) => sum + normalizeMistakeTags(trade.mistake_tags).length, 0) / Math.max(1, sample.length);
+    const lowMistakes = avgTags(low);
+    const highMistakes = avgTags(high);
+    if (highMistakes - lowMistakes > 0.5) notes.push(`Higher pressure also carried more mistake tags (${highMistakes.toFixed(1)} vs ${lowMistakes.toFixed(1)} per trade).`);
+  }
+  return notes;
+}
+
+function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
+  if (trades.length < 4 || sessions.length < 2) return '';
+  const weeksWithJournal = new Set(
+    sessions
+      .filter((session) => session.session_type === 'journal')
+      .map((session) => weekKeyFromDate(session.session_date))
+      .filter(Boolean)
+  );
+  if (!weeksWithJournal.size) return 'No journal sessions were logged in this period.';
+  const withJournal = trades.filter((trade) => weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
+  const withoutJournal = trades.filter((trade) => !weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
+  if (withJournal.length < 2 || withoutJournal.length < 2) return 'Session signal is limited (small sample of journal vs non-journal weeks).';
+  const avg = (rows: TradeRow[]) => rows.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / rows.length;
+  const withAvg = avg(withJournal);
+  const withoutAvg = avg(withoutJournal);
+  if (withAvg - withoutAvg > 5) return `Journal-session weeks outperformed non-journal weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
+  if (withoutAvg - withAvg > 5) return `Non-journal weeks outperformed journal-session weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
+  return 'Journal-session vs non-journal weeks are currently similar in outcome.';
 }
 
 function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
