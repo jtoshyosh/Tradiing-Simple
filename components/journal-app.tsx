@@ -11,6 +11,8 @@ type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
+type HistoryEntryTypeFilter = 'all' | 'trade' | 'no_trade' | 'session';
+type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
 type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset';
 type HelpItem = readonly [string, string];
 
@@ -211,6 +213,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
   const [historyTradeFilter, setHistoryTradeFilter] = useState<TradeTypeFilter>('all');
+  const [historyEntryTypeFilter, setHistoryEntryTypeFilter] = useState<HistoryEntryTypeFilter>('all');
+  const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
+  const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
+  const [historyDateEnd, setHistoryDateEnd] = useState(() => toDateInput(new Date().toISOString().slice(0, 10)));
   const [reviewTradeFilter, setReviewTradeFilter] = useState<TradeTypeFilter>('live');
   const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
     trade_date: new Date().toISOString().slice(0, 10),
@@ -476,7 +482,22 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (createdA !== createdB) return createdB.localeCompare(createdA);
     return a.id.localeCompare(b.id);
   });
-  const filteredActivityItems = activityItems.filter((item) => item.type !== 'trade' || matchesTradeTypeFilter(item.trade, historyTradeFilter));
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const historyDateRange = getHistoryDateRange(historyDateFilter, todayKey, historyDateStart, historyDateEnd);
+  const tradeTypeFilterApplies = historyEntryTypeFilter === 'all' || historyEntryTypeFilter === 'trade';
+  const filteredActivityItems = activityItems.filter((item) => {
+    if (historyEntryTypeFilter !== 'all' && item.type !== historyEntryTypeFilter) return false;
+    if (!inDateRange(item.date, historyDateRange.start, historyDateRange.end)) return false;
+    if (item.type === 'trade' && tradeTypeFilterApplies && !matchesTradeTypeFilter(item.trade, historyTradeFilter)) return false;
+    return true;
+  });
+  const historyDateScopeLabel = historyDateFilter === 'all_time'
+    ? 'All time'
+    : historyDateFilter === 'this_month'
+      ? 'This month'
+      : historyDateFilter === 'last_30_days'
+        ? 'Last 30 days'
+        : `Custom ${historyDateRange.start} → ${historyDateRange.end}`;
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -1829,13 +1850,54 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       {tab === 'history' && (
         <section className="card stack control-card">
-          <div style={{ maxWidth: 220 }}>
-            <label className="small muted" htmlFor="history-trade-filter">Trade type filter</label>
-            <select id="history-trade-filter" value={historyTradeFilter} onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}>
-              <option value="all">All</option>
-              <option value="live">Live only</option>
-              <option value="paper">Paper only</option>
-            </select>
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-entry-type-filter">Entry type</label>
+              <select id="history-entry-type-filter" value={historyEntryTypeFilter} onChange={(e) => setHistoryEntryTypeFilter(e.target.value as HistoryEntryTypeFilter)}>
+                <option value="all">All</option>
+                <option value="trade">Trade</option>
+                <option value="no_trade">No-trade day</option>
+                <option value="session">Session</option>
+              </select>
+            </div>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-date-filter">Date range</label>
+              <select id="history-date-filter" value={historyDateFilter} onChange={(e) => setHistoryDateFilter(e.target.value as HistoryDateFilter)}>
+                <option value="all_time">All time</option>
+                <option value="this_month">This month</option>
+                <option value="last_30_days">Last 30 days</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </div>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-trade-filter">Trade type</label>
+              <select
+                id="history-trade-filter"
+                value={historyTradeFilter}
+                disabled={!tradeTypeFilterApplies}
+                onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}
+              >
+                <option value="all">All</option>
+                <option value="live">Live only</option>
+                <option value="paper">Paper only</option>
+              </select>
+              {!tradeTypeFilterApplies ? <div className="small muted">Applies to Trade entry type only.</div> : null}
+            </div>
+          </div>
+          {historyDateFilter === 'custom' ? (
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+                <label className="small muted" htmlFor="history-date-start">Start date</label>
+                <input id="history-date-start" type="date" value={historyDateStart} onChange={(e) => setHistoryDateStart(e.target.value)} />
+              </div>
+              <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+                <label className="small muted" htmlFor="history-date-end">End date</label>
+                <input id="history-date-end" type="date" value={historyDateEnd} onChange={(e) => setHistoryDateEnd(e.target.value)} />
+              </div>
+            </div>
+          ) : null}
+          <div className="small muted">
+            Active filters: <strong>{historyEntryTypeFilter === 'all' ? 'All entries' : titleCase(historyEntryTypeFilter.replace('_', ' '))}</strong> · <strong>{historyDateScopeLabel}</strong>{tradeTypeFilterApplies ? <> · Trade type <strong>{historyTradeFilter === 'all' ? 'All' : historyTradeFilter === 'live' ? 'Live only' : 'Paper only'}</strong></> : null}
           </div>
           {filteredActivityItems.map((item) => (
             item.type === 'trade' ? (
@@ -1963,7 +2025,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             )
           ))}
-          {!filteredActivityItems.length ? <div className="small muted">No history entries for the selected trade-type filter yet.</div> : null}
+          {!filteredActivityItems.length ? <div className="small muted">No history entries match the selected filters yet.</div> : null}
         </section>
       )}
 
@@ -3917,6 +3979,27 @@ function anchorForYtdYear(year: number) {
 
 function inDateRange(dateStr: string, start: string, end: string) {
   return dateStr >= start && dateStr <= end;
+}
+
+function toDateInput(value: string) {
+  return value.slice(0, 10);
+}
+
+function getHistoryDateRange(mode: HistoryDateFilter, todayKey: string, customStart: string, customEnd: string): { start: string; end: string } {
+  if (mode === 'this_month') {
+    const date = new Date(`${todayKey}T00:00:00Z`);
+    const start = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    return { start, end: todayKey };
+  }
+  if (mode === 'last_30_days') {
+    return { start: addDaysKey(todayKey, -29), end: todayKey };
+  }
+  if (mode === 'custom') {
+    const start = customStart || '0000-01-01';
+    const end = customEnd || '9999-12-31';
+    return start <= end ? { start, end } : { start: end, end: start };
+  }
+  return { start: '0000-01-01', end: '9999-12-31' };
 }
 
 function countItems(items: string[]) {
