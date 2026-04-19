@@ -3306,14 +3306,17 @@ function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
   const earliestYear = now.getUTCFullYear() - 10;
 
   if (period === 'weekly') {
-    const base = new Date(selectedAnchor);
-    for (let i = 0; i < 24; i += 1) {
-      const next = shiftPeriod(base, period, -i);
+    const latestWeekStart = sundayWeekStart(`${latestYear}-12-31`);
+    const earliestWeekStart = sundayWeekStart(`${earliestYear}-01-01`);
+    let cursor = latestWeekStart;
+    while (cursor >= earliestWeekStart) {
+      const next = new Date(`${cursor}T00:00:00Z`);
       options.push({
         value: jumpValueForAnchor(period, next),
         label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
         anchor: normalizeAnchorForPeriod(period, next)
       });
+      cursor = addDaysKey(cursor, -7);
     }
   } else if (period === 'monthly') {
     for (let y = latestYear; y >= earliestYear; y -= 1) {
