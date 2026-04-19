@@ -1326,24 +1326,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <article className="trade stack">
             <strong>Session defaults</strong>
             <div className="small muted">Used to prefill session logging times. You can still override in Log.</div>
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="stack">
                 <label className="small muted" htmlFor="settings-chart-start">Chart session start</label>
-                <input id="settings-chart-start" type="time" value={normalizeTimeInput(settings.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start} onChange={(e) => setSettings({ ...settings, chart_session_start_default: e.target.value })} />
+                <input className="settings-session-time-control" id="settings-chart-start" type="time" value={normalizeTimeInput(settings.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start} onChange={(e) => setSettings({ ...settings, chart_session_start_default: e.target.value })} />
               </div>
               <div className="stack">
                 <label className="small muted" htmlFor="settings-chart-end">Chart session end</label>
-                <input id="settings-chart-end" type="time" value={normalizeTimeInput(settings.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end} onChange={(e) => setSettings({ ...settings, chart_session_end_default: e.target.value })} />
+                <input className="settings-session-time-control" id="settings-chart-end" type="time" value={normalizeTimeInput(settings.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end} onChange={(e) => setSettings({ ...settings, chart_session_end_default: e.target.value })} />
               </div>
             </div>
-            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="stack">
                 <label className="small muted" htmlFor="settings-journal-start">Journal session start</label>
-                <input id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
+                <input className="settings-session-time-control" id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
               </div>
               <div className="stack">
                 <label className="small muted" htmlFor="settings-journal-end">Journal session end</label>
-                <input id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
+                <input className="settings-session-time-control" id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
               </div>
             </div>
           </article>
@@ -2157,7 +2157,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               {editingTradeId && <button className="inline" type="button" onClick={resetTradeDraft}>Cancel edit</button>}
             </div>
             <label className="small muted">Date</label>
-            <input name="trade_date" type="date" required value={tradeDraft.trade_date} onChange={(e) => setTradeDraft((p) => ({ ...p, trade_date: e.target.value }))} />
+            <input className="log-date-control" name="trade_date" type="date" required value={tradeDraft.trade_date} onChange={(e) => setTradeDraft((p) => ({ ...p, trade_date: e.target.value }))} />
             <label className="small muted">Ticker</label>
             <select name="ticker" value={tradeDraft.ticker} onChange={(e) => setTradeDraft((p) => ({ ...p, ticker: e.target.value }))} required>
               <option value="" disabled>Select instrument</option>
@@ -2407,7 +2407,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
               {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' }); }}>Cancel edit</button> : null}
             </div>
-            <input name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
+            <input className="log-date-control" name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
             <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
             <div className="row">
               <label className="small muted">No-trade mindset</label>
@@ -2562,15 +2562,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </button>
               </div>
               <label className="small muted">Date</label>
-              <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
-              <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
+              <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
                 <div className="stack">
                   <label className="small muted">Start time (local)</label>
-                  <input type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                  <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
                 </div>
                 <div className="stack">
                   <label className="small muted">End time (local)</label>
-                  <input type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                  <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
                 </div>
               </div>
               <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
@@ -2588,9 +2588,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           {!trades.length && !noTrades.length && !sessions.length ? (
             <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
           ) : null}
-          <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <input type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
-            <select value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
+          <div className="grid review-week-selector-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <input className="review-week-control" type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
+            <select className="review-week-control" value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
               {[currentWeekInput(), ...reviews.map((r) => weekInputFromKey(r.week_key))]
                 .filter((v, i, a) => v && a.indexOf(v) === i)
                 .sort((a, b) => b.localeCompare(a))
