@@ -2,8 +2,8 @@ import './globals.css';
 import type { Metadata } from 'next';
 
 export const metadata: Metadata = {
-  title: 'JY Trading Journal v0.9 Connected',
-  description: 'Connected trading journal powered by Next.js + Supabase.'
+  title: 'JY Trading Journal',
+  description: 'Trading journal for capturing sessions, reviews, and execution quality.'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

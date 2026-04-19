@@ -1280,11 +1280,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         <div>
           <div className="sub">JY Trading Journal</div>
           <h1>Own your process.<br />Build consistency.</h1>
-          <div className="muted small">Connected app (Next.js + Supabase)</div>
         </div>
         <div className="stack" style={{ alignItems: 'flex-end' }}>
-          <span className="chip">Connected</span>
-          <span className="chip version">{APP_VERSION}</span>
           <button
             className="inline account-avatar"
             type="button"
@@ -1414,6 +1411,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </div>
               </details>
             ) : null}
+          </article>
+          <article className="trade stack">
+            <strong>About</strong>
+            <div className="small muted">Version <span className="badge">{APP_VERSION}</span></div>
           </article>
           <article className="trade stack">
             <strong>Account actions</strong>
