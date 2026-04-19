@@ -2803,13 +2803,13 @@ function RichTextEditor({
     });
   }
 
-  const controls: Array<{ key: string; label: string; run: () => void }> = [
-    { key: 'bold', label: 'Bold', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
-    { key: 'underline', label: 'Underline', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
-    { key: 'bullet', label: '• List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet'), { collapseSelection: true }) },
-    { key: 'number', label: '1. List', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered'), { collapseSelection: true }) },
-    { key: 'indent', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2), { collapseSelection: true }) },
-    { key: 'outdent', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2), { collapseSelection: true }) }
+  const controls: Array<{ key: string; icon: string; label: string; run: () => void }> = [
+    { key: 'bold', icon: 'B', label: 'Bold', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
+    { key: 'underline', icon: 'U', label: 'Underline', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
+    { key: 'bullet', icon: '•', label: 'Bullet list', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet'), { collapseSelection: true }) },
+    { key: 'number', icon: '1.', label: 'Numbered list', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered'), { collapseSelection: true }) },
+    { key: 'indent', icon: '→', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2), { collapseSelection: true }) },
+    { key: 'outdent', icon: '←', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2), { collapseSelection: true }) }
   ];
 
   function handleEnterListContinuation(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -2879,17 +2879,18 @@ function RichTextEditor({
     <div className="stack editor-shell">
       <label className="small muted">{label}</label>
       {helperText ? <div className="small muted editor-helper">{helperText}</div> : null}
-      <div className="row editor-toolbar" style={{ gap: 6, flexWrap: 'wrap' }}>
+      <div className="editor-toolbar" role="toolbar" aria-label="Formatting controls">
         {controls.map((control) => (
           <button
             key={control.key}
-            className="inline"
+            className="inline editor-tool-btn"
             type="button"
+            title={control.label}
+            aria-label={control.label}
             onMouseDown={(event) => event.preventDefault()}
             onClick={control.run}
-            style={{ width: 'auto', minWidth: 58 }}
           >
-            {control.label}
+            {control.icon}
           </button>
         ))}
       </div>

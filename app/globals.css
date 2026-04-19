@@ -247,13 +247,33 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   padding: 0 1px;
 }
 .editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid rgba(67, 90, 127, 0.48);
   border-radius: 11px;
   padding: 6px;
   background: rgba(14, 24, 41, 0.7);
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
 }
-.editor-toolbar .inline {
-  min-width: 72px !important;
+.editor-tool-btn {
+  width: 34px !important;
+  min-width: 34px !important;
+  height: 34px;
+  padding: 0 !important;
+  border-radius: 9px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 14px;
+}
+.editor-tool-btn:focus-visible {
+  outline: 2px solid #79aeff;
+  outline-offset: 1px;
 }
 .editor-textarea {
   min-height: 150px;
@@ -299,9 +319,15 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
     min-height: 58px;
     padding: 7px 5px;
   }
-  .editor-toolbar .inline {
-    min-width: 70px !important;
-    font-size: 11px;
+  .editor-toolbar {
+    gap: 5px;
+    padding: 5px;
+  }
+  .editor-tool-btn {
+    width: 32px !important;
+    min-width: 32px !important;
+    height: 32px;
+    font-size: 13px;
   }
   .nav {
     gap: 6px;
