@@ -35,9 +35,13 @@ h1 { margin:8px 0 6px; font-size:34px; line-height:1.03; letter-spacing:-.02em; 
 }
 .stack { display:flex; flex-direction:column; gap:9px; }
 .row { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.row > * { min-width: 0; }
 .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
 input, select, textarea, button {
-  width: 100%; border:1px solid var(--line); border-radius:12px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  border:1px solid var(--line); border-radius:12px;
   background:#0d1627; color:var(--text); padding:11px 12px; font-size:16px;
 }
 textarea { min-height: 84px; line-height: 1.4; }
@@ -267,9 +271,17 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   }
   h1 { font-size: 30px; }
   .stack { gap: 8px; }
-  .card { padding: 11px; border-radius: 15px; }
-  .row { gap: 8px; }
+  .card { padding: 11px; border-radius: 15px; overflow: hidden; }
+  .row { gap: 8px; flex-wrap: wrap; align-items: stretch; }
+  .grid { grid-template-columns: 1fr; }
+  input[type='date'], input[type='time'], input[type='week'], select {
+    width: 100%;
+    max-width: 100%;
+  }
   button.inline { min-height: 34px; padding: 7px 9px; }
+  .control-card > .row {
+    flex-wrap: wrap;
+  }
   .dashboard-controls-grid {
     grid-template-columns: 1fr;
   }
