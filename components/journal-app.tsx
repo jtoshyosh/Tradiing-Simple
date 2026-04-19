@@ -1558,6 +1558,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <div className="small muted dashboard-empty-state">No trades, no-trade days, or sessions match this period/filter yet.</div>
             ) : null}
           </section>
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Snapshot</div>
           <section className="card stack">
             <strong>Lifetime snapshot (by trade type)</strong>
             <div className="small muted">Scope: trade type filter only.</div>
@@ -1734,8 +1735,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             )}
           </section>
 
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Coaching</div>
           <section className="card stack">
             <strong>Coaching summary</strong>
+            <article className="trade" style={{ borderColor: '#4f6ea6', background: 'rgba(44,78,140,0.14)' }}>
+              <div className="small muted">Primary takeaway</div>
+              <div className="small">{selectedPeriodTakeaway}</div>
+            </article>
             <article className="trade">
               <div className="small muted">What is helping most?</div>
               <div className="small">{coachingHelping}</div>
@@ -1751,8 +1757,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             {multiTradeDayInsight ? <div className="small muted">{multiTradeDayInsight}</div> : null}
           </section>
 
-          <section className="card stack">
-            <strong>Top 3 mistake drags</strong>
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Detailed breakdowns & diagnostics</div>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Top 3 mistake drags</strong></summary>
             {topMistakeDrags.length ? (
               <div className="stack">
                 {topMistakeDrags.map((row, idx) => (
@@ -1766,10 +1773,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 ))}
               </div>
             ) : <div className="small muted">Need at least two tagged trades per mistake to rank drag reliably (small sample right now).</div>}
-          </section>
+          </details>
 
-          <section className="card stack">
-            <strong>Best edge callouts</strong>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Best edge callouts</strong></summary>
             <article className="trade">
               <div className="small muted">Strongest setup family</div>
               <div>{strongestFamilyCallout ? `${strongestFamilyCallout.key} · ${strongestFamilyCallout.trades} trades · ${strongestFamilyCallout.winRate.toFixed(0)}% win rate · ${strongestFamilyCallout.avgR.toFixed(2)}R avg` : 'Not enough setup family samples yet.'}</div>
@@ -1780,39 +1787,33 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <div>{strongestModelCallout ? `${strongestModelCallout.key} · ${strongestModelCallout.trades} trades · ${strongestModelCallout.winRate.toFixed(0)}% win rate · ${strongestModelCallout.avgR.toFixed(2)}R avg` : 'Not enough setup model samples yet.'}</div>
               {strongestModelCallout?.limited ? <div className="small muted">Early signal only (small sample).</div> : null}
             </article>
-          </section>
+          </details>
 
-          <section className="card stack">
-            <strong>Emotional pressure coaching</strong>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure coaching</strong></summary>
             {emotionCoachingNotes.length ? emotionCoachingNotes.map((line) => <div key={line} className="small muted">• {line}</div>) : <div className="small muted">Need a larger spread of pressure levels before drawing a coaching signal.</div>}
-          </section>
+          </details>
 
-          <section className="card stack">
-            <strong>Session habit coaching</strong>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Session habit coaching</strong></summary>
             <div className="small muted">{sessionCoachingNote || 'Log more sessions and trades in this period to unlock session-vs-outcome coaching.'}</div>
-          </section>
+          </details>
 
-          <section className="card stack">
-            <strong>Selected period insights</strong>
-            <article className="trade">
-              <div className="small muted">Primary takeaway</div>
-              <div>{selectedPeriodTakeaway}</div>
-            </article>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Selected period insights</strong></summary>
             <div className="small muted"><strong>Mistakes:</strong> {topMistakes.length ? topMistakes.map(([tag, count]) => `${tag} (${count})`).join(', ') : 'None logged'}</div>
             <div className="small muted"><strong>Setup edge:</strong> Best family {bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Best model {bestModel ? `${bestModel.key} (${bestModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
             <div className="small muted"><strong>Setup drag:</strong> Worst family {worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Worst model {worstModel ? `${worstModel.key} (${worstModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
             <div className="small muted"><strong>Win-rate leaders:</strong> Families {topWinFamilies.length ? topWinFamilies.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'} · Models {topWinModels.length ? topWinModels.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
             <div className="small muted"><strong>Pressure mix:</strong> {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
             <div className="small muted"><strong>Pressure impact:</strong> High (4-5) avg P&L <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span> · Low (1-2) avg P&L <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
-          </section>
+          </details>
 
-          <section className="card stack">
-            <div className="row">
-              <strong>Intelligence insights</strong>
-              <span className="small muted">Based on {periodTrades.length} trade(s) in selected period</span>
-            </div>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Intelligence insights</strong> <span className="muted">· diagnostics by selected period</span></summary>
+            <div className="small muted">Based on {periodTrades.length} trade(s) in selected period</div>
 
-            <details open>
+            <details>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Mistake impact</strong> <span className="muted">· behavior cost profile</span></summary>
               {mistakeImpact.length ? (
                 <div className="stack" style={{ marginTop: 8 }}>
@@ -1830,7 +1831,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               ) : <div className="small muted" style={{ marginTop: 8 }}>No mistake tags logged in this period.</div>}
             </details>
 
-            <details open>
+            <details>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong> <span className="muted">· where edge is strongest</span></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 <div className="small muted"><strong>By setup family</strong></div>
@@ -1856,7 +1857,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
             </details>
 
-            <details open>
+            <details>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong> <span className="muted">· state vs outcome</span></summary>
               <div className="stack" style={{ marginTop: 8 }}>
                 {emotionBreakdown.length ? emotionBreakdown.map((row) => (
@@ -1872,7 +1873,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </div>
             </details>
 
-            <details open>
+            <details>
               <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong> <span className="muted">· momentum context</span></summary>
               <div className="grid" style={{ marginTop: 8 }}>
                 <article className="trade" style={streakCardStyle(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}>
@@ -1901,7 +1902,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </article>
               </div>
             </details>
-          </section>
+          </details>
 
         </section>
       )}
