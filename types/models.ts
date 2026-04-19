@@ -64,6 +64,10 @@ export type SettingsRow = {
   daily_reminder: boolean;
   weekly_reminder: boolean;
   default_risk: number;
+  chart_session_start_default: string;
+  chart_session_end_default: string;
+  journal_session_start_default: string;
+  journal_session_end_default: string;
   display_name: string;
   instruments: string[];
   mistake_catalog: string[];

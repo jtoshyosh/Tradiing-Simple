@@ -33,6 +33,10 @@ const familyModels: Record<string, string[]> = {
 };
 
 const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const SESSION_DEFAULT_TIMES = {
+  chart: { start: '06:30', end: '09:00' },
+  journal: { start: '20:00', end: '21:00' }
+} as const;
 const entryEmotionOptions = [
   { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
   { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
@@ -249,8 +253,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
     session_type: 'chart',
     session_date: new Date().toISOString().slice(0, 10),
-    start_time: '09:00',
-    end_time: '10:00',
+    start_time: SESSION_DEFAULT_TIMES.chart.start,
+    end_time: SESSION_DEFAULT_TIMES.chart.end,
     notes: ''
   });
   const [pending, startTransition] = useTransition();
@@ -330,6 +334,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       daily_reminder: true,
       weekly_reminder: true,
       default_risk: 200,
+      chart_session_start_default: SESSION_DEFAULT_TIMES.chart.start,
+      chart_session_end_default: SESSION_DEFAULT_TIMES.chart.end,
+      journal_session_start_default: SESSION_DEFAULT_TIMES.journal.start,
+      journal_session_end_default: SESSION_DEFAULT_TIMES.journal.end,
       display_name: 'JY',
       instruments: ['MES'],
       mistake_catalog: [...DEFAULT_MISTAKE_CATALOG],
@@ -356,6 +364,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...baseSettings,
       display_name: normalizeTag(cachedSettings?.display_name || baseSettings.display_name),
       default_risk: Number(cachedSettings?.default_risk ?? baseSettings.default_risk ?? 0),
+      chart_session_start_default: normalizeTimeInput(cachedSettings?.chart_session_start_default || baseSettings.chart_session_start_default || SESSION_DEFAULT_TIMES.chart.start),
+      chart_session_end_default: normalizeTimeInput(cachedSettings?.chart_session_end_default || baseSettings.chart_session_end_default || SESSION_DEFAULT_TIMES.chart.end),
+      journal_session_start_default: normalizeTimeInput(cachedSettings?.journal_session_start_default || baseSettings.journal_session_start_default || SESSION_DEFAULT_TIMES.journal.start),
+      journal_session_end_default: normalizeTimeInput(cachedSettings?.journal_session_end_default || baseSettings.journal_session_end_default || SESSION_DEFAULT_TIMES.journal.end),
       daily_reminder: cachedSettings?.daily_reminder ?? baseSettings.daily_reminder,
       weekly_reminder: cachedSettings?.weekly_reminder ?? baseSettings.weekly_reminder,
       instruments: normalizeUniqueInstruments([...(cachedSettings?.instruments || []), ...normalizedInstruments]),
@@ -387,6 +399,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
   const winningTrades = periodTrades.filter((t) => Number(t.pnl || 0) > 0);
   const losingTrades = periodTrades.filter((t) => Number(t.pnl || 0) < 0);
+  const avgHoldWinners = winningTrades.length ? winningTrades.reduce((sum, t) => sum + Number(t.minutes_in_trade || 0), 0) / winningTrades.length : 0;
+  const avgHoldLosers = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.minutes_in_trade || 0), 0) / losingTrades.length : 0;
   const avgWinnerResult = winningTrades.length ? winningTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / winningTrades.length : 0;
   const avgLoserResult = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / losingTrades.length : 0;
   const periodWinRate = periodTrades.length ? (periodWins / periodTrades.length) * 100 : 0;
@@ -509,6 +523,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
+  const latestChartSession = sessions.find((session) => session.session_type === 'chart');
+  const latestJournalSession = sessions.find((session) => session.session_type === 'journal');
 
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
@@ -647,6 +663,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setTab('history');
   }
 
+  function applySessionDefaults(type: 'chart' | 'journal') {
+    const start = normalizeTimeInput(type === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
+    const end = normalizeTimeInput(type === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+    setSessionDraft((prev) => ({
+      ...prev,
+      session_type: type,
+      start_time: start || SESSION_DEFAULT_TIMES[type].start,
+      end_time: end || SESSION_DEFAULT_TIMES[type].end
+    }));
+  }
+
   async function addSession() {
     const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
     const payload = {
@@ -668,8 +695,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setSessionDraft({
       session_type: 'chart',
       session_date: new Date().toISOString().slice(0, 10),
-      start_time: '09:00',
-      end_time: '10:00',
+      start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+      end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
       notes: ''
     });
     setEditingSessionId(null);
@@ -704,6 +731,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   async function saveSettings(next: SettingsRow) {
     const payload: SettingsRow = {
       ...next,
+      chart_session_start_default: normalizeTimeInput(next.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start,
+      chart_session_end_default: normalizeTimeInput(next.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end,
+      journal_session_start_default: normalizeTimeInput(next.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start,
+      journal_session_end_default: normalizeTimeInput(next.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end,
       instruments: normalizeUniqueInstruments(next.instruments || []),
       mistake_catalog: normalizeActiveMistakeCatalog(next.mistake_catalog, next.mistake_catalog_hidden),
       mistake_catalog_hidden: normalizeHiddenMistakeCatalog(next.mistake_catalog_hidden, next.mistake_catalog)
@@ -1296,6 +1327,30 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <input id="account-email" value={email || ''} disabled />
           </article>
           <article className="trade stack">
+            <strong>Session defaults</strong>
+            <div className="small muted">Used to prefill session logging times. You can still override in Log.</div>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-chart-start">Chart session start</label>
+                <input id="settings-chart-start" type="time" value={normalizeTimeInput(settings.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start} onChange={(e) => setSettings({ ...settings, chart_session_start_default: e.target.value })} />
+              </div>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-chart-end">Chart session end</label>
+                <input id="settings-chart-end" type="time" value={normalizeTimeInput(settings.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end} onChange={(e) => setSettings({ ...settings, chart_session_end_default: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-journal-start">Journal session start</label>
+                <input id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
+              </div>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-journal-end">Journal session end</label>
+                <input id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
+              </div>
+            </div>
+          </article>
+          <article className="trade stack">
             <div className="row">
               <strong>Mistake catalog</strong>
               <span className="small muted">{activeMistakeCatalog.length} active</span>
@@ -1521,6 +1576,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article className="trade"><div className="muted small">Net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
               <article className="trade"><div className="muted small">Win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
               <article className="trade"><div className="muted small">Avg R / trade</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Avg hold time (winners)</div><div>{winningTrades.length ? formatMinutesLabel(Math.round(avgHoldWinners)) : '—'}</div></article>
+              <article className="trade"><div className="muted small">Avg hold time (losers)</div><div>{losingTrades.length ? formatMinutesLabel(Math.round(avgHoldLosers)) : '—'}</div></article>
               <article className="trade"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
               <article className="trade"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
               <article className="trade"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
@@ -2439,8 +2496,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   setSessionDraft({
                     session_type: 'chart',
                     session_date: new Date().toISOString().slice(0, 10),
-                    start_time: '09:00',
-                    end_time: '10:00',
+                    start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+                    end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
                     notes: ''
                   });
                 }}>Cancel edit</button> : null}
@@ -2451,7 +2508,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   className="inline"
                   type="button"
                   style={sessionDraft.session_type === 'chart' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'chart' }))}
+                  onClick={() => applySessionDefaults('chart')}
                 >
                   {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
                 </button>
@@ -2459,13 +2516,50 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   className="inline"
                   type="button"
                   style={sessionDraft.session_type === 'journal' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => setSessionDraft((p) => ({ ...p, session_type: 'journal' }))}
+                  onClick={() => applySessionDefaults('journal')}
                 >
                   {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
                 </button>
               </div>
               <div className="small muted">Selected subtype: <strong>{sessionDraft.session_type === 'chart' ? 'Chart session' : 'Journal session'}</strong></div>
               <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button className="inline" type="button" onClick={() => applySessionDefaults(sessionDraft.session_type)}>Use default times</button>
+                <button
+                  className="inline"
+                  type="button"
+                  disabled={!latestChartSession}
+                  onClick={() => {
+                    if (!latestChartSession) return;
+                    setSessionDraft((p) => ({
+                      ...p,
+                      session_type: 'chart',
+                      start_time: latestChartSession.start_time.slice(0, 5),
+                      end_time: latestChartSession.end_time.slice(0, 5),
+                      notes: latestChartSession.notes || ''
+                    }));
+                  }}
+                >
+                  Duplicate last chart session
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  disabled={!latestJournalSession}
+                  onClick={() => {
+                    if (!latestJournalSession) return;
+                    setSessionDraft((p) => ({
+                      ...p,
+                      session_type: 'journal',
+                      start_time: latestJournalSession.start_time.slice(0, 5),
+                      end_time: latestJournalSession.end_time.slice(0, 5),
+                      notes: latestJournalSession.notes || ''
+                    }));
+                  }}
+                >
+                  Duplicate last journal session
+                </button>
+              </div>
               <label className="small muted">Date</label>
               <input type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
               <div className="grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
@@ -3985,6 +4079,15 @@ function toDateInput(value: string) {
   return value.slice(0, 10);
 }
 
+function normalizeTimeInput(value: unknown) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  const hh = Math.min(23, Math.max(0, Number(match[1] || 0)));
+  const mm = Math.min(59, Math.max(0, Number(match[2] || 0)));
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
 function getHistoryDateRange(mode: HistoryDateFilter, todayKey: string, customStart: string, customEnd: string): { start: string; end: string } {
   if (mode === 'this_month') {
     const date = new Date(`${todayKey}T00:00:00Z`);
@@ -4720,6 +4823,10 @@ function readSettingsCache(userId: string): SettingsRow | null {
       daily_reminder: Boolean(parsed.daily_reminder),
       weekly_reminder: Boolean(parsed.weekly_reminder),
       default_risk: Number(parsed.default_risk ?? 0),
+      chart_session_start_default: normalizeTimeInput(parsed.chart_session_start_default ?? SESSION_DEFAULT_TIMES.chart.start),
+      chart_session_end_default: normalizeTimeInput(parsed.chart_session_end_default ?? SESSION_DEFAULT_TIMES.chart.end),
+      journal_session_start_default: normalizeTimeInput(parsed.journal_session_start_default ?? SESSION_DEFAULT_TIMES.journal.start),
+      journal_session_end_default: normalizeTimeInput(parsed.journal_session_end_default ?? SESSION_DEFAULT_TIMES.journal.end),
       display_name: normalizeTag(String(parsed.display_name || '')),
       instruments: normalizeUniqueInstruments(Array.isArray(parsed.instruments) ? parsed.instruments.map((item) => String(item ?? '')) : []),
       mistake_catalog: normalizeMistakeTags(parsed.mistake_catalog),
@@ -4738,6 +4845,10 @@ function writeSettingsCache(settings: SettingsRow) {
       daily_reminder: settings.daily_reminder,
       weekly_reminder: settings.weekly_reminder,
       default_risk: settings.default_risk,
+      chart_session_start_default: normalizeTimeInput(settings.chart_session_start_default),
+      chart_session_end_default: normalizeTimeInput(settings.chart_session_end_default),
+      journal_session_start_default: normalizeTimeInput(settings.journal_session_start_default),
+      journal_session_end_default: normalizeTimeInput(settings.journal_session_end_default),
       display_name: settings.display_name,
       instruments: settings.instruments,
       mistake_catalog: settings.mistake_catalog,
@@ -4789,8 +4900,8 @@ function normalizeSupabaseError(message: string) {
 
 function isSettingsCatalogSchemaMismatch(message: string) {
   const text = String(message || '');
-  return /could not find .*?(instruments|mistake_catalog|mistake_catalog_hidden).*?schema cache/i.test(text)
-    || /column .*?(instruments|mistake_catalog|mistake_catalog_hidden).*? does not exist/i.test(text);
+  return /could not find .*?(instruments|mistake_catalog|mistake_catalog_hidden|chart_session_start_default|chart_session_end_default|journal_session_start_default|journal_session_end_default).*?schema cache/i.test(text)
+    || /column .*?(instruments|mistake_catalog|mistake_catalog_hidden|chart_session_start_default|chart_session_end_default|journal_session_start_default|journal_session_end_default).*? does not exist/i.test(text);
 }
 
 function isWeeklyReviewPaperSchemaMismatch(message: string) {

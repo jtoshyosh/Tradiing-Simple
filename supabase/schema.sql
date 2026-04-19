@@ -125,6 +125,10 @@ create table if not exists public.user_settings (
   daily_reminder boolean not null default true,
   weekly_reminder boolean not null default true,
   default_risk numeric not null default 200,
+  chart_session_start_default time not null default '06:30',
+  chart_session_end_default time not null default '09:00',
+  journal_session_start_default time not null default '20:00',
+  journal_session_end_default time not null default '21:00',
   display_name text not null default 'JY',
   instruments text[] not null default '{"MES"}',
   mistake_catalog text[] not null default '{}',
@@ -134,6 +138,18 @@ create table if not exists public.user_settings (
 
 alter table public.user_settings
   add column if not exists instruments text[] not null default '{"MES"}';
+
+alter table public.user_settings
+  add column if not exists chart_session_start_default time not null default '06:30';
+
+alter table public.user_settings
+  add column if not exists chart_session_end_default time not null default '09:00';
+
+alter table public.user_settings
+  add column if not exists journal_session_start_default time not null default '20:00';
+
+alter table public.user_settings
+  add column if not exists journal_session_end_default time not null default '21:00';
 
 alter table public.user_settings
   add column if not exists mistake_catalog text[] not null default '{}';
