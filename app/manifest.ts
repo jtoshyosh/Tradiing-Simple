@@ -1,6 +1,7 @@
 import type { MetadataRoute } from 'next';
 
-const PRIMARY_ICON = '/brand/JY_Trading_Logo_Black_Background.png';
+const PRIMARY_ICON = '/31AA24C9-9277-40A3-90DA-AE0ED5E1FB74.jpg';
+const ALT_ICON = '/7EBAD580-EC19-40A0-9CF6-1C80207BF90F.jpg';
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -15,18 +16,24 @@ export default function manifest(): MetadataRoute.Manifest {
       {
         src: PRIMARY_ICON,
         sizes: '192x192',
-        type: 'image/png'
+        type: 'image/jpeg'
       },
       {
         src: PRIMARY_ICON,
         sizes: '512x512',
-        type: 'image/png'
+        type: 'image/jpeg'
       },
       {
         src: PRIMARY_ICON,
         sizes: '180x180',
-        type: 'image/png',
+        type: 'image/jpeg',
         purpose: 'any'
+      },
+      {
+        src: ALT_ICON,
+        sizes: '512x512',
+        type: 'image/jpeg',
+        purpose: 'maskable'
       }
     ]
   };
