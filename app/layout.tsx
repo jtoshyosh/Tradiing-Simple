@@ -1,8 +1,8 @@
 import './globals.css';
 import type { Metadata, Viewport } from 'next';
 
-const PRIMARY_ICON = '/brand/JY_Trading_Logo_only.jpeg';
-const ALT_ICON = '/brand/JY_Trading_Logo_Black_Background.png';
+const PRIMARY_ICON = '/brand/JY_Trading_Logo_Black_Background.png';
+const ALT_ICON = '/brand/JY_Trading_Logo_only.jpeg';
 
 export const metadata: Metadata = {
   title: 'JY Trading',
@@ -16,14 +16,14 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [
-      { url: PRIMARY_ICON, type: 'image/jpeg' },
-      { url: ALT_ICON, type: 'image/png' }
+      { url: PRIMARY_ICON, type: 'image/png' },
+      { url: ALT_ICON, type: 'image/jpeg' }
     ],
     apple: [
-      { url: PRIMARY_ICON, type: 'image/jpeg', sizes: '180x180' }
+      { url: PRIMARY_ICON, type: 'image/png', sizes: '180x180' }
     ],
     shortcut: [
-      { url: PRIMARY_ICON, type: 'image/jpeg' }
+      { url: PRIMARY_ICON, type: 'image/png' }
     ]
   }
 };
