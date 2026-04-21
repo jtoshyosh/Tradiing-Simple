@@ -11,8 +11,8 @@ type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
-type HistoryEntryTypeFilter = 'all' | 'trade' | 'no_trade' | 'session';
 type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
+type HistoryVisibilityFilter = 'live_trade' | 'paper_trade' | 'no_trade_day' | 'session';
 type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
 type HelpItem = readonly [string, string];
 
@@ -50,6 +50,7 @@ const expectedMarketConditionOptions = ['Trending', 'Range / Rotation', 'Choppy 
 const primarySetupFocusOptions = ['Liquidity sweep reversal', 'Break and retest continuation', 'Pullback continuation', 'No setup focus (observe only)'] as const;
 const emotionalStateOptions = ['Calm', 'Focused', 'Confident', 'Tense', 'Distracted'] as const;
 const correctnessOptions = ['Yes', 'Partially', 'No', 'N/A'] as const;
+const preSessionMinutesOptions = Array.from({ length: 36 }, (_, idx) => String((idx + 1) * 5));
 const entryEmotionOptions = [
   { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
   { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
@@ -194,6 +195,7 @@ type SessionDraft = {
   market_condition_correctness: string;
   setup_focus_correctness: string;
   post_session_emotion: string;
+  minutes_spent: string;
 };
 type TradeDraft = {
   trade_date: string;
@@ -255,8 +257,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
-  const [historyTradeFilter, setHistoryTradeFilter] = useState<TradeTypeFilter>('all');
-  const [historyEntryTypeFilter, setHistoryEntryTypeFilter] = useState<HistoryEntryTypeFilter>('all');
+  const [historyVisibilityFilter, setHistoryVisibilityFilter] = useState<HistoryVisibilityFilter[]>(['live_trade', 'paper_trade', 'no_trade_day', 'session']);
   const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
   const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
   const [historyDateEnd, setHistoryDateEnd] = useState(() => toDateInput(new Date().toISOString().slice(0, 10)));
@@ -540,13 +541,28 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const todayKey = new Date().toISOString().slice(0, 10);
   const historyDateRange = getHistoryDateRange(historyDateFilter, todayKey, historyDateStart, historyDateEnd);
-  const tradeTypeFilterApplies = historyEntryTypeFilter === 'all' || historyEntryTypeFilter === 'trade';
+  const historyVisibilitySet = new Set(historyVisibilityFilter);
   const filteredActivityItems = activityItems.filter((item) => {
-    if (historyEntryTypeFilter !== 'all' && item.type !== historyEntryTypeFilter) return false;
     if (!inDateRange(item.date, historyDateRange.start, historyDateRange.end)) return false;
-    if (item.type === 'trade' && tradeTypeFilterApplies && !matchesTradeTypeFilter(item.trade, historyTradeFilter)) return false;
+    if (item.type === 'trade') {
+      return isPaperTrade(item.trade)
+        ? historyVisibilitySet.has('paper_trade')
+        : historyVisibilitySet.has('live_trade');
+    }
+    if (item.type === 'no_trade') return historyVisibilitySet.has('no_trade_day');
+    if (item.type === 'session') return historyVisibilitySet.has('session');
     return true;
   });
+  const historyVisibilityLabels: Record<HistoryVisibilityFilter, string> = {
+    live_trade: 'Live trade',
+    paper_trade: 'Paper trade',
+    no_trade_day: 'No-trade day',
+    session: 'Session'
+  };
+  const isHistoryAllVisible = historyVisibilityFilter.length === 4;
+  const historyVisibilitySummary = isHistoryAllVisible
+    ? 'All'
+    : historyVisibilityFilter.map((item) => historyVisibilityLabels[item]).join(', ') || 'None';
   const historyDateScopeLabel = historyDateFilter === 'all_time'
     ? 'All time'
     : historyDateFilter === 'this_month'
@@ -716,13 +732,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }
 
   async function addSession() {
-    const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const normalizedType = normalizeSessionType(sessionDraft.session_type);
+    const duration = normalizedType === 'pre_session_plan'
+      ? Math.max(0, Number(sessionDraft.minutes_spent || 0))
+      : calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const preSessionStart = '00:00';
+    const preSessionEnd = addMinutesToTime(preSessionStart, duration);
     const payload = {
       user_id: userId,
       session_type: normalizeLegacySessionType(sessionDraft.session_type),
       session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
-      start_time: sessionDraft.start_time,
-      end_time: sessionDraft.end_time,
+      start_time: normalizedType === 'pre_session_plan' ? preSessionStart : sessionDraft.start_time,
+      end_time: normalizedType === 'pre_session_plan' ? preSessionEnd : sessionDraft.end_time,
       duration_minutes: duration,
       notes: sessionDraft.notes || '',
       higher_timeframe_context: sessionDraft.higher_timeframe_context || null,
@@ -787,15 +808,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (normalized === 'pre_session_plan') {
       return (
         <>
-          <div className="small">Higher-timeframe context: {session.higher_timeframe_context || '—'}</div>
-          <div className="small">Session bias: {session.session_bias || '—'}</div>
-          <div className="small">Bias confidence: {session.bias_confidence || '—'}</div>
-          <div className="small">Expected market condition: {session.expected_market_condition || '—'}</div>
-          <div className="small">Primary setup focus: {session.primary_setup_focus || '—'}</div>
-          <div className="small">Sit-out condition: {session.sit_out_condition || '—'}</div>
-          <div className="small">Main objective: {session.main_objective || '—'}</div>
-          <div className="small">Starting emotional state: {session.starting_emotional_state || '—'}</div>
-          <div className="small">Pre-session note: {session.pre_session_note || '—'}</div>
+          <div className="small"><strong>Minutes spent:</strong> {formatMinutesLabel(session.duration_minutes)}</div>
+          <div className="small"><strong>Higher-timeframe context:</strong> {session.higher_timeframe_context || '—'}</div>
+          <div className="small"><strong>Session bias:</strong> {session.session_bias || '—'}</div>
+          <div className="small"><strong>Bias confidence:</strong> {session.bias_confidence || '—'}</div>
+          <div className="small"><strong>Expected market condition:</strong> {session.expected_market_condition || '—'}</div>
+          <div className="small"><strong>Primary setup focus:</strong> {session.primary_setup_focus || '—'}</div>
+          <div className="small"><strong>Sit-out condition:</strong> {session.sit_out_condition || '—'}</div>
+          <div className="small"><strong>Main objective:</strong> {session.main_objective || '—'}</div>
+          <div className="small"><strong>Starting emotional state:</strong> {session.starting_emotional_state || '—'}</div>
+          <div className="small"><strong>Pre-session note:</strong> {session.pre_session_note || '—'}</div>
         </>
       );
     }
@@ -803,13 +825,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       const matchingPlan = sessions.find((entry) => normalizeSessionType(entry.session_type) === 'pre_session_plan' && entry.session_date === session.session_date);
       return (
         <>
-          <div className="small">Linked pre-session bias: {matchingPlan?.session_bias || '—'}</div>
-          <div className="small">Linked expected condition: {matchingPlan?.expected_market_condition || '—'}</div>
-          <div className="small">Linked setup focus: {matchingPlan?.primary_setup_focus || '—'}</div>
-          <div className="small">Bias correctness: {session.bias_correctness || '—'}</div>
-          <div className="small">Market condition correctness: {session.market_condition_correctness || '—'}</div>
-          <div className="small">Setup focus correctness: {session.setup_focus_correctness || '—'}</div>
-          <div className="small">Post-session emotion: {session.post_session_emotion || '—'}</div>
+          <div className="small"><strong>Validation · Pre-session bias:</strong> {matchingPlan?.session_bias || '—'}</div>
+          <div className="small"><strong>Validation · Expected condition:</strong> {matchingPlan?.expected_market_condition || '—'}</div>
+          <div className="small"><strong>Validation · Setup focus:</strong> {matchingPlan?.primary_setup_focus || '—'}</div>
+          <div className="small"><strong>Was bias correct?</strong> {session.bias_correctness || '—'}</div>
+          <div className="small"><strong>Was expected condition correct?</strong> {session.market_condition_correctness || '—'}</div>
+          <div className="small"><strong>Was setup focus correct?</strong> {session.setup_focus_correctness || '—'}</div>
+          <div className="small"><strong>Post-session emotion:</strong> {session.post_session_emotion || '—'}</div>
         </>
       );
     }
@@ -1465,11 +1487,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
             <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="stack">
-                <label className="small muted" htmlFor="settings-journal-start">Journal session start</label>
+                <label className="small muted" htmlFor="settings-journal-start">Post-session review start</label>
                 <input className="settings-session-time-control" id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
               </div>
               <div className="stack">
-                <label className="small muted" htmlFor="settings-journal-end">Journal session end</label>
+                <label className="small muted" htmlFor="settings-journal-end">Post-session review end</label>
                 <input className="settings-session-time-control" id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
               </div>
             </div>
@@ -1721,7 +1743,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article className="trade"><div className="muted small">Trades</div><div>{periodTrades.length}</div></article>
               <article className="trade"><div className="muted small">No-trade days</div><div>{periodNoTrades.length}</div></article>
               <article className="trade">
-                <div className="muted small">Journal sessions</div>
+                <div className="muted small">Post-session reviews</div>
                 <div>{formatMinutesLabel(periodJournalMinutes)}</div>
                 <div className="small muted">Avg {formatMinutesLabel(periodJournalSessions.length ? Math.round(periodJournalMinutes / periodJournalSessions.length) : 0)} / session</div>
                 <div className="small muted">{periodJournalSessions.length} {periodJournalSessions.length === 1 ? 'session' : 'sessions'}</div>
@@ -2083,14 +2105,36 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'history' && (
         <section className="card stack control-card">
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
-              <label className="small muted" htmlFor="history-entry-type-filter">Entry type</label>
-              <select id="history-entry-type-filter" value={historyEntryTypeFilter} onChange={(e) => setHistoryEntryTypeFilter(e.target.value as HistoryEntryTypeFilter)}>
-                <option value="all">All</option>
-                <option value="trade">Trade</option>
-                <option value="no_trade">No-trade day</option>
-                <option value="session">Session</option>
-              </select>
+            <div style={{ minWidth: 220, flex: '2 1 280px' }}>
+              <label className="small muted">Visibility</label>
+              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
+                <button
+                  className="inline"
+                  type="button"
+                  onClick={() => setHistoryVisibilityFilter(['live_trade', 'paper_trade', 'no_trade_day', 'session'])}
+                  style={isHistoryAllVisible ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                >
+                  {isHistoryAllVisible ? '✓ ' : ''}All
+                </button>
+                {(['live_trade', 'paper_trade', 'no_trade_day', 'session'] as HistoryVisibilityFilter[]).map((option) => {
+                  const selected = historyVisibilityFilter.includes(option);
+                  return (
+                    <button
+                      key={option}
+                      className="inline"
+                      type="button"
+                      style={selected ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                      onClick={() => setHistoryVisibilityFilter((prev) => {
+                        const exists = prev.includes(option);
+                        if (exists) return prev.filter((item) => item !== option);
+                        return [...prev, option];
+                      })}
+                    >
+                      {selected ? '✓ ' : ''}{historyVisibilityLabels[option]}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div style={{ minWidth: 148, flex: '1 1 160px' }}>
               <label className="small muted" htmlFor="history-date-filter">Date range</label>
@@ -2100,20 +2144,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <option value="last_30_days">Last 30 days</option>
                 <option value="custom">Custom range</option>
               </select>
-            </div>
-            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
-              <label className="small muted" htmlFor="history-trade-filter">Trade type</label>
-              <select
-                id="history-trade-filter"
-                value={historyTradeFilter}
-                disabled={!tradeTypeFilterApplies}
-                onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}
-              >
-                <option value="all">All</option>
-                <option value="live">Live only</option>
-                <option value="paper">Paper only</option>
-              </select>
-              {!tradeTypeFilterApplies ? <div className="small muted">Applies to Trade entry type only.</div> : null}
             </div>
           </div>
           {historyDateFilter === 'custom' ? (
@@ -2129,7 +2159,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           ) : null}
           <div className="small muted">
-            Active filters: <strong>{historyEntryTypeFilter === 'all' ? 'All entries' : titleCase(historyEntryTypeFilter.replace('_', ' '))}</strong> · <strong>{historyDateScopeLabel}</strong>{tradeTypeFilterApplies ? <> · Trade type <strong>{historyTradeFilter === 'all' ? 'All' : historyTradeFilter === 'live' ? 'Live only' : 'Paper only'}</strong></> : null}
+            Active filters: <strong>{historyVisibilitySummary}</strong> · <strong>{historyDateScopeLabel}</strong>
           </div>
           {filteredActivityItems.map((item) => (
             item.type === 'trade' ? (
@@ -2215,7 +2245,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <div className="row"><strong>{sessionTypeLabels[item.session.session_type]}</strong><span>{item.session.session_date}</span></div>
                   <div className="small muted">
                     <span className="badge">{normalizeSessionType(item.session.session_type) === 'chart_session' ? 'Chart study' : normalizeSessionType(item.session.session_type) === 'pre_session_plan' ? 'Pre-session planning' : 'Post-session reflection'}</span>{' '}
-                    {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
+                    {normalizeSessionType(item.session.session_type) === 'pre_session_plan'
+                      ? `Duration ${formatMinutesLabel(item.session.duration_minutes)}`
+                      : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
                   </div>
                   {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
                   <div className="row">
@@ -2240,11 +2272,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     </div>
                     <div className="stack">
                       <div className="small muted">{item.session.session_date} · {sessionTypeLabels[item.session.session_type]}</div>
-                      <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
-                      <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
-                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                      {normalizeSessionType(item.session.session_type) !== 'pre_session_plan' ? <div className="small"><strong>Start:</strong> {item.session.start_time.slice(0, 5)}</div> : null}
+                      {normalizeSessionType(item.session.session_type) !== 'pre_session_plan' ? <div className="small"><strong>End:</strong> {item.session.end_time.slice(0, 5)}</div> : null}
+                      <div className="small"><strong>Duration:</strong> {formatMinutesLabel(item.session.duration_minutes)}</div>
                       {renderSessionSubtypeDetails(item.session)}
-                      <div className="small">Notes:</div>
+                      <div className="small"><strong>Notes:</strong></div>
                       <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
                     </div>
                   </article>
@@ -2757,6 +2789,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
               {normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? (
                 <>
+                  <label className="small muted">Minutes spent</label>
+                  <select value={sessionDraft.minutes_spent} onChange={(e) => setSessionDraft((p) => ({ ...p, minutes_spent: e.target.value }))}>
+                    {preSessionMinutesOptions.map((minutes) => <option key={minutes} value={minutes}>{minutes}m</option>)}
+                  </select>
                   <label className="small muted">Higher-timeframe context</label>
                   <textarea placeholder="Key levels, trend context, liquidity map, news context." value={sessionDraft.higher_timeframe_context} onChange={(e) => setSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} />
                   <div className="row">
@@ -4563,16 +4599,16 @@ function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
       .map((session) => weekKeyFromDate(session.session_date))
       .filter(Boolean)
   );
-  if (!weeksWithJournal.size) return 'No journal sessions were logged in this period.';
+  if (!weeksWithJournal.size) return 'No post-session reviews were logged in this period.';
   const withJournal = trades.filter((trade) => weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   const withoutJournal = trades.filter((trade) => !weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   if (withJournal.length < 2 || withoutJournal.length < 2) return 'Session signal is limited (small sample of journal vs non-journal weeks).';
   const avg = (rows: TradeRow[]) => rows.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / rows.length;
   const withAvg = avg(withJournal);
   const withoutAvg = avg(withoutJournal);
-  if (withAvg - withoutAvg > 5) return `Journal-session weeks outperformed non-journal weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
-  if (withoutAvg - withAvg > 5) return `Non-journal weeks outperformed journal-session weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
-  return 'Journal-session vs non-journal weeks are currently similar in outcome.';
+  if (withAvg - withoutAvg > 5) return `Post-session-review weeks outperformed non-review weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
+  if (withoutAvg - withAvg > 5) return `Non-review weeks outperformed post-session-review weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
+  return 'Post-session-review vs non-review weeks are currently similar in outcome.';
 }
 
 function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
@@ -5265,7 +5301,8 @@ function sessionDraftFromRow(session: SessionRow): SessionDraft {
     bias_correctness: session.bias_correctness || '',
     market_condition_correctness: session.market_condition_correctness || '',
     setup_focus_correctness: session.setup_focus_correctness || '',
-    post_session_emotion: session.post_session_emotion || ''
+    post_session_emotion: session.post_session_emotion || '',
+    minutes_spent: normalizePreSessionMinutesValue(session.duration_minutes)
   };
 }
 
@@ -5295,8 +5332,25 @@ function createSessionDraft(type: SessionRow['session_type'], settings: Settings
     bias_correctness: '',
     market_condition_correctness: '',
     setup_focus_correctness: '',
-    post_session_emotion: ''
+    post_session_emotion: '',
+    minutes_spent: '15'
   };
+}
+
+function normalizePreSessionMinutesValue(value: unknown) {
+  const numeric = Number(value || 15);
+  const bounded = Math.min(180, Math.max(5, Number.isFinite(numeric) ? numeric : 15));
+  const rounded = Math.round(bounded / 5) * 5;
+  return String(rounded);
+}
+
+function addMinutesToTime(baseTime: string, minutes: number) {
+  const [rawHours, rawMinutes] = String(baseTime || '00:00').split(':').map(Number);
+  const baseTotal = (Number.isFinite(rawHours) ? rawHours : 0) * 60 + (Number.isFinite(rawMinutes) ? rawMinutes : 0);
+  const next = (baseTotal + Math.max(0, Math.floor(minutes))) % (24 * 60);
+  const hours = Math.floor(next / 60);
+  const mins = next % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 }
 
 function calculateDurationMinutes(startTime: string, endTime: string) {
