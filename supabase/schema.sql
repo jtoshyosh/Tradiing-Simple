@@ -107,12 +107,25 @@ create table if not exists public.weekly_reviews (
 create table if not exists public.sessions (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  session_type text not null check (session_type in ('chart', 'journal')),
+  session_type text not null check (session_type in ('chart', 'journal', 'pre_session_plan', 'chart_session', 'post_session_review')),
   session_date date not null,
   start_time time not null,
   end_time time not null,
   duration_minutes integer not null default 0,
   notes text,
+  higher_timeframe_context text,
+  session_bias text,
+  bias_confidence text,
+  expected_market_condition text,
+  primary_setup_focus text,
+  sit_out_condition text,
+  main_objective text,
+  starting_emotional_state text,
+  pre_session_note text,
+  bias_correctness text,
+  market_condition_correctness text,
+  setup_focus_correctness text,
+  post_session_emotion text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -162,14 +175,14 @@ create table if not exists public.attachments (
   user_id uuid not null references auth.users(id) on delete cascade,
   trade_id uuid references public.trades(id) on delete cascade,
   no_trade_day_id uuid references public.no_trade_days(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete cascade,
   file_path text not null,
   file_name text not null,
   mime_type text not null,
   byte_size bigint not null,
   created_at timestamptz not null default now(),
   check (
-    (trade_id is not null and no_trade_day_id is null) or
-    (trade_id is null and no_trade_day_id is not null)
+    ((trade_id is not null)::int + (no_trade_day_id is not null)::int + (session_id is not null)::int) = 1
   )
 );
 

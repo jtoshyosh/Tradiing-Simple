@@ -250,7 +250,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [accountFirstName, setAccountFirstName] = useState('');
   const [accountLastName, setAccountLastName] = useState('');
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
+  const [sessionDraft, setSessionDraft] = useState<{ session_type: SessionRow['session_type']; session_date: string; start_time: string; end_time: string; notes: string }>({
     session_type: 'chart',
     session_date: new Date().toISOString().slice(0, 10),
     start_time: SESSION_DEFAULT_TIMES.chart.start,
@@ -668,14 +668,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setTab('history');
   }
 
-  function applySessionDefaults(type: 'chart' | 'journal') {
-    const start = normalizeTimeInput(type === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
-    const end = normalizeTimeInput(type === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+  function applySessionDefaults(type: SessionRow['session_type']) {
+    const fallbackType = type === 'chart' || type === 'chart_session' ? 'chart' : 'journal';
+    const start = normalizeTimeInput(fallbackType === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
+    const end = normalizeTimeInput(fallbackType === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
     setSessionDraft((prev) => ({
       ...prev,
       session_type: type,
-      start_time: start || SESSION_DEFAULT_TIMES[type].start,
-      end_time: end || SESSION_DEFAULT_TIMES[type].end
+      start_time: start || SESSION_DEFAULT_TIMES[fallbackType].start,
+      end_time: end || SESSION_DEFAULT_TIMES[fallbackType].end
     }));
   }
 
