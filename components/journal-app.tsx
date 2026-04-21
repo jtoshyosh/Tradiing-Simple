@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -37,6 +37,19 @@ const SESSION_DEFAULT_TIMES = {
   chart: { start: '06:30', end: '09:00' },
   journal: { start: '20:00', end: '21:00' }
 } as const;
+const sessionTypeLabels: Record<SessionRow['session_type'], string> = {
+  chart: 'Chart session',
+  chart_session: 'Chart session',
+  journal: 'Post-session review',
+  post_session_review: 'Post-session review',
+  pre_session_plan: 'Pre-session plan'
+};
+const sessionBiasOptions = ['Bullish', 'Bearish', 'Neutral / Two-way', 'No clear bias'] as const;
+const biasConfidenceOptions = ['High', 'Medium', 'Low'] as const;
+const expectedMarketConditionOptions = ['Trending', 'Range / Rotation', 'Choppy / Unclear', 'News-driven volatility'] as const;
+const primarySetupFocusOptions = ['Liquidity sweep reversal', 'Break and retest continuation', 'Pullback continuation', 'No setup focus (observe only)'] as const;
+const emotionalStateOptions = ['Calm', 'Focused', 'Confident', 'Tense', 'Distracted'] as const;
+const correctnessOptions = ['Yes', 'Partially', 'No', 'N/A'] as const;
 const entryEmotionOptions = [
   { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
   { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
@@ -156,6 +169,26 @@ const helpNote =
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
+type SessionDraft = {
+  session_type: SessionRow['session_type'];
+  session_date: string;
+  start_time: string;
+  end_time: string;
+  notes: string;
+  higher_timeframe_context: string;
+  session_bias: string;
+  bias_confidence: string;
+  expected_market_condition: string;
+  primary_setup_focus: string;
+  sit_out_condition: string;
+  main_objective: string;
+  starting_emotional_state: string;
+  pre_session_note: string;
+  bias_correctness: string;
+  market_condition_correctness: string;
+  setup_focus_correctness: string;
+  post_session_emotion: string;
+};
 type TradeDraft = {
   trade_date: string;
   ticker: string;
@@ -250,13 +283,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [accountFirstName, setAccountFirstName] = useState('');
   const [accountLastName, setAccountLastName] = useState('');
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionDraft, setSessionDraft] = useState<{ session_type: SessionRow['session_type']; session_date: string; start_time: string; end_time: string; notes: string }>({
-    session_type: 'chart',
-    session_date: new Date().toISOString().slice(0, 10),
-    start_time: SESSION_DEFAULT_TIMES.chart.start,
-    end_time: SESSION_DEFAULT_TIMES.chart.end,
-    notes: ''
-  });
+  const [sessionDraft, setSessionDraft] = useState<SessionDraft>(() => createSessionDraft('chart_session', settings));
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
@@ -328,7 +355,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow)
     }));
     setNoTrades(normalizedNoTrades);
-    setSessions(((sessionResult.data || []) as SessionRow[]) || []);
+    const normalizedSessions = (((sessionResult.data || []) as SessionRow[]) || []).map((session) => ({
+      ...session,
+      session_type: normalizeLegacySessionType(session.session_type)
+    }));
+    setSessions(normalizedSessions);
     setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
     const baseSettings = ((s.data as SettingsRow | null) ?? {
       user_id: userId,
@@ -528,8 +559,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
-  const latestChartSession = sessions.find((session) => session.session_type === 'chart');
-  const latestJournalSession = sessions.find((session) => session.session_type === 'journal');
+  const latestChartSession = sessions.find((session) => normalizeSessionType(session.session_type) === 'chart_session');
+  const latestPostSessionReview = sessions.find((session) => normalizeSessionType(session.session_type) === 'post_session_review');
 
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
@@ -669,27 +700,38 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }
 
   function applySessionDefaults(type: SessionRow['session_type']) {
-    const fallbackType = type === 'chart' || type === 'chart_session' ? 'chart' : 'journal';
-    const start = normalizeTimeInput(fallbackType === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
-    const end = normalizeTimeInput(fallbackType === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
-    setSessionDraft((prev) => ({
-      ...prev,
-      session_type: type,
-      start_time: start || SESSION_DEFAULT_TIMES[fallbackType].start,
-      end_time: end || SESSION_DEFAULT_TIMES[fallbackType].end
-    }));
+    setSessionDraft((prev) => {
+      const next = createSessionDraft(normalizeSessionType(type), settings);
+      return {
+        ...next,
+        session_date: prev.session_date || next.session_date
+      };
+    });
   }
 
   async function addSession() {
     const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
     const payload = {
       user_id: userId,
-      session_type: sessionDraft.session_type,
+      session_type: normalizeLegacySessionType(sessionDraft.session_type),
       session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
       start_time: sessionDraft.start_time,
       end_time: sessionDraft.end_time,
       duration_minutes: duration,
-      notes: sessionDraft.notes || ''
+      notes: sessionDraft.notes || '',
+      higher_timeframe_context: sessionDraft.higher_timeframe_context || null,
+      session_bias: sessionDraft.session_bias || null,
+      bias_confidence: sessionDraft.bias_confidence || null,
+      expected_market_condition: sessionDraft.expected_market_condition || null,
+      primary_setup_focus: sessionDraft.primary_setup_focus || null,
+      sit_out_condition: sessionDraft.sit_out_condition || null,
+      main_objective: sessionDraft.main_objective || null,
+      starting_emotional_state: sessionDraft.starting_emotional_state || null,
+      pre_session_note: sessionDraft.pre_session_note || null,
+      bias_correctness: sessionDraft.bias_correctness || null,
+      market_condition_correctness: sessionDraft.market_condition_correctness || null,
+      setup_focus_correctness: sessionDraft.setup_focus_correctness || null,
+      post_session_emotion: sessionDraft.post_session_emotion || null
     };
     const response = editingSessionId
       ? await supabase.from('sessions').update(payload).eq('id', editingSessionId)
@@ -698,16 +740,40 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       setError(normalizeSupabaseError(response.error.message));
       return;
     }
-    setSessionDraft({
-      session_type: 'chart',
-      session_date: new Date().toISOString().slice(0, 10),
-      start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
-      end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
-      notes: ''
-    });
+    setSessionDraft(createSessionDraft('chart_session', settings));
     setEditingSessionId(null);
     await loadAll();
     setTab('history');
+  }
+
+  function renderPostSessionValidation(
+    draft: SessionDraft,
+    allSessions: SessionRow[],
+    updateDraft: Dispatch<SetStateAction<SessionDraft>>
+  ) {
+    const matchingPlan = allSessions.find((session) => normalizeSessionType(session.session_type) === 'pre_session_plan' && session.session_date === draft.session_date);
+    if (!matchingPlan) {
+      return <div className="small muted">No same-date pre-session plan found yet.</div>;
+    }
+    return (
+      <div className="stack" style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: 12, padding: 10 }}>
+        <div className="small muted">Pre-session bias: {matchingPlan.session_bias || '—'}</div>
+        <select value={draft.bias_correctness} onChange={(e) => updateDraft((p) => ({ ...p, bias_correctness: e.target.value }))}>
+          <option value="">Was session bias correct?</option>
+          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+        <div className="small muted">Pre-session expected condition: {matchingPlan.expected_market_condition || '—'}</div>
+        <select value={draft.market_condition_correctness} onChange={(e) => updateDraft((p) => ({ ...p, market_condition_correctness: e.target.value }))}>
+          <option value="">Was expected condition correct?</option>
+          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+        <div className="small muted">Pre-session setup focus: {matchingPlan.primary_setup_focus || '—'}</div>
+        <select value={draft.setup_focus_correctness} onChange={(e) => updateDraft((p) => ({ ...p, setup_focus_correctness: e.target.value }))}>
+          <option value="">Was setup focus correct?</option>
+          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+        </select>
+      </div>
+    );
   }
 
   async function saveReview() {
@@ -2106,9 +2172,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ) : (
               <Fragment key={`session-row-${item.id}`}>
                 <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
-                  <div className="row"><strong>{titleCase(item.session.session_type)} session</strong><span>{item.session.session_date}</span></div>
+                  <div className="row"><strong>{sessionTypeLabels[item.session.session_type]}</strong><span>{item.session.session_date}</span></div>
                   <div className="small muted">
-                    <span className="badge">{item.session.session_type === 'chart' ? 'Chart study' : 'Journal work'}</span>{' '}
+                    <span className="badge">{normalizeSessionType(item.session.session_type) === 'chart_session' ? 'Chart study' : normalizeSessionType(item.session.session_type) === 'pre_session_plan' ? 'Pre-session planning' : 'Post-session reflection'}</span>{' '}
                     {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
                   </div>
                   {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
@@ -2118,13 +2184,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
                       <button className="inline" type="button" onClick={() => {
                         setEditingSessionId(item.session.id);
-                        setSessionDraft({
-                          session_type: item.session.session_type,
-                          session_date: item.session.session_date,
-                          start_time: item.session.start_time.slice(0, 5),
-                          end_time: item.session.end_time.slice(0, 5),
-                          notes: item.session.notes || ''
-                        });
+                        setSessionDraft(sessionDraftFromRow(item.session));
                         setTab('log');
                         setLogMode('session');
                       }}>Edit</button>
@@ -2139,7 +2199,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
                     </div>
                     <div className="stack">
-                      <div className="small muted">{item.session.session_date} · {titleCase(item.session.session_type)} session</div>
+                      <div className="small muted">{item.session.session_date} · {sessionTypeLabels[item.session.session_type]}</div>
                       <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
                       <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
@@ -2584,36 +2644,37 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
                 {editingSessionId ? <button className="inline" type="button" onClick={() => {
                   setEditingSessionId(null);
-                  setSessionDraft({
-                    session_type: 'chart',
-                    session_date: new Date().toISOString().slice(0, 10),
-                    start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
-                    end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
-                    notes: ''
-                  });
+                  setSessionDraft(createSessionDraft('chart_session', settings));
                 }}>Cancel edit</button> : null}
               </div>
               <div className="small muted">What kind of session did you run? (required)</div>
-              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))', gap: 8 }}>
                 <button
                   className="inline"
                   type="button"
-                  style={sessionDraft.session_type === 'chart' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('chart')}
+                  style={normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => applySessionDefaults('pre_session_plan')}
                 >
-                  {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
+                  {normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? '✓ ' : ''}Pre-session plan
                 </button>
                 <button
                   className="inline"
                   type="button"
-                  style={sessionDraft.session_type === 'journal' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('journal')}
+                  style={normalizeSessionType(sessionDraft.session_type) === 'chart_session' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => applySessionDefaults('chart_session')}
                 >
-                  {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
+                  {normalizeSessionType(sessionDraft.session_type) === 'chart_session' ? '✓ ' : ''}Chart session
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  style={normalizeSessionType(sessionDraft.session_type) === 'post_session_review' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => applySessionDefaults('post_session_review')}
+                >
+                  {normalizeSessionType(sessionDraft.session_type) === 'post_session_review' ? '✓ ' : ''}Post-session review
                 </button>
               </div>
-              <div className="small muted">Selected subtype: <strong>{sessionDraft.session_type === 'chart' ? 'Chart session' : 'Journal session'}</strong></div>
-              <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
+              <div className="small muted">Selected subtype: <strong>{sessionTypeLabels[normalizeLegacySessionType(sessionDraft.session_type)]}</strong></div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <button className="inline" type="button" onClick={() => applySessionDefaults(sessionDraft.session_type)}>Use default times</button>
                 <button
@@ -2624,7 +2685,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     if (!latestChartSession) return;
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'chart',
+                      session_type: 'chart_session',
                       start_time: latestChartSession.start_time.slice(0, 5),
                       end_time: latestChartSession.end_time.slice(0, 5),
                       notes: latestChartSession.notes || ''
@@ -2636,36 +2697,88 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <button
                   className="inline"
                   type="button"
-                  disabled={!latestJournalSession}
+                  disabled={!latestPostSessionReview}
                   onClick={() => {
-                    if (!latestJournalSession) return;
+                    if (!latestPostSessionReview) return;
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'journal',
-                      start_time: latestJournalSession.start_time.slice(0, 5),
-                      end_time: latestJournalSession.end_time.slice(0, 5),
-                      notes: latestJournalSession.notes || ''
+                      session_type: 'post_session_review',
+                      start_time: latestPostSessionReview.start_time.slice(0, 5),
+                      end_time: latestPostSessionReview.end_time.slice(0, 5),
+                      notes: latestPostSessionReview.notes || ''
                     }));
                   }}
                 >
-                  Duplicate last journal session
+                  Duplicate last post-session review
                 </button>
               </div>
               <label className="small muted">Date</label>
               <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
-              <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                <div className="stack">
-                  <label className="small muted">Start time (local)</label>
-                  <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
-                </div>
-                <div className="stack">
-                  <label className="small muted">End time (local)</label>
-                  <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
-                </div>
-              </div>
-              <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
-              <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
-              <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              {normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? (
+                <>
+                  <label className="small muted">Higher-timeframe context</label>
+                  <textarea placeholder="Key levels, trend context, liquidity map, news context." value={sessionDraft.higher_timeframe_context} onChange={(e) => setSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} />
+                  <label className="small muted">Session bias ⓘ</label>
+                  <select value={sessionDraft.session_bias} onChange={(e) => setSessionDraft((p) => ({ ...p, session_bias: e.target.value }))}>
+                    <option value="">Select bias</option>
+                    {sessionBiasOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <div className="small muted">Session bias = your directional expectation before execution starts.</div>
+                  <label className="small muted">Bias confidence</label>
+                  <select value={sessionDraft.bias_confidence} onChange={(e) => setSessionDraft((p) => ({ ...p, bias_confidence: e.target.value }))}>
+                    <option value="">Select confidence</option>
+                    {biasConfidenceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Expected market condition</label>
+                  <select value={sessionDraft.expected_market_condition} onChange={(e) => setSessionDraft((p) => ({ ...p, expected_market_condition: e.target.value }))}>
+                    <option value="">Select market condition</option>
+                    {expectedMarketConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Primary setup focus</label>
+                  <select value={sessionDraft.primary_setup_focus} onChange={(e) => setSessionDraft((p) => ({ ...p, primary_setup_focus: e.target.value }))}>
+                    <option value="">Select setup focus</option>
+                    {primarySetupFocusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Sit-out condition</label>
+                  <input value={sessionDraft.sit_out_condition} onChange={(e) => setSessionDraft((p) => ({ ...p, sit_out_condition: e.target.value }))} placeholder="When will you stand down?" />
+                  <label className="small muted">Main objective</label>
+                  <input value={sessionDraft.main_objective} onChange={(e) => setSessionDraft((p) => ({ ...p, main_objective: e.target.value }))} placeholder="Process objective for this session" />
+                  <label className="small muted">Starting emotional state</label>
+                  <select value={sessionDraft.starting_emotional_state} onChange={(e) => setSessionDraft((p) => ({ ...p, starting_emotional_state: e.target.value }))}>
+                    <option value="">Select emotional state</option>
+                    {emotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Pre-session note (optional)</label>
+                  <textarea placeholder="Short note before the session starts." value={sessionDraft.pre_session_note} onChange={(e) => setSessionDraft((p) => ({ ...p, pre_session_note: e.target.value }))} />
+                </>
+              ) : (
+                <>
+                  <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    <div className="stack">
+                      <label className="small muted">Start time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                    </div>
+                    <div className="stack">
+                      <label className="small muted">End time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+                  <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
+                  <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+                </>
+              )}
+              {normalizeSessionType(sessionDraft.session_type) === 'post_session_review' && (
+                <>
+                  <div className="small muted">Post-session validation (matching same-date pre-session plan when available)</div>
+                  {renderPostSessionValidation(sessionDraft, sessions, setSessionDraft)}
+                  <label className="small muted">Post-session emotion</label>
+                  <select value={sessionDraft.post_session_emotion} onChange={(e) => setSessionDraft((p) => ({ ...p, post_session_emotion: e.target.value }))}>
+                    <option value="">Select emotion</option>
+                    {emotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </>
+              )}
               <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
             </form>
           )}
@@ -5073,6 +5186,71 @@ function buildInitials(firstName: string, lastName: string, email?: string) {
   if (f || l) return `${f}${l}`.toUpperCase();
   const fallback = String(email || '').trim()[0] || 'U';
   return fallback.toUpperCase();
+}
+
+function normalizeSessionType(type: SessionRow['session_type']) {
+  if (type === 'chart') return 'chart_session';
+  if (type === 'journal') return 'post_session_review';
+  return type;
+}
+
+function normalizeLegacySessionType(type: SessionRow['session_type']) {
+  if (type === 'chart_session') return 'chart';
+  if (type === 'post_session_review') return 'journal';
+  return type;
+}
+
+function sessionDraftFromRow(session: SessionRow): SessionDraft {
+  return {
+    session_type: normalizeSessionType(session.session_type),
+    session_date: session.session_date || new Date().toISOString().slice(0, 10),
+    start_time: normalizeTimeInput(session.start_time) || SESSION_DEFAULT_TIMES.chart.start,
+    end_time: normalizeTimeInput(session.end_time) || SESSION_DEFAULT_TIMES.chart.end,
+    notes: session.notes || '',
+    higher_timeframe_context: session.higher_timeframe_context || '',
+    session_bias: session.session_bias || '',
+    bias_confidence: session.bias_confidence || '',
+    expected_market_condition: session.expected_market_condition || '',
+    primary_setup_focus: session.primary_setup_focus || '',
+    sit_out_condition: session.sit_out_condition || '',
+    main_objective: session.main_objective || '',
+    starting_emotional_state: session.starting_emotional_state || '',
+    pre_session_note: session.pre_session_note || '',
+    bias_correctness: session.bias_correctness || '',
+    market_condition_correctness: session.market_condition_correctness || '',
+    setup_focus_correctness: session.setup_focus_correctness || '',
+    post_session_emotion: session.post_session_emotion || ''
+  };
+}
+
+function createSessionDraft(type: SessionRow['session_type'], settings: SettingsRow | null): SessionDraft {
+  const normalizedType = normalizeSessionType(type);
+  const chartStart = normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start;
+  const chartEnd = normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end;
+  const journalStart = normalizeTimeInput(settings?.journal_session_start_default || '') || SESSION_DEFAULT_TIMES.journal.start;
+  const journalEnd = normalizeTimeInput(settings?.journal_session_end_default || '') || SESSION_DEFAULT_TIMES.journal.end;
+  const isPlan = normalizedType === 'pre_session_plan';
+  const isChart = normalizedType === 'chart_session';
+  return {
+    session_type: normalizedType,
+    session_date: new Date().toISOString().slice(0, 10),
+    start_time: isPlan ? chartStart : (isChart ? chartStart : journalStart),
+    end_time: isPlan ? chartEnd : (isChart ? chartEnd : journalEnd),
+    notes: '',
+    higher_timeframe_context: '',
+    session_bias: '',
+    bias_confidence: '',
+    expected_market_condition: '',
+    primary_setup_focus: '',
+    sit_out_condition: '',
+    main_objective: '',
+    starting_emotional_state: '',
+    pre_session_note: '',
+    bias_correctness: '',
+    market_condition_correctness: '',
+    setup_focus_correctness: '',
+    post_session_emotion: ''
+  };
 }
 
 function calculateDurationMinutes(startTime: string, endTime: string) {
