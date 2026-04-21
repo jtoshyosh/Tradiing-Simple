@@ -260,6 +260,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
+  const [calendarAnchor, setCalendarAnchor] = useState<Date>(() => new Date());
   const [calendarMetric, setCalendarMetric] = useState<'pnl' | 'r'>('pnl');
   const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
   const [overlayR, setOverlayR] = useState(false);
@@ -456,8 +457,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     : strongestFamilyCallout
       ? `Focus next: prioritize ${strongestFamilyCallout.key} setups and avoid forcing low-quality variants.`
       : 'Focus next: keep logging quality data so coaching signals can stabilize.';
-  const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
-  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
+  const calendarMonth = new Date(Date.UTC(calendarAnchor.getUTCFullYear(), calendarAnchor.getUTCMonth(), 1));
+  const calendarCells = buildCalendarCells(calendarMonth, dashboardTrades, noTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, periodSessions, dashboardPeriod);
   const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
@@ -467,6 +468,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ? `Strongest setup edge: ${bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`
       : `Biggest drag: ${worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`;
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
+  const calendarWeekInput = weekInputFromKey(weekKeyFromDate(calendarAnchor.toISOString().slice(0, 10)));
+  const calendarScopeLabel = `${formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)} · ${dashboardTradeFilter === 'all' ? 'All trades' : dashboardTradeFilter === 'live' ? 'Live only' : 'Paper only'}`;
+  const editingTradeAttachments = editingTradeId ? attachments.filter((a) => a.trade_id === editingTradeId) : [];
+  const editingNoTradeAttachments = editingNoTradeId ? attachments.filter((a) => a.no_trade_day_id === editingNoTradeId) : [];
   const resolvedMistakeCatalog = resolveMistakeCatalogState(
     settings?.mistake_catalog,
     settings?.mistake_catalog_hidden,
@@ -859,6 +864,21 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (editingNoTradeId === noTradeId) {
       setEditingNoTradeId(null);
       setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
+    }
+    await loadAll();
+  }
+
+  async function removeAttachment(attachment: AttachmentRow) {
+    const confirmed = window.confirm(`Remove attachment "${attachment.file_name}"?`);
+    if (!confirmed) return;
+    const { error: deleteRefError } = await supabase.from('attachments').delete().eq('id', attachment.id);
+    if (deleteRefError) {
+      setError(normalizeSupabaseError(deleteRefError.message));
+      return;
+    }
+    const { error: storageDeleteError } = await supabase.storage.from('attachments').remove([attachment.file_path]);
+    if (storageDeleteError) {
+      setError(`Attachment reference removed, but storage cleanup failed for ${attachment.file_name}. You can remove the file manually in Storage.`);
     }
     await loadAll();
   }
@@ -1666,7 +1686,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack control-card">
-            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
+            <strong>Calendar view</strong>
+            <div className="small muted">Independent calendar controls (does not change the top dashboard period selector).</div>
             <div className="row calendar-toggle-row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <div className="stack" style={{ gap: 6, width: 'auto' }}>
                 <div className="small muted">Range view</div>
@@ -1683,12 +1704,55 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </div>
               </div>
             </div>
-            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day.</div>
-            <div className="small muted">
-              {dashboardPeriod === 'monthly'
-                ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
-                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="inline"
+                type="button"
+                onClick={() => setCalendarAnchor((prev) => shiftPeriod(prev, calendarView === 'weekly' ? 'weekly' : 'monthly', -1))}
+              >
+                Prev {calendarView === 'weekly' ? 'week' : 'month'}
+              </button>
+              <button className="inline" type="button" onClick={() => setCalendarAnchor(new Date())}>Today</button>
+              <button
+                className="inline"
+                type="button"
+                onClick={() => setCalendarAnchor((prev) => shiftPeriod(prev, calendarView === 'weekly' ? 'weekly' : 'monthly', 1))}
+              >
+                Next {calendarView === 'weekly' ? 'week' : 'month'}
+              </button>
             </div>
+            {calendarView === 'month' ? (
+              <div style={{ maxWidth: 220 }}>
+                <label className="small muted" htmlFor="calendar-month-jump">Calendar month</label>
+                <input
+                  id="calendar-month-jump"
+                  type="month"
+                  value={`${calendarAnchor.getUTCFullYear()}-${String(calendarAnchor.getUTCMonth() + 1).padStart(2, '0')}`}
+                  onChange={(e) => {
+                    const [yearText, monthText] = String(e.target.value || '').split('-');
+                    const year = Number(yearText);
+                    const month = Number(monthText);
+                    if (!year || !month) return;
+                    setCalendarAnchor(new Date(Date.UTC(year, month - 1, 1)));
+                  }}
+                />
+              </div>
+            ) : (
+              <div style={{ maxWidth: 220 }}>
+                <label className="small muted" htmlFor="calendar-week-jump">Calendar week</label>
+                <input
+                  id="calendar-week-jump"
+                  type="week"
+                  value={calendarWeekInput}
+                  onChange={(e) => {
+                    const nextWeek = weekKeyFromInput(e.target.value);
+                    setCalendarAnchor(new Date(`${nextWeek}T00:00:00Z`));
+                  }}
+                />
+              </div>
+            )}
+            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day.</div>
+            <div className="small muted">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
             {calendarView === 'month' ? (
               <div className="calendar-grid">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
@@ -1738,6 +1802,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Coaching</div>
           <section className="card stack">
             <strong>Coaching summary</strong>
+            <div className="small muted">Scope: selected dashboard period + trade-type filter ({calendarScopeLabel}).</div>
             <article className="trade" style={{ borderColor: '#4f6ea6', background: 'rgba(44,78,140,0.14)' }}>
               <div className="small muted">Primary takeaway</div>
               <div className="small">{selectedPeriodTakeaway}</div>
@@ -1758,6 +1823,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Detailed breakdowns & diagnostics</div>
+          <div className="small muted">Scope: selected dashboard period + trade-type filter ({calendarScopeLabel}).</div>
           <details className="card stack">
             <summary className="small" style={{ cursor: 'pointer' }}><strong>Top 3 mistake drags</strong></summary>
             {topMistakeDrags.length ? (
@@ -2304,6 +2370,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               placeholder="Capture execution thoughts, context, and lessons."
               minRows={5}
             />
+            {editingTradeId ? (
+              <div className="trade stack">
+                <div className="small muted">Existing attachments</div>
+                {editingTradeAttachments.length ? editingTradeAttachments.map((file) => (
+                  <div key={file.id} className="row" style={{ gap: 8, alignItems: 'center' }}>
+                    <span className="small" style={{ overflowWrap: 'anywhere' }}>{file.file_name}</span>
+                    <button className="inline" type="button" onClick={() => void removeAttachment(file)}>Remove</button>
+                  </div>
+                )) : <div className="small muted">No attachments linked to this trade yet.</div>}
+              </div>
+            ) : null}
             <input
               name="files"
               type="file"
@@ -2424,6 +2501,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               placeholder="Describe why you stayed flat and what confirmed discipline."
               minRows={4}
             />
+            {editingNoTradeId ? (
+              <div className="trade stack">
+                <div className="small muted">Existing attachments</div>
+                {editingNoTradeAttachments.length ? editingNoTradeAttachments.map((file) => (
+                  <div key={file.id} className="row" style={{ gap: 8, alignItems: 'center' }}>
+                    <span className="small" style={{ overflowWrap: 'anywhere' }}>{file.file_name}</span>
+                    <button className="inline" type="button" onClick={() => void removeAttachment(file)}>Remove</button>
+                  </div>
+                )) : <div className="small muted">No attachments linked to this no-trade day yet.</div>}
+              </div>
+            ) : null}
             <input
               name="no_trade_files"
               type="file"
