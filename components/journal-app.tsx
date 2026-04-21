@@ -240,7 +240,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [error, setError] = useState('');
-  const [weekInput, setWeekInput] = useState(currentWeekInput());
+  const [selectedReviewWeekStart, setSelectedReviewWeekStart] = useState(currentWeekKey());
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
   const [detail, setDetail] = useState<DetailState>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
@@ -571,13 +571,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         ? 'Last 30 days'
         : `Custom ${historyDateRange.start} → ${historyDateRange.end}`;
 
-  const selectedWeekKey = weekKeyFromInput(weekInput);
+  const selectedWeekKey = selectedReviewWeekStart;
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
   const weekLiveTrades = weekTrades.filter((t) => !isPaperTrade(t));
   const weekPaperTrades = weekTrades.filter((t) => isPaperTrade(t));
   const weekTradesForReview = filterTradesByType(weekTrades, reviewTradeFilter);
   const selectedReviewEndKey = addDaysKey(selectedWeekKey, 6);
   const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
+  const selectedReviewWeekLabel = formatSundayWeekLabel(selectedWeekKey);
+  const selectedReviewWeekInput = weekInputFromKey(selectedWeekKey);
+  const reviewWeekOptions = [currentWeekKey(), ...reviews.map((r) => r.week_key)]
+    .filter((value, index, arr) => value && arr.indexOf(value) === index)
+    .sort((a, b) => b.localeCompare(a));
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
@@ -2868,19 +2873,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'review' && (
         <section className="card stack control-card">
           <strong>Weekly review</strong>
+          <div className="chip">{selectedReviewWeekLabel} · {selectedReviewRangeLabel}</div>
           {!trades.length && !noTrades.length && !sessions.length ? (
             <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
           ) : null}
           <div className="grid review-week-selector-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-            <input className="review-week-control" type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
-            <select className="review-week-control" value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
-              {[currentWeekInput(), ...reviews.map((r) => weekInputFromKey(r.week_key))]
-                .filter((v, i, a) => v && a.indexOf(v) === i)
-                .sort((a, b) => b.localeCompare(a))
-                .map((w) => {
-                  const sunday = weekKeyFromInput(w);
+            <input className="review-week-control" type="week" value={selectedReviewWeekInput} onChange={(e) => setSelectedReviewWeekStart(weekKeyFromInput(e.target.value))} />
+            <select className="review-week-control" value={selectedWeekKey} onChange={(e) => setSelectedReviewWeekStart(e.target.value)}>
+              {reviewWeekOptions
+                .map((sunday) => {
                   const saturday = addDaysKey(sunday, 6);
-                  return <option value={w} key={w}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${w})`}</option>;
+                  return <option value={sunday} key={sunday}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${formatSundayWeekLabel(sunday)})`}</option>;
                 })}
             </select>
           </div>
@@ -5247,8 +5250,13 @@ function weekKeyFromInput(weekInput: string) {
   return monday.toISOString().slice(0, 10);
 }
 
-function currentWeekInput() {
-  return weekInputFromKey(currentWeekKey());
+function formatSundayWeekLabel(weekStartSunday: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekStartSunday || ''))) return 'Week —';
+  const year = Number(weekStartSunday.slice(0, 4));
+  const firstSundayWindow = sundayWeekStart(`${year}-01-01`);
+  const diffDays = Math.floor((new Date(`${weekStartSunday}T00:00:00Z`).getTime() - new Date(`${firstSundayWindow}T00:00:00Z`).getTime()) / (24 * 60 * 60 * 1000));
+  const weekNumber = Math.max(1, Math.floor(diffDays / 7) + 1);
+  return `Week ${weekNumber}, ${year}`;
 }
 
 function splitDisplayName(displayName: string, email?: string) {
