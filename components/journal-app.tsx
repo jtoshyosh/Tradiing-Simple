@@ -13,7 +13,7 @@ type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | '
 type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HistoryEntryTypeFilter = 'all' | 'trade' | 'no_trade' | 'session';
 type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
-type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset';
+type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
 type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
@@ -153,6 +153,12 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
     ['Present but disappointed', 'You were engaged and selective, but accepted no valid setup occurred.'],
     ['Not fully present', 'Focus and session engagement were limited, reducing decision quality.'],
     ['Accepting / indifferent', 'You stayed process-oriented and neutral about whether a setup appeared.']
+  ],
+  session_bias: [
+    ['Bullish', 'Primary expectation is continuation/acceptance higher unless invalidated.'],
+    ['Bearish', 'Primary expectation is continuation/acceptance lower unless invalidated.'],
+    ['Neutral / Two-way', 'No directional edge; remain reactive and wait for confirmation.'],
+    ['No clear bias', 'Conditions are unclear; prioritize preservation and selective participation.']
   ],
   classification: [
     ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
@@ -774,6 +780,40 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         </select>
       </div>
     );
+  }
+
+  function renderSessionSubtypeDetails(session: SessionRow) {
+    const normalized = normalizeSessionType(session.session_type);
+    if (normalized === 'pre_session_plan') {
+      return (
+        <>
+          <div className="small">Higher-timeframe context: {session.higher_timeframe_context || '—'}</div>
+          <div className="small">Session bias: {session.session_bias || '—'}</div>
+          <div className="small">Bias confidence: {session.bias_confidence || '—'}</div>
+          <div className="small">Expected market condition: {session.expected_market_condition || '—'}</div>
+          <div className="small">Primary setup focus: {session.primary_setup_focus || '—'}</div>
+          <div className="small">Sit-out condition: {session.sit_out_condition || '—'}</div>
+          <div className="small">Main objective: {session.main_objective || '—'}</div>
+          <div className="small">Starting emotional state: {session.starting_emotional_state || '—'}</div>
+          <div className="small">Pre-session note: {session.pre_session_note || '—'}</div>
+        </>
+      );
+    }
+    if (normalized === 'post_session_review') {
+      const matchingPlan = sessions.find((entry) => normalizeSessionType(entry.session_type) === 'pre_session_plan' && entry.session_date === session.session_date);
+      return (
+        <>
+          <div className="small">Linked pre-session bias: {matchingPlan?.session_bias || '—'}</div>
+          <div className="small">Linked expected condition: {matchingPlan?.expected_market_condition || '—'}</div>
+          <div className="small">Linked setup focus: {matchingPlan?.primary_setup_focus || '—'}</div>
+          <div className="small">Bias correctness: {session.bias_correctness || '—'}</div>
+          <div className="small">Market condition correctness: {session.market_condition_correctness || '—'}</div>
+          <div className="small">Setup focus correctness: {session.setup_focus_correctness || '—'}</div>
+          <div className="small">Post-session emotion: {session.post_session_emotion || '—'}</div>
+        </>
+      );
+    }
+    return null;
   }
 
   async function saveReview() {
@@ -2203,6 +2243,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
                       <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                      {renderSessionSubtypeDetails(item.session)}
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
                     </div>
@@ -2718,7 +2759,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <>
                   <label className="small muted">Higher-timeframe context</label>
                   <textarea placeholder="Key levels, trend context, liquidity map, news context." value={sessionDraft.higher_timeframe_context} onChange={(e) => setSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} />
-                  <label className="small muted">Session bias ⓘ</label>
+                  <div className="row">
+                    <label className="small muted">Session bias</label>
+                    <button className="info-btn" aria-label="Session bias help" type="button" onClick={() => setOpenHelp('session_bias')}>i</button>
+                  </div>
                   <select value={sessionDraft.session_bias} onChange={(e) => setSessionDraft((p) => ({ ...p, session_bias: e.target.value }))}>
                     <option value="">Select bias</option>
                     {sessionBiasOptions.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -2909,6 +2953,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       ? 'In-trade emotion definitions'
                       : openHelp === 'no_trade_mindset'
                         ? 'No-trade mindset definitions'
+                        : openHelp === 'session_bias'
+                          ? 'Session bias definitions'
                         : 'Setup model definitions'}
             </strong>
             <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
