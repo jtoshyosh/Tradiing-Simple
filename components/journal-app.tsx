@@ -12,7 +12,7 @@ type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
-type HistoryVisibilityFilter = 'live_trade' | 'paper_trade' | 'no_trade_day' | 'session';
+type HistoryVisibilityFilter = 'live_trade' | 'paper_trade' | 'no_trade_day' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
 type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
 type HelpItem = readonly [string, string];
 
@@ -257,7 +257,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
-  const [historyVisibilityFilter, setHistoryVisibilityFilter] = useState<HistoryVisibilityFilter[]>(['live_trade', 'paper_trade', 'no_trade_day', 'session']);
+  const [historyVisibilityFilter, setHistoryVisibilityFilter] = useState<HistoryVisibilityFilter[]>(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review']);
   const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
   const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
   const [historyDateEnd, setHistoryDateEnd] = useState(() => toDateInput(new Date().toISOString().slice(0, 10)));
@@ -550,19 +550,35 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         : historyVisibilitySet.has('live_trade');
     }
     if (item.type === 'no_trade') return historyVisibilitySet.has('no_trade_day');
-    if (item.type === 'session') return historyVisibilitySet.has('session');
+    if (item.type === 'session') {
+      const sessionFilterKey = normalizeSessionType(item.session.session_type) as HistoryVisibilityFilter;
+      return historyVisibilitySet.has(sessionFilterKey);
+    }
     return true;
   });
   const historyVisibilityLabels: Record<HistoryVisibilityFilter, string> = {
     live_trade: 'Live trade',
     paper_trade: 'Paper trade',
     no_trade_day: 'No-trade day',
-    session: 'Session'
+    pre_session_plan: 'Pre-session plan',
+    chart_session: 'Chart session',
+    post_session_review: 'Post-session review'
   };
-  const isHistoryAllVisible = historyVisibilityFilter.length === 4;
+  const historySessionSubtypeKeys: HistoryVisibilityFilter[] = ['pre_session_plan', 'chart_session', 'post_session_review'];
+  const areAllSessionSubtypesVisible = historySessionSubtypeKeys.every((key) => historyVisibilitySet.has(key));
+  const isHistoryAllVisible = historyVisibilityFilter.length === 6;
   const historyVisibilitySummary = isHistoryAllVisible
     ? 'All'
-    : historyVisibilityFilter.map((item) => historyVisibilityLabels[item]).join(', ') || 'None';
+    : (() => {
+      const selected = [...historyVisibilityFilter];
+      const includeSessions = historySessionSubtypeKeys.every((key) => selected.includes(key));
+      const withoutSessionSubtypes = selected.filter((item) => !historySessionSubtypeKeys.includes(item));
+      const labels = [
+        ...withoutSessionSubtypes.map((item) => historyVisibilityLabels[item]),
+        ...(includeSessions ? ['Session (all)'] : selected.filter((item) => historySessionSubtypeKeys.includes(item)).map((item) => historyVisibilityLabels[item]))
+      ];
+      return labels.join(', ') || 'None';
+    })();
   const historyDateScopeLabel = historyDateFilter === 'all_time'
     ? 'All time'
     : historyDateFilter === 'this_month'
@@ -580,9 +596,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
   const selectedReviewWeekLabel = formatSundayWeekLabel(selectedWeekKey);
   const selectedReviewWeekInput = weekInputFromKey(selectedWeekKey);
-  const reviewWeekOptions = [currentWeekKey(), ...reviews.map((r) => r.week_key)]
-    .filter((value, index, arr) => value && arr.indexOf(value) === index)
-    .sort((a, b) => b.localeCompare(a));
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
@@ -2116,12 +2129,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <button
                   className="inline"
                   type="button"
-                  onClick={() => setHistoryVisibilityFilter(['live_trade', 'paper_trade', 'no_trade_day', 'session'])}
+                  onClick={() => setHistoryVisibilityFilter(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review'])}
                   style={isHistoryAllVisible ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
                 >
                   {isHistoryAllVisible ? '✓ ' : ''}All
                 </button>
-                {(['live_trade', 'paper_trade', 'no_trade_day', 'session'] as HistoryVisibilityFilter[]).map((option) => {
+                <button
+                  className="inline"
+                  type="button"
+                  style={areAllSessionSubtypesVisible ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => setHistoryVisibilityFilter((prev) => {
+                    const hasAll = historySessionSubtypeKeys.every((key) => prev.includes(key));
+                    if (hasAll) return prev.filter((item) => !historySessionSubtypeKeys.includes(item));
+                    return Array.from(new Set([...prev, ...historySessionSubtypeKeys]));
+                  })}
+                >
+                  {areAllSessionSubtypesVisible ? '✓ ' : ''}Session (all)
+                </button>
+                {(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review'] as HistoryVisibilityFilter[]).map((option) => {
                   const selected = historyVisibilityFilter.includes(option);
                   return (
                     <button
@@ -2877,15 +2902,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           {!trades.length && !noTrades.length && !sessions.length ? (
             <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
           ) : null}
-          <div className="grid review-week-selector-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+          <div style={{ maxWidth: 220 }}>
             <input className="review-week-control" type="week" value={selectedReviewWeekInput} onChange={(e) => setSelectedReviewWeekStart(weekKeyFromInput(e.target.value))} />
-            <select className="review-week-control" value={selectedWeekKey} onChange={(e) => setSelectedReviewWeekStart(e.target.value)}>
-              {reviewWeekOptions
-                .map((sunday) => {
-                  const saturday = addDaysKey(sunday, 6);
-                  return <option value={sunday} key={sunday}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${formatSundayWeekLabel(sunday)})`}</option>;
-                })}
-            </select>
           </div>
           <div className="chip">{reviewStatus}</div>
           <div style={{ maxWidth: 220 }}>
