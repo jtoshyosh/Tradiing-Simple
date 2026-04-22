@@ -56,13 +56,15 @@ const noTradeMindsetOptions = [
   { value: 'Not fully present', label: 'Not fully present (I wasn\'t really locked in or actively tracking the session)' },
   { value: 'Accepting / indifferent', label: 'Accepting / indifferent (if the setup came I\'d take it, if not I was okay with that)' }
 ] as const;
-const sessionBiasOptions = ['Bullish', 'Bearish', 'Range / Neutral'] as const;
+const preSessionMinutesOptions = Array.from({ length: 24 }, (_, idx) => (idx + 1) * 5);
+const higherTimeframeContextOptions = ['Bullish alignment', 'Bearish alignment', 'Mixed / conflicting', 'Neutral / range', 'Unsure'] as const;
+const sessionBiasOptions = ['Bullish', 'Bearish', 'Neutral / range', 'Unclear'] as const;
 const biasConfidenceOptions = ['Low', 'Medium', 'High'] as const;
-const expectedMarketConditionOptions = ['Trend day', 'Range day', 'Choppy / uncertain'] as const;
-const primarySetupFocusOptions = ['Bounce', 'Reject', 'Break', 'Observation only'] as const;
-const sitOutConditionOptions = ['No clear displacement', 'News volatility', 'Choppy structure', 'Emotional instability'] as const;
-const sessionObjectiveOptions = ['Protect discipline', 'Execute one A+ setup', 'Practice patience', 'Gather quality screenshots'] as const;
-const startingEmotionalStateOptions = ['Calm', 'Focused', 'Anxious', 'Tired'] as const;
+const expectedMarketConditionOptions = ['Trend day', 'Range / chop', 'Expansion after balance', 'Reversal day', 'News-driven / volatile', 'Unsure'] as const;
+const primarySetupFocusOptions = ['VWAP continuation', 'Liquidity sweep rejection', '5m FVG pullback', 'ORB break and retest', 'Session level break/retest', 'No specific setup / wait and see'] as const;
+const sitOutConditionOptions = ['No A+ setup', 'No displacement', 'News risk', 'Choppy session', 'Unclear bias', 'Outside session timing', 'Poor RR', 'Multiple of the above'] as const;
+const sessionObjectiveOptions = ['Trade only A+ setups', 'Follow my plan regardless of outcome', 'Avoid overtrading', 'Be patient for one clean setup', 'Review and observe, not force trades'] as const;
+const startingEmotionalStateOptions = ['Calm', 'Confident', 'Distracted', 'Impatient', 'Frustrated', 'Tired', 'Anxious'] as const;
 const postSessionEmotionOptions = ['Calm', 'Satisfied', 'Frustrated', 'Mentally drained'] as const;
 const validationCorrectnessOptions = ['Correct', 'Partially correct', 'Incorrect'] as const;
 type EntryEmotion = (typeof entryEmotionOptions)[number]['value'];
@@ -302,8 +304,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const [sessionSubtypeView, setSessionSubtypeView] = useState<SessionSubtypeView>('chart_session');
   const [preSessionDraft, setPreSessionDraft] = useState<PreSessionMeta>({
-    minutes_spent: 30,
-    higher_timeframe_context: '',
+    minutes_spent: preSessionMinutesOptions[5],
+    higher_timeframe_context: higherTimeframeContextOptions[4],
     session_bias: sessionBiasOptions[2],
     bias_confidence: biasConfidenceOptions[1],
     expected_market_condition: expectedMarketConditionOptions[2],
@@ -574,8 +576,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (historyEntryTypeFilter === 'live_trade') return item.type === 'trade' && !isPaperTrade(item.trade);
     if (historyEntryTypeFilter === 'paper_trade') return item.type === 'trade' && isPaperTrade(item.trade);
     if (historyEntryTypeFilter === 'no_trade_day') return item.type === 'no_trade';
-    if (historyEntryTypeFilter === 'pre_session_plan') return item.type === 'session' && item.session.session_type === 'chart';
-    if (historyEntryTypeFilter === 'chart_session') return item.type === 'session' && item.session.session_type === 'chart';
+    if (historyEntryTypeFilter === 'pre_session_plan') return item.type === 'session' && isPreSessionPlan(item.session);
+    if (historyEntryTypeFilter === 'chart_session') return item.type === 'session' && (item.session.session_type === 'chart' || item.session.session_type === 'chart_session');
     if (historyEntryTypeFilter === 'post_session_review') return item.type === 'session' && !isChartSessionType(item.session.session_type);
     return false;
   });
@@ -636,15 +638,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       summary: `Mindset: ${resolveNoTradeMindset(day)}`,
       attachmentCount: attachments.filter((a) => a.no_trade_day_id === day.id).length
     }));
-    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => ({
-      id: session.id,
-      kind: 'session',
-      dateKey: session.session_date,
-      timeLabel: `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
-      title: sessionSubtypeLabel(session.session_type),
-      summary: `${sessionSubtypeTagLabel(session.session_type)} · ${formatMinutesLabel(session.duration_minutes)}`,
-      attachmentCount: attachments.filter((a) => a.session_id === session.id).length
-    }));
+    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => {
+      const subtype = resolveSessionSubtypeFromSession(session);
+      return {
+        id: session.id,
+        kind: 'session',
+        dateKey: session.session_date,
+        timeLabel: subtype === 'pre_session_plan'
+          ? `${session.session_date} · ${formatMinutesLabel(session.duration_minutes)}`
+          : `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
+        title: sessionSubtypeLabel(subtype),
+        summary: `${sessionSubtypeTagLabel(subtype)} · ${formatMinutesLabel(session.duration_minutes)}`,
+        attachmentCount: attachments.filter((a) => a.session_id === session.id).length
+      };
+    });
     return [...tradeItems, ...noTradeItems, ...sessionItems].sort((a, b) => {
       if (a.dateKey === b.dateKey) return a.timeLabel < b.timeLabel ? 1 : -1;
       return a.dateKey < b.dateKey ? 1 : -1;
@@ -656,7 +663,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const referencedPreSessionPlan = useMemo(() => {
     const targetDate = sessionDraft.session_date;
     if (!targetDate) return null;
-    return sessions.find((session) => session.session_date === targetDate && session.session_type === 'pre_session_plan') || null;
+    return sessions.find((session) => session.session_date === targetDate && isPreSessionPlan(session)) || null;
   }, [sessions, sessionDraft.session_date]);
   const referencedPreSessionMeta = useMemo(() => {
     if (!referencedPreSessionPlan) return null;
@@ -2244,76 +2251,99 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             ) : (
               <Fragment>
-                <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
-                  <div className="row"><strong>{sessionSubtypeLabel(item.session.session_type)}</strong><span>{item.session.session_date}</span></div>
-                  <div className="small muted">
-                    <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
-                    {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
-                  </div>
-                  {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
-                  <div className="row">
-                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
-                    <div className="row">
-                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
-                      <button className="inline" type="button" onClick={() => {
-                        const parsed = parseSessionNotes(item.session.notes || '');
-                        const subtype = resolveSessionSubtype(item.session.session_type);
-                        setEditingSessionId(item.session.id);
-                        setSessionDraft({
-                          session_type: item.session.session_type,
-                          session_date: item.session.session_date,
-                          start_time: item.session.start_time.slice(0, 5),
-                          end_time: item.session.end_time.slice(0, 5),
-                          notes: parsed.note || ''
-                        });
-                        if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
-                          setPreSessionDraft({
-                            minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
-                            higher_timeframe_context: parsed.meta.higher_timeframe_context || '',
-                            session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
-                            bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
-                            expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
-                            primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
-                            sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
-                            main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
-                            starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
-                          });
-                        }
-                        if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
-                          setPostSessionDraft({
-                            post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
-                            validation: {
-                              bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
-                              expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
-                              setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
-                            }
-                          });
-                        }
-                        setSessionSubtypeView(subtype);
-                        setTab('log');
-                        setLogMode('session');
-                      }}>Edit</button>
-                      <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
-                    </div>
-                  </div>
-                </article>
-                {detail?.kind === 'session' && detail.id === item.session.id && (
-                  <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
-                    <div className="row">
-                      <strong>Session detail</strong>
-                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                    </div>
-                    <div className="stack">
-                      <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(item.session.session_type)}</div>
-                      <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
-                      <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
-                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
-                      <div className="small">Notes:</div>
-                      <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
-                      <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                    </div>
-                  </article>
-                )}
+                {(() => {
+                  const sessionSubtype = resolveSessionSubtypeFromSession(item.session);
+                  const preSessionMeta = getPreSessionMeta(item.session);
+                  return (
+                    <>
+                      <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                        <div className="row"><strong>{sessionSubtypeLabel(sessionSubtype)}</strong><span>{item.session.session_date}</span></div>
+                        <div className="small muted">
+                          <span className="badge">{sessionSubtypeTagLabel(sessionSubtype)}</span>{' '}
+                          {sessionSubtype === 'pre_session_plan' ? `Duration-first entry · ${formatMinutesLabel(item.session.duration_minutes)}` : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
+                        </div>
+                        {sessionSubtype === 'pre_session_plan' && preSessionMeta ? <div className="small muted">Bias: {preSessionMeta.session_bias} · Condition: {preSessionMeta.expected_market_condition}</div> : null}
+                        {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
+                        <div className="row">
+                          <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
+                          <div className="row">
+                            <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
+                            <button className="inline" type="button" onClick={() => {
+                              const parsed = parseSessionNotes(item.session.notes || '');
+                              const subtype = resolveSessionSubtypeFromSession(item.session);
+                              setEditingSessionId(item.session.id);
+                              setSessionDraft({
+                                session_type: item.session.session_type,
+                                session_date: item.session.session_date,
+                                start_time: item.session.start_time.slice(0, 5),
+                                end_time: item.session.end_time.slice(0, 5),
+                                notes: parsed.note || ''
+                              });
+                              if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
+                                setPreSessionDraft({
+                                  minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
+                                  higher_timeframe_context: parsed.meta.higher_timeframe_context || higherTimeframeContextOptions[4],
+                                  session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
+                                  bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
+                                  expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
+                                  primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
+                                  sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
+                                  main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
+                                  starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
+                                });
+                              }
+                              if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
+                                setPostSessionDraft({
+                                  post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
+                                  validation: {
+                                    bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
+                                    expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
+                                    setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
+                                  }
+                                });
+                              }
+                              setSessionSubtypeView(subtype);
+                              setTab('log');
+                              setLogMode('session');
+                            }}>Edit</button>
+                            <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
+                          </div>
+                        </div>
+                      </article>
+                      {detail?.kind === 'session' && detail.id === item.session.id && (
+                        <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
+                          <div className="row">
+                            <strong>Session detail</strong>
+                            <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                          </div>
+                          <div className="stack">
+                            <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(sessionSubtype)}</div>
+                            <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                            {sessionSubtype === 'pre_session_plan' && preSessionMeta ? (
+                              <>
+                                <div className="small">Higher-timeframe context: {preSessionMeta.higher_timeframe_context}</div>
+                                <div className="small">Session bias: {preSessionMeta.session_bias} ({preSessionMeta.bias_confidence})</div>
+                                <div className="small">Expected market condition: {preSessionMeta.expected_market_condition}</div>
+                                <div className="small">Primary setup focus: {preSessionMeta.primary_setup_focus}</div>
+                                <div className="small">Sit-out condition: {preSessionMeta.sit_out_condition}</div>
+                                <div className="small">Main objective: {preSessionMeta.main_objective}</div>
+                                <div className="small">Starting emotional state: {preSessionMeta.starting_emotional_state}</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
+                                <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
+                              </>
+                            )}
+                            <div className="small">Notes:</div>
+                            <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
+                            <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                          </div>
+                        </article>
+                      )}
+                    </>
+                  );
+                })()}
               </Fragment>
             )}
               </Fragment>
@@ -2813,10 +2843,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               {sessionSubtypeView === 'pre_session_plan' ? (
                 <div className="stack">
                   <label className="small muted">Minutes spent</label>
-                  <input type="number" min={1} max={240} value={preSessionDraft.minutes_spent} onChange={(e) => setPreSessionDraft((p) => ({ ...p, minutes_spent: Math.max(1, Number(e.target.value || 1)) }))} />
+                  <select value={preSessionDraft.minutes_spent} onChange={(e) => setPreSessionDraft((p) => ({ ...p, minutes_spent: Number(e.target.value) }))}>
+                    {preSessionMinutesOptions.map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                  </select>
                   <div className="small muted">Duration: {formatMinutesLabel(preSessionDraft.minutes_spent)}</div>
                   <label className="small muted">Higher-timeframe context</label>
-                  <input value={preSessionDraft.higher_timeframe_context} onChange={(e) => setPreSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} placeholder="Ex: Daily uptrend, 4H pullback into demand" />
+                  <select value={preSessionDraft.higher_timeframe_context} onChange={(e) => setPreSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))}>
+                    {higherTimeframeContextOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                   <div className="row">
                     <label className="small muted">Session bias</label>
                     <button className="info-btn" aria-label="Session bias help" type="button" onClick={() => setOpenHelp('session_bias')}>i</button>
@@ -2893,8 +2927,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   </select>
                 </section>
               ) : null}
-              <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
-              <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              <label className="small muted" htmlFor="session-notes">{sessionSubtypeView === 'pre_session_plan' ? 'Optional short pre-session note' : 'Session notes (optional)'}</label>
+              <textarea id="session-notes" placeholder={sessionSubtypeView === 'pre_session_plan' ? 'Optional quick note before session start.' : 'What did you work on? What improved or still needs reps?'} value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
               <label className="small muted" htmlFor="session-files">Attach files (optional)</label>
               <input id="session-files" name="session_files" type="file" multiple />
               {editingSessionId ? (
@@ -3806,6 +3840,23 @@ function readableSessionNotes(raw: string | null | undefined) {
   return parseSessionNotes(raw).note || '';
 }
 
+function getPreSessionMeta(session: Pick<SessionRow, 'session_type' | 'notes'>) {
+  if (session.session_type === 'pre_session_plan') {
+    const parsed = parseSessionNotes(session.notes || '');
+    if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
+  }
+  if (session.session_type === 'chart' || session.session_type === 'chart_session') {
+    const parsed = parseSessionNotes(session.notes || '');
+    if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
+  }
+  return null;
+}
+
+function isPreSessionPlan(session: Pick<SessionRow, 'session_type' | 'notes'>) {
+  if (session.session_type === 'pre_session_plan') return true;
+  return Boolean(getPreSessionMeta(session));
+}
+
 function minutesToTimeValue(minutes: number) {
   const clamped = Math.max(1, Math.min(24 * 60 - 1, Number(minutes || 1)));
   const hh = String(Math.floor(clamped / 60)).padStart(2, '0');
@@ -3823,6 +3874,11 @@ function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
   return 'chart_session';
 }
 
+function resolveSessionSubtypeFromSession(session: Pick<SessionRow, 'session_type' | 'notes'>): SessionSubtypeView {
+  if (isPreSessionPlan(session)) return 'pre_session_plan';
+  return resolveSessionSubtype(session.session_type);
+}
+
 function sessionSubtypeLabel(sessionType: string) {
   if (sessionType === 'pre_session_plan') return 'Pre-session plan';
   if (sessionType === 'chart_session' || sessionType === 'chart') return 'Chart session';
@@ -3831,7 +3887,10 @@ function sessionSubtypeLabel(sessionType: string) {
 }
 
 function sessionSubtypeTagLabel(sessionType: string) {
-  return isChartSessionType(sessionType) ? 'Chart study' : 'Review work';
+  const subtype = resolveSessionSubtype(sessionType);
+  if (subtype === 'pre_session_plan') return 'Pre-session plan';
+  if (subtype === 'post_session_review') return 'Post-session review';
+  return 'Chart session';
 }
 
 function sundayWeekStart(dateStr: string) {
