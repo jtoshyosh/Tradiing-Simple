@@ -156,6 +156,15 @@ const helpNote =
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
+type ReviewReferenceItem = {
+  id: string;
+  kind: 'trade' | 'no_trade' | 'session';
+  dateKey: string;
+  timeLabel: string;
+  title: string;
+  summary: string;
+  attachmentCount: number;
+};
 type TradeDraft = {
   trade_date: string;
   ticker: string;
@@ -269,7 +278,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [overlaySessionTime, setOverlaySessionTime] = useState(false);
   const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time'>('trade_count');
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
-  const [reviewEntriesOpen, setReviewEntriesOpen] = useState(false);
+  const [reviewEntriesOpen, setReviewEntriesOpen] = useState(true);
+  const [reviewReferenceDetail, setReviewReferenceDetail] = useState<DetailState>(null);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -550,6 +560,42 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
+  const weekTradeById = useMemo(() => new Map(weekTradesForReview.map((trade) => [trade.id, trade])), [weekTradesForReview]);
+  const weekNoTradeById = useMemo(() => new Map(weekNoTrades.map((day) => [day.id, day])), [weekNoTrades]);
+  const weekSessionById = useMemo(() => new Map(weekSessions.map((session) => [session.id, session])), [weekSessions]);
+  const reviewReferenceItems = useMemo<ReviewReferenceItem[]>(() => {
+    const tradeItems: ReviewReferenceItem[] = weekTradesForReview.map((trade) => ({
+      id: trade.id,
+      kind: 'trade',
+      dateKey: trade.trade_date,
+      timeLabel: `${trade.trade_date} · ${isPaperTrade(trade) ? 'Paper trade' : 'Live trade'}`,
+      title: `${trade.ticker} · ${trade.classification}`,
+      summary: `${trade.family} · ${trade.model} · ${Number(trade.r_multiple || 0).toFixed(2)}R · ${trade.minutes_in_trade}m`,
+      attachmentCount: attachments.filter((a) => a.trade_id === trade.id).length
+    }));
+    const noTradeItems: ReviewReferenceItem[] = weekNoTrades.map((day) => ({
+      id: day.id,
+      kind: 'no_trade',
+      dateKey: day.day_date,
+      timeLabel: `${day.day_date} · No-trade day`,
+      title: day.reason,
+      summary: `Mindset: ${resolveNoTradeMindset(day)}`,
+      attachmentCount: attachments.filter((a) => a.no_trade_day_id === day.id).length
+    }));
+    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => ({
+      id: session.id,
+      kind: 'session',
+      dateKey: session.session_date,
+      timeLabel: `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
+      title: sessionSubtypeLabel(session.session_type),
+      summary: `${sessionSubtypeTagLabel(session.session_type)} · ${formatMinutesLabel(session.duration_minutes)}`,
+      attachmentCount: attachments.filter((a) => a.session_id === session.id).length
+    }));
+    return [...tradeItems, ...noTradeItems, ...sessionItems].sort((a, b) => {
+      if (a.dateKey === b.dateKey) return a.timeLabel < b.timeLabel ? 1 : -1;
+      return a.dateKey < b.dateKey ? 1 : -1;
+    });
+  }, [weekTradesForReview, weekNoTrades, weekSessions, attachments]);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
   const latestChartSession = sessions.find((session) => session.session_type === 'chart');
   const latestJournalSession = sessions.find((session) => session.session_type === 'journal');
@@ -557,6 +603,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
   }, [reviewRow?.id, selectedWeekKey]);
+
+  useEffect(() => {
+    setReviewReferenceDetail(null);
+  }, [selectedWeekKey, reviewTradeFilter]);
 
   useEffect(() => {
     if (tab !== 'review') return;
@@ -2756,8 +2806,47 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small muted">Read-only journal context for this selected week.</div>
             {reviewEntriesOpen ? (
               <div className="stack" style={{ maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
-                {weekTradesForReview.map((t) => (
-                  <article key={t.id} className="trade">
+                {reviewReferenceItems.map((entry) => (
+                  <article key={`${entry.kind}:${entry.id}`} className={`trade${entry.kind === 'no_trade' ? ' no-trade' : ''}`} style={{ padding: '10px 12px' }}>
+                    <div className="row">
+                      <div className="small muted">
+                        <span className="badge">{entry.kind === 'trade' ? 'Trade' : entry.kind === 'no_trade' ? 'No-trade day' : 'Session'}</span>{' '}
+                        {entry.timeLabel}
+                      </div>
+                      {entry.attachmentCount > 0 ? <span className="badge">{entry.attachmentCount} file{entry.attachmentCount === 1 ? '' : 's'}</span> : null}
+                    </div>
+                    <div className="small"><strong>{entry.title}</strong></div>
+                    <div className="small muted" style={{ lineHeight: 1.35 }}>{entry.summary}</div>
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <button className="inline" type="button" onClick={() => setReviewReferenceDetail({ kind: entry.kind, id: entry.id })}>View details</button>
+                    </div>
+                  </article>
+                ))}
+                {!reviewReferenceItems.length && <div className="small muted">No entries for selected week and trade-type filter.</div>}
+              </div>
+            ) : null}
+          </section>
+          <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(180deg, rgba(11,18,32,0), rgba(11,18,32,0.92) 35%, rgba(11,18,32,1) 100%)', paddingTop: 14, marginTop: 4 }}>
+            <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
+          </div>
+        </section>
+      )}
+
+      {reviewReferenceDetail && (
+        <>
+          <button className="help-backdrop" aria-label="Close reference details" type="button" onClick={() => setReviewReferenceDetail(null)} />
+          <section className="card stack help-modal" style={{ maxWidth: 860, width: 'min(860px, 96vw)', margin: 'auto', alignSelf: 'center', maxHeight: '86vh', overflow: 'auto' }}>
+            <div className="row">
+              <strong>
+                {reviewReferenceDetail.kind === 'trade' ? 'Trade detail' : reviewReferenceDetail.kind === 'no_trade' ? 'No-trade detail' : 'Session detail'}
+              </strong>
+              <button className="inline" type="button" onClick={() => setReviewReferenceDetail(null)}>Close</button>
+            </div>
+            {reviewReferenceDetail.kind === 'trade' && weekTradeById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const t = weekTradeById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade">
                     <div className="small muted">{t.trade_date} · {t.ticker} · <span className="badge">{isPaperTrade(t) ? 'Paper' : 'Live'}</span></div>
                     <div className="small">{t.family} · {t.model} · {t.classification}</div>
                     <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span> · Entry {resolveEntryEmotion(t)} · In-trade {resolveInTradeEmotion(t)}</div>
@@ -2766,9 +2855,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <RichTextContent value={t.notes || ''} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
-                ))}
-                {weekNoTrades.map((n) => (
-                  <article key={n.id} className="trade no-trade">
+                );
+              })()
+            ) : null}
+            {reviewReferenceDetail.kind === 'no_trade' && weekNoTradeById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const n = weekNoTradeById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade no-trade">
                     <div className="small muted">{n.day_date}</div>
                     <div className="small">Reason: {n.reason}</div>
                     <div className="small">No-trade mindset: {resolveNoTradeMindset(n)}</div>
@@ -2776,23 +2870,25 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <RichTextContent value={n.notes || ''} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
-                ))}
-                {weekSessions.map((s) => (
-                  <article key={s.id} className="trade">
+                );
+              })()
+            ) : null}
+            {reviewReferenceDetail.kind === 'session' && weekSessionById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const s = weekSessionById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade">
                     <div className="small muted">{s.session_date} · {sessionSubtypeLabel(s.session_type)}</div>
-                    <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
-                    <div className="small muted">Attachments: {attachments.filter((a) => a.session_id === s.id).length}</div>
+                    <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {formatMinutesLabel(s.duration_minutes)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={s.notes || ''} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === s.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
-                ))}
-                {!weekTradesForReview.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week and trade-type filter.</div>}
-              </div>
+                );
+              })()
             ) : null}
           </section>
-          <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
-        </section>
+        </>
       )}
 
       {openHelp && (
@@ -3512,6 +3608,10 @@ function sessionSubtypeLabel(sessionType: string) {
   if (sessionType === 'chart_session' || sessionType === 'chart') return 'Chart session';
   if (sessionType === 'post_session_review' || sessionType === 'journal') return 'Post-session review';
   return titleCase(String(sessionType || 'session').replace(/_/g, ' '));
+}
+
+function sessionSubtypeTagLabel(sessionType: string) {
+  return isChartSessionType(sessionType) ? 'Chart study' : 'Review work';
 }
 
 function sundayWeekStart(dateStr: string) {
