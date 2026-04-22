@@ -13,7 +13,7 @@ type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | '
 type TradeTypeFilter = 'all' | 'live' | 'paper';
 type HistoryEntryTypeFilter = 'all' | 'trade_all' | 'session_all' | 'live_trade' | 'paper_trade' | 'no_trade_day' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
 type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
-type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset';
+type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
 type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
@@ -56,6 +56,15 @@ const noTradeMindsetOptions = [
   { value: 'Not fully present', label: 'Not fully present (I wasn\'t really locked in or actively tracking the session)' },
   { value: 'Accepting / indifferent', label: 'Accepting / indifferent (if the setup came I\'d take it, if not I was okay with that)' }
 ] as const;
+const sessionBiasOptions = ['Bullish', 'Bearish', 'Range / Neutral'] as const;
+const biasConfidenceOptions = ['Low', 'Medium', 'High'] as const;
+const expectedMarketConditionOptions = ['Trend day', 'Range day', 'Choppy / uncertain'] as const;
+const primarySetupFocusOptions = ['Bounce', 'Reject', 'Break', 'Observation only'] as const;
+const sitOutConditionOptions = ['No clear displacement', 'News volatility', 'Choppy structure', 'Emotional instability'] as const;
+const sessionObjectiveOptions = ['Protect discipline', 'Execute one A+ setup', 'Practice patience', 'Gather quality screenshots'] as const;
+const startingEmotionalStateOptions = ['Calm', 'Focused', 'Anxious', 'Tired'] as const;
+const postSessionEmotionOptions = ['Calm', 'Satisfied', 'Frustrated', 'Mentally drained'] as const;
+const validationCorrectnessOptions = ['Correct', 'Partially correct', 'Incorrect'] as const;
 type EntryEmotion = (typeof entryEmotionOptions)[number]['value'];
 type InTradeEmotion = (typeof inTradeEmotionOptions)[number]['value'];
 type NoTradeMindset = (typeof noTradeMindsetOptions)[number]['value'];
@@ -141,6 +150,11 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
     ['Not fully present', 'Focus and session engagement were limited, reducing decision quality.'],
     ['Accepting / indifferent', 'You stayed process-oriented and neutral about whether a setup appeared.']
   ],
+  session_bias: [
+    ['Bullish', 'You expect higher-probability long-side opportunities for the session.'],
+    ['Bearish', 'You expect higher-probability short-side opportunities for the session.'],
+    ['Range / Neutral', 'You expect two-sided or choppy behavior and prioritize confirmation.']
+  ],
   classification: [
     ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
     ['Valid setup, poor execution', 'Use this when setup was valid but execution quality was poor.'],
@@ -156,6 +170,27 @@ const helpNote =
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
+type SessionSubtypeView = 'pre_session_plan' | 'chart_session' | 'post_session_review';
+type SessionTypeValue = SessionRow['session_type'];
+type PreSessionMeta = {
+  minutes_spent: number;
+  higher_timeframe_context: string;
+  session_bias: string;
+  bias_confidence: string;
+  expected_market_condition: string;
+  primary_setup_focus: string;
+  sit_out_condition: string;
+  main_objective: string;
+  starting_emotional_state: string;
+};
+type PostSessionMeta = {
+  post_session_emotion: string;
+  validation: {
+    bias_correctness: string;
+    expected_condition_correctness: string;
+    setup_focus_correctness: string;
+  };
+};
 type ReviewReferenceItem = {
   id: string;
   kind: 'trade' | 'no_trade' | 'session';
@@ -258,14 +293,33 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [accountFirstName, setAccountFirstName] = useState('');
   const [accountLastName, setAccountLastName] = useState('');
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
-    session_type: 'chart',
+  const [sessionDraft, setSessionDraft] = useState<{ session_type: SessionTypeValue; session_date: string; start_time: string; end_time: string; notes: string }>({
+    session_type: 'chart_session',
     session_date: new Date().toISOString().slice(0, 10),
     start_time: SESSION_DEFAULT_TIMES.chart.start,
     end_time: SESSION_DEFAULT_TIMES.chart.end,
     notes: ''
   });
-  const [sessionSubtypeView, setSessionSubtypeView] = useState<'pre_session_plan' | 'chart_session' | 'post_session_review'>('chart_session');
+  const [sessionSubtypeView, setSessionSubtypeView] = useState<SessionSubtypeView>('chart_session');
+  const [preSessionDraft, setPreSessionDraft] = useState<PreSessionMeta>({
+    minutes_spent: 30,
+    higher_timeframe_context: '',
+    session_bias: sessionBiasOptions[2],
+    bias_confidence: biasConfidenceOptions[1],
+    expected_market_condition: expectedMarketConditionOptions[2],
+    primary_setup_focus: primarySetupFocusOptions[0],
+    sit_out_condition: sitOutConditionOptions[0],
+    main_objective: sessionObjectiveOptions[0],
+    starting_emotional_state: startingEmotionalStateOptions[0]
+  });
+  const [postSessionDraft, setPostSessionDraft] = useState<PostSessionMeta>({
+    post_session_emotion: postSessionEmotionOptions[0],
+    validation: {
+      bias_correctness: validationCorrectnessOptions[1],
+      expected_condition_correctness: validationCorrectnessOptions[1],
+      setup_focus_correctness: validationCorrectnessOptions[1]
+    }
+  });
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
@@ -397,8 +451,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
   const periodSessionDays = new Set(periodSessions.map((session) => session.session_date)).size;
-  const periodChartSessions = periodSessions.filter((s) => s.session_type === 'chart');
-  const periodJournalSessions = periodSessions.filter((s) => s.session_type === 'journal');
+  const periodChartSessions = periodSessions.filter((s) => isChartSessionType(s.session_type));
+  const periodJournalSessions = periodSessions.filter((s) => !isChartSessionType(s.session_type));
   const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
   const periodJournalMinutes = periodJournalSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
   const lifetimeWins = lifetimeTrades.filter((t) => Number(t.pnl || 0) > 0).length;
@@ -522,7 +576,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (historyEntryTypeFilter === 'no_trade_day') return item.type === 'no_trade';
     if (historyEntryTypeFilter === 'pre_session_plan') return item.type === 'session' && item.session.session_type === 'chart';
     if (historyEntryTypeFilter === 'chart_session') return item.type === 'session' && item.session.session_type === 'chart';
-    if (historyEntryTypeFilter === 'post_session_review') return item.type === 'session' && item.session.session_type === 'journal';
+    if (historyEntryTypeFilter === 'post_session_review') return item.type === 'session' && !isChartSessionType(item.session.session_type);
     return false;
   });
   const historyDateScopeLabel = historyDateFilter === 'all_time'
@@ -597,8 +651,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     });
   }, [weekTradesForReview, weekNoTrades, weekSessions, attachments]);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
-  const latestChartSession = sessions.find((session) => session.session_type === 'chart');
-  const latestJournalSession = sessions.find((session) => session.session_type === 'journal');
+  const latestChartSession = sessions.find((session) => session.session_type === 'chart' || session.session_type === 'chart_session');
+  const latestPostSessionReview = sessions.find((session) => session.session_type === 'journal' || session.session_type === 'post_session_review');
+  const referencedPreSessionPlan = useMemo(() => {
+    const targetDate = sessionDraft.session_date;
+    if (!targetDate) return null;
+    return sessions.find((session) => session.session_date === targetDate && session.session_type === 'pre_session_plan') || null;
+  }, [sessions, sessionDraft.session_date]);
+  const referencedPreSessionMeta = useMemo(() => {
+    if (!referencedPreSessionPlan) return null;
+    const parsed = parseSessionNotes(referencedPreSessionPlan.notes || '');
+    return parsed.meta?.kind === 'pre_session_plan' ? parsed.meta : null;
+  }, [referencedPreSessionPlan]);
 
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
@@ -746,27 +810,46 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setTab('history');
   }
 
-  function applySessionDefaults(type: 'chart' | 'journal') {
-    const start = normalizeTimeInput(type === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
-    const end = normalizeTimeInput(type === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+  function applySessionDefaults(type: SessionSubtypeView) {
+    const usesChartDefaults = type === 'chart_session' || type === 'pre_session_plan';
+    const start = normalizeTimeInput(usesChartDefaults ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
+    const end = normalizeTimeInput(usesChartDefaults ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+    const mappedType: SessionTypeValue = type === 'pre_session_plan'
+      ? 'pre_session_plan'
+      : type === 'post_session_review'
+        ? 'post_session_review'
+        : 'chart_session';
     setSessionDraft((prev) => ({
       ...prev,
-      session_type: type,
-      start_time: start || SESSION_DEFAULT_TIMES[type].start,
-      end_time: end || SESSION_DEFAULT_TIMES[type].end
+      session_type: mappedType,
+      start_time: start || (usesChartDefaults ? SESSION_DEFAULT_TIMES.chart.start : SESSION_DEFAULT_TIMES.journal.start),
+      end_time: end || (usesChartDefaults ? SESSION_DEFAULT_TIMES.chart.end : SESSION_DEFAULT_TIMES.journal.end)
     }));
   }
 
   async function addSession(formData: FormData) {
-    const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const subtype = sessionSubtypeView;
+    const duration = subtype === 'pre_session_plan'
+      ? Math.max(1, Number(preSessionDraft.minutes_spent || 0))
+      : calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const parsedNotes = parseSessionNotes(sessionDraft.notes || '');
+    const meta = subtype === 'pre_session_plan'
+      ? { kind: 'pre_session_plan' as const, ...preSessionDraft }
+      : subtype === 'post_session_review'
+        ? { kind: 'post_session_review' as const, ...postSessionDraft }
+        : null;
+    const storedNotes = withSessionMeta(parsedNotes.note, meta);
+    const startTime = subtype === 'pre_session_plan' ? '00:00:00' : `${sessionDraft.start_time}:00`;
+    const endTime = subtype === 'pre_session_plan' ? minutesToTimeValue(duration) : `${sessionDraft.end_time}:00`;
+    const nextSessionType: SessionTypeValue = subtype === 'pre_session_plan' ? 'pre_session_plan' : subtype === 'post_session_review' ? 'post_session_review' : 'chart_session';
     const payload = {
       user_id: userId,
-      session_type: sessionDraft.session_type,
+      session_type: nextSessionType,
       session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
-      start_time: sessionDraft.start_time,
-      end_time: sessionDraft.end_time,
+      start_time: startTime,
+      end_time: endTime,
       duration_minutes: duration,
-      notes: sessionDraft.notes || ''
+      notes: storedNotes
     };
     const response = editingSessionId
       ? await supabase.from('sessions').update(payload).eq('id', editingSessionId).select('*').single()
@@ -798,12 +881,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       });
     }
     setSessionDraft({
-      session_type: 'chart',
+      session_type: 'chart_session',
       session_date: new Date().toISOString().slice(0, 10),
       start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
       end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
       notes: ''
     });
+    setSessionSubtypeView('chart_session');
     setEditingSessionId(null);
     await loadAll();
     setTab('history');
@@ -2166,21 +2250,46 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
                     {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
                   </div>
-                  {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
+                  {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
                   <div className="row">
                     <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
                     <div className="row">
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
                       <button className="inline" type="button" onClick={() => {
+                        const parsed = parseSessionNotes(item.session.notes || '');
+                        const subtype = resolveSessionSubtype(item.session.session_type);
                         setEditingSessionId(item.session.id);
                         setSessionDraft({
                           session_type: item.session.session_type,
                           session_date: item.session.session_date,
                           start_time: item.session.start_time.slice(0, 5),
                           end_time: item.session.end_time.slice(0, 5),
-                          notes: item.session.notes || ''
+                          notes: parsed.note || ''
                         });
-                        setSessionSubtypeView(item.session.session_type === 'journal' ? 'post_session_review' : 'chart_session');
+                        if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
+                          setPreSessionDraft({
+                            minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
+                            higher_timeframe_context: parsed.meta.higher_timeframe_context || '',
+                            session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
+                            bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
+                            expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
+                            primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
+                            sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
+                            main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
+                            starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
+                          });
+                        }
+                        if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
+                          setPostSessionDraft({
+                            post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
+                            validation: {
+                              bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
+                              expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
+                              setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
+                            }
+                          });
+                        }
+                        setSessionSubtypeView(subtype);
                         setTab('log');
                         setLogMode('session');
                       }}>Edit</button>
@@ -2200,7 +2309,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
                       <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
                       <div className="small">Notes:</div>
-                      <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
+                      <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
@@ -2623,7 +2732,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   setEditingSessionId(null);
                   setSessionSubtypeView('chart_session');
                   setSessionDraft({
-                    session_type: 'chart',
+                    session_type: 'chart_session',
                     session_date: new Date().toISOString().slice(0, 10),
                     start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
                     end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
@@ -2637,7 +2746,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   className="inline"
                   type="button"
                   style={sessionSubtypeView === 'pre_session_plan' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => { setSessionSubtypeView('pre_session_plan'); applySessionDefaults('chart'); }}
+                  onClick={() => { setSessionSubtypeView('pre_session_plan'); applySessionDefaults('pre_session_plan'); }}
                 >
                   {sessionSubtypeView === 'pre_session_plan' ? '✓ ' : ''}Pre-session plan
                 </button>
@@ -2645,7 +2754,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   className="inline"
                   type="button"
                   style={sessionSubtypeView === 'chart_session' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => { setSessionSubtypeView('chart_session'); applySessionDefaults('chart'); }}
+                  onClick={() => { setSessionSubtypeView('chart_session'); applySessionDefaults('chart_session'); }}
                 >
                   {sessionSubtypeView === 'chart_session' ? '✓ ' : ''}Chart session
                 </button>
@@ -2653,15 +2762,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   className="inline"
                   type="button"
                   style={sessionSubtypeView === 'post_session_review' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => { setSessionSubtypeView('post_session_review'); applySessionDefaults('journal'); }}
+                  onClick={() => { setSessionSubtypeView('post_session_review'); applySessionDefaults('post_session_review'); }}
                 >
                   {sessionSubtypeView === 'post_session_review' ? '✓ ' : ''}Post-session review
                 </button>
               </div>
               <div className="small muted">Selected subtype: <strong>{sessionSubtypeLabel(sessionSubtypeView)}</strong></div>
-              <div className="small muted">Pre-session plan and Chart session use chart defaults. Post-session review uses review/journal defaults.</div>
+              <div className="small muted">Pre-session plan and Chart session use chart defaults. Post-session review uses post-session review defaults.</div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-                <button className="inline" type="button" onClick={() => applySessionDefaults(sessionDraft.session_type)}>Use default times</button>
+                <button className="inline" type="button" onClick={() => applySessionDefaults(sessionSubtypeView)}>Use default times</button>
                 <button
                   className="inline"
                   type="button"
@@ -2671,10 +2780,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     setSessionSubtypeView('chart_session');
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'chart',
+                      session_type: 'chart_session',
                       start_time: latestChartSession.start_time.slice(0, 5),
                       end_time: latestChartSession.end_time.slice(0, 5),
-                      notes: latestChartSession.notes || ''
+                      notes: readableSessionNotes(latestChartSession.notes)
                     }));
                   }}
                 >
@@ -2683,35 +2792,107 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <button
                   className="inline"
                   type="button"
-                  disabled={!latestJournalSession}
+                  disabled={!latestPostSessionReview}
                   onClick={() => {
-                    if (!latestJournalSession) return;
+                    if (!latestPostSessionReview) return;
                     setSessionSubtypeView('post_session_review');
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'journal',
-                      start_time: latestJournalSession.start_time.slice(0, 5),
-                      end_time: latestJournalSession.end_time.slice(0, 5),
-                      notes: latestJournalSession.notes || ''
+                      session_type: 'post_session_review',
+                      start_time: latestPostSessionReview.start_time.slice(0, 5),
+                      end_time: latestPostSessionReview.end_time.slice(0, 5),
+                      notes: readableSessionNotes(latestPostSessionReview.notes)
                     }));
                   }}
                 >
-                  Duplicate last journal session
+                  Duplicate last post-session review
                 </button>
               </div>
               <label className="small muted">Date</label>
               <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
-              <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              {sessionSubtypeView === 'pre_session_plan' ? (
                 <div className="stack">
-                  <label className="small muted">Start time (local)</label>
-                  <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                  <label className="small muted">Minutes spent</label>
+                  <input type="number" min={1} max={240} value={preSessionDraft.minutes_spent} onChange={(e) => setPreSessionDraft((p) => ({ ...p, minutes_spent: Math.max(1, Number(e.target.value || 1)) }))} />
+                  <div className="small muted">Duration: {formatMinutesLabel(preSessionDraft.minutes_spent)}</div>
+                  <label className="small muted">Higher-timeframe context</label>
+                  <input value={preSessionDraft.higher_timeframe_context} onChange={(e) => setPreSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} placeholder="Ex: Daily uptrend, 4H pullback into demand" />
+                  <div className="row">
+                    <label className="small muted">Session bias</label>
+                    <button className="info-btn" aria-label="Session bias help" type="button" onClick={() => setOpenHelp('session_bias')}>i</button>
+                  </div>
+                  <select value={preSessionDraft.session_bias} onChange={(e) => setPreSessionDraft((p) => ({ ...p, session_bias: e.target.value }))}>
+                    {sessionBiasOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Bias confidence</label>
+                  <select value={preSessionDraft.bias_confidence} onChange={(e) => setPreSessionDraft((p) => ({ ...p, bias_confidence: e.target.value }))}>
+                    {biasConfidenceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Expected market condition</label>
+                  <select value={preSessionDraft.expected_market_condition} onChange={(e) => setPreSessionDraft((p) => ({ ...p, expected_market_condition: e.target.value }))}>
+                    {expectedMarketConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Primary setup focus</label>
+                  <select value={preSessionDraft.primary_setup_focus} onChange={(e) => setPreSessionDraft((p) => ({ ...p, primary_setup_focus: e.target.value }))}>
+                    {primarySetupFocusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Sit-out condition</label>
+                  <select value={preSessionDraft.sit_out_condition} onChange={(e) => setPreSessionDraft((p) => ({ ...p, sit_out_condition: e.target.value }))}>
+                    {sitOutConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Main objective</label>
+                  <select value={preSessionDraft.main_objective} onChange={(e) => setPreSessionDraft((p) => ({ ...p, main_objective: e.target.value }))}>
+                    {sessionObjectiveOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Starting emotional state</label>
+                  <select value={preSessionDraft.starting_emotional_state} onChange={(e) => setPreSessionDraft((p) => ({ ...p, starting_emotional_state: e.target.value }))}>
+                    {startingEmotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
                 </div>
-                <div className="stack">
-                  <label className="small muted">End time (local)</label>
-                  <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
-                </div>
-              </div>
-              <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+              ) : (
+                <>
+                  <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    <div className="stack">
+                      <label className="small muted">Start time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                    </div>
+                    <div className="stack">
+                      <label className="small muted">End time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+                </>
+              )}
+              {sessionSubtypeView === 'post_session_review' ? (
+                <section className="trade stack">
+                  <strong>Post-session validation</strong>
+                  {referencedPreSessionMeta ? (
+                    <>
+                      <div className="small muted">Using pre-session plan from {referencedPreSessionPlan?.session_date}.</div>
+                      <div className="small">Session bias planned: <strong>{referencedPreSessionMeta.session_bias}</strong></div>
+                      <label className="small muted">Was that bias correct?</label>
+                      <select value={postSessionDraft.validation.bias_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, bias_correctness: e.target.value } }))}>
+                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <div className="small">Expected condition planned: <strong>{referencedPreSessionMeta.expected_market_condition}</strong></div>
+                      <label className="small muted">Was expected condition correct?</label>
+                      <select value={postSessionDraft.validation.expected_condition_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, expected_condition_correctness: e.target.value } }))}>
+                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <div className="small">Primary setup focus planned: <strong>{referencedPreSessionMeta.primary_setup_focus}</strong></div>
+                      <label className="small muted">Was setup focus correct?</label>
+                      <select value={postSessionDraft.validation.setup_focus_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, setup_focus_correctness: e.target.value } }))}>
+                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </>
+                  ) : <div className="small muted">No same-date pre-session plan found. Log one first to compare planned vs actual context.</div>}
+                  <label className="small muted">Post-session emotion</label>
+                  <select value={postSessionDraft.post_session_emotion} onChange={(e) => setPostSessionDraft((p) => ({ ...p, post_session_emotion: e.target.value }))}>
+                    {postSessionEmotionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </section>
+              ) : null}
               <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
               <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
               <label className="small muted" htmlFor="session-files">Attach files (optional)</label>
@@ -2881,7 +3062,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="small muted">{s.session_date} · {sessionSubtypeLabel(s.session_type)}</div>
                     <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {formatMinutesLabel(s.duration_minutes)}</div>
                     <div className="small">Notes:</div>
-                    <RichTextContent value={s.notes || ''} emptyLabel="—" />
+                    <RichTextContent value={readableSessionNotes(s.notes)} emptyLabel="—" />
                     <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === s.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
                 );
@@ -2907,6 +3088,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       ? 'In-trade emotion definitions'
                       : openHelp === 'no_trade_mindset'
                         ? 'No-trade mindset definitions'
+                        : openHelp === 'session_bias'
+                          ? 'Session bias guidance'
                         : 'Setup model definitions'}
             </strong>
             <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
@@ -3427,8 +3610,8 @@ function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[],
     return dates.map((date) => {
       const dayTrades = periodTrades.filter((t) => t.trade_date === date);
       const daySessions = periodSessions.filter((s) => s.session_date === date);
-      const chartMinutes = daySessions.filter((s) => s.session_type === 'chart').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
-      const journalMinutes = daySessions.filter((s) => s.session_type === 'journal').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+      const chartMinutes = daySessions.filter((s) => isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+      const journalMinutes = daySessions.filter((s) => !isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
       return {
         key: date,
         label: formatAxisDate(date),
@@ -3459,8 +3642,8 @@ function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[],
   return Array.from(weeks.entries()).map(([key, value]) => {
     const bucketTrades = periodTrades.filter((t) => value.dates.includes(t.trade_date));
     const bucketSessions = periodSessions.filter((s) => value.dates.includes(s.session_date));
-    const chartMinutes = bucketSessions.filter((s) => s.session_type === 'chart').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
-    const journalMinutes = bucketSessions.filter((s) => s.session_type === 'journal').reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+    const chartMinutes = bucketSessions.filter((s) => isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+    const journalMinutes = bucketSessions.filter((s) => !isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
     const hasNoTrade = periodNoTrades.some((n) => value.dates.includes(n.day_date));
     return {
       key,
@@ -3599,8 +3782,45 @@ function formatDateShort(dateStr: string) {
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
+const SESSION_META_PREFIX = '[session_meta]';
+
+function parseSessionNotes(raw: string | null | undefined): { note: string; meta: (PreSessionMeta & { kind: 'pre_session_plan' }) | (PostSessionMeta & { kind: 'post_session_review' }) | null } {
+  const value = String(raw || '');
+  if (!value.startsWith(SESSION_META_PREFIX)) return { note: value, meta: null };
+  const [firstLine, ...rest] = value.split('\n');
+  const payload = firstLine.slice(SESSION_META_PREFIX.length);
+  try {
+    const meta = JSON.parse(payload);
+    return { note: rest.join('\n').trim(), meta };
+  } catch {
+    return { note: value, meta: null };
+  }
+}
+
+function withSessionMeta(note: string, meta: ((PreSessionMeta & { kind: 'pre_session_plan' }) | (PostSessionMeta & { kind: 'post_session_review' })) | null) {
+  if (!meta) return note || '';
+  return `${SESSION_META_PREFIX}${JSON.stringify(meta)}\n${String(note || '').trim()}`;
+}
+
+function readableSessionNotes(raw: string | null | undefined) {
+  return parseSessionNotes(raw).note || '';
+}
+
+function minutesToTimeValue(minutes: number) {
+  const clamped = Math.max(1, Math.min(24 * 60 - 1, Number(minutes || 1)));
+  const hh = String(Math.floor(clamped / 60)).padStart(2, '0');
+  const mm = String(clamped % 60).padStart(2, '0');
+  return `${hh}:${mm}:00`;
+}
+
 function isChartSessionType(sessionType: string) {
   return sessionType === 'chart' || sessionType === 'chart_session' || sessionType === 'pre_session_plan';
+}
+
+function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
+  if (sessionType === 'pre_session_plan') return 'pre_session_plan';
+  if (sessionType === 'post_session_review' || sessionType === 'journal') return 'post_session_review';
+  return 'chart_session';
 }
 
 function sessionSubtypeLabel(sessionType: string) {
@@ -4526,11 +4746,11 @@ function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
   if (trades.length < 4 || sessions.length < 2) return '';
   const weeksWithJournal = new Set(
     sessions
-      .filter((session) => session.session_type === 'journal')
+      .filter((session) => !isChartSessionType(session.session_type))
       .map((session) => weekKeyFromDate(session.session_date))
       .filter(Boolean)
   );
-  if (!weeksWithJournal.size) return 'No journal sessions were logged in this period.';
+  if (!weeksWithJournal.size) return 'No post-session review sessions were logged in this period.';
   const withJournal = trades.filter((trade) => weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   const withoutJournal = trades.filter((trade) => !weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   if (withJournal.length < 2 || withoutJournal.length < 2) return 'Session signal is limited (small sample of journal vs non-journal weeks).';

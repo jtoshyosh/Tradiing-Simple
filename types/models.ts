@@ -49,7 +49,7 @@ export type WeeklyReviewRow = {
 export type SessionRow = {
   id: string;
   user_id: string;
-  session_type: 'chart' | 'journal';
+  session_type: 'chart' | 'journal' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
   session_date: string;
   start_time: string;
   end_time: string;
