@@ -49,25 +49,12 @@ export type WeeklyReviewRow = {
 export type SessionRow = {
   id: string;
   user_id: string;
-  session_type: 'chart' | 'journal' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
+  session_type: 'chart' | 'journal';
   session_date: string;
   start_time: string;
   end_time: string;
   duration_minutes: number;
   notes: string | null;
-  higher_timeframe_context?: string | null;
-  session_bias?: string | null;
-  bias_confidence?: string | null;
-  expected_market_condition?: string | null;
-  primary_setup_focus?: string | null;
-  sit_out_condition?: string | null;
-  main_objective?: string | null;
-  starting_emotional_state?: string | null;
-  pre_session_note?: string | null;
-  bias_correctness?: string | null;
-  market_condition_correctness?: string | null;
-  setup_focus_correctness?: string | null;
-  post_session_emotion?: string | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -92,7 +79,6 @@ export type AttachmentRow = {
   user_id: string;
   trade_id: string | null;
   no_trade_day_id: string | null;
-  session_id?: string | null;
   file_path: string;
   file_name: string;
   mime_type: string;

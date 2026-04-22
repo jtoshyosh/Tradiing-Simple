@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type Dispatch, type KeyboardEvent, type SetStateAction } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
 import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
@@ -11,9 +11,9 @@ type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
 type TradeTypeFilter = 'all' | 'live' | 'paper';
+type HistoryEntryTypeFilter = 'all' | 'trade_all' | 'session_all' | 'live_trade' | 'paper_trade' | 'no_trade_day' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
 type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
-type HistoryVisibilityFilter = 'live_trade' | 'paper_trade' | 'no_trade_day' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
-type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
+type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset';
 type HelpItem = readonly [string, string];
 
 const classifications: TradeClassification[] = [
@@ -37,20 +37,6 @@ const SESSION_DEFAULT_TIMES = {
   chart: { start: '06:30', end: '09:00' },
   journal: { start: '20:00', end: '21:00' }
 } as const;
-const sessionTypeLabels: Record<SessionRow['session_type'], string> = {
-  chart: 'Chart session',
-  chart_session: 'Chart session',
-  journal: 'Post-session review',
-  post_session_review: 'Post-session review',
-  pre_session_plan: 'Pre-session plan'
-};
-const sessionBiasOptions = ['Bullish', 'Bearish', 'Neutral / Two-way', 'No clear bias'] as const;
-const biasConfidenceOptions = ['High', 'Medium', 'Low'] as const;
-const expectedMarketConditionOptions = ['Trending', 'Range / Rotation', 'Choppy / Unclear', 'News-driven volatility'] as const;
-const primarySetupFocusOptions = ['Liquidity sweep reversal', 'Break and retest continuation', 'Pullback continuation', 'No setup focus (observe only)'] as const;
-const emotionalStateOptions = ['Calm', 'Focused', 'Confident', 'Tense', 'Distracted'] as const;
-const correctnessOptions = ['Yes', 'Partially', 'No', 'N/A'] as const;
-const preSessionMinutesOptions = Array.from({ length: 36 }, (_, idx) => String((idx + 1) * 5));
 const entryEmotionOptions = [
   { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
   { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
@@ -155,12 +141,6 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
     ['Not fully present', 'Focus and session engagement were limited, reducing decision quality.'],
     ['Accepting / indifferent', 'You stayed process-oriented and neutral about whether a setup appeared.']
   ],
-  session_bias: [
-    ['Bullish', 'Primary expectation is continuation/acceptance higher unless invalidated.'],
-    ['Bearish', 'Primary expectation is continuation/acceptance lower unless invalidated.'],
-    ['Neutral / Two-way', 'No directional edge; remain reactive and wait for confirmation.'],
-    ['No clear bias', 'Conditions are unclear; prioritize preservation and selective participation.']
-  ],
   classification: [
     ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
     ['Valid setup, poor execution', 'Use this when setup was valid but execution quality was poor.'],
@@ -176,27 +156,6 @@ const helpNote =
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
-type SessionDraft = {
-  session_type: SessionRow['session_type'];
-  session_date: string;
-  start_time: string;
-  end_time: string;
-  notes: string;
-  higher_timeframe_context: string;
-  session_bias: string;
-  bias_confidence: string;
-  expected_market_condition: string;
-  primary_setup_focus: string;
-  sit_out_condition: string;
-  main_objective: string;
-  starting_emotional_state: string;
-  pre_session_note: string;
-  bias_correctness: string;
-  market_condition_correctness: string;
-  setup_focus_correctness: string;
-  post_session_emotion: string;
-  minutes_spent: string;
-};
 type TradeDraft = {
   trade_date: string;
   ticker: string;
@@ -240,7 +199,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
   const [error, setError] = useState('');
-  const [selectedReviewWeekStart, setSelectedReviewWeekStart] = useState(currentWeekKey());
+  const [weekInput, setWeekInput] = useState(currentWeekInput());
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
   const [detail, setDetail] = useState<DetailState>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
@@ -257,7 +216,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
-  const [historyVisibilityFilter, setHistoryVisibilityFilter] = useState<HistoryVisibilityFilter[]>(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review']);
+  const [historyTradeFilter, setHistoryTradeFilter] = useState<TradeTypeFilter>('all');
+  const [historyEntryTypeFilter, setHistoryEntryTypeFilter] = useState<HistoryEntryTypeFilter>('all');
   const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
   const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
   const [historyDateEnd, setHistoryDateEnd] = useState(() => toDateInput(new Date().toISOString().slice(0, 10)));
@@ -290,11 +250,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [accountFirstName, setAccountFirstName] = useState('');
   const [accountLastName, setAccountLastName] = useState('');
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
-  const [sessionDraft, setSessionDraft] = useState<SessionDraft>(() => createSessionDraft('chart_session', settings));
+  const [sessionDraft, setSessionDraft] = useState<{ session_type: 'chart' | 'journal'; session_date: string; start_time: string; end_time: string; notes: string }>({
+    session_type: 'chart',
+    session_date: new Date().toISOString().slice(0, 10),
+    start_time: SESSION_DEFAULT_TIMES.chart.start,
+    end_time: SESSION_DEFAULT_TIMES.chart.end,
+    notes: ''
+  });
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
-  const [calendarAnchor, setCalendarAnchor] = useState<Date>(() => new Date());
   const [calendarMetric, setCalendarMetric] = useState<'pnl' | 'r'>('pnl');
   const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
   const [overlayR, setOverlayR] = useState(false);
@@ -362,11 +327,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow)
     }));
     setNoTrades(normalizedNoTrades);
-    const normalizedSessions = (((sessionResult.data || []) as SessionRow[]) || []).map((session) => ({
-      ...session,
-      session_type: normalizeLegacySessionType(session.session_type)
-    }));
-    setSessions(normalizedSessions);
+    setSessions(((sessionResult.data || []) as SessionRow[]) || []);
     setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
     const baseSettings = ((s.data as SettingsRow | null) ?? {
       user_id: userId,
@@ -495,8 +456,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     : strongestFamilyCallout
       ? `Focus next: prioritize ${strongestFamilyCallout.key} setups and avoid forcing low-quality variants.`
       : 'Focus next: keep logging quality data so coaching signals can stabilize.';
-  const calendarMonth = new Date(Date.UTC(calendarAnchor.getUTCFullYear(), calendarAnchor.getUTCMonth(), 1));
-  const calendarCells = buildCalendarCells(calendarMonth, dashboardTrades, noTrades);
+  const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
+  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, periodSessions, dashboardPeriod);
   const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
@@ -506,10 +467,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ? `Strongest setup edge: ${bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`
       : `Biggest drag: ${worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`;
   const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
-  const calendarWeekInput = weekInputFromKey(weekKeyFromDate(calendarAnchor.toISOString().slice(0, 10)));
-  const calendarScopeLabel = `${formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)} · ${dashboardTradeFilter === 'all' ? 'All trades' : dashboardTradeFilter === 'live' ? 'Live only' : 'Paper only'}`;
-  const editingTradeAttachments = editingTradeId ? attachments.filter((a) => a.trade_id === editingTradeId) : [];
-  const editingNoTradeAttachments = editingNoTradeId ? attachments.filter((a) => a.no_trade_day_id === editingNoTradeId) : [];
   const resolvedMistakeCatalog = resolveMistakeCatalogState(
     settings?.mistake_catalog,
     settings?.mistake_catalog_hidden,
@@ -541,44 +498,25 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const todayKey = new Date().toISOString().slice(0, 10);
   const historyDateRange = getHistoryDateRange(historyDateFilter, todayKey, historyDateStart, historyDateEnd);
-  const historyVisibilitySet = new Set(historyVisibilityFilter);
+  const tradeTypeFilterApplies = historyEntryTypeFilter === 'all';
   const filteredActivityItems = activityItems.filter((item) => {
     if (!inDateRange(item.date, historyDateRange.start, historyDateRange.end)) return false;
-    if (item.type === 'trade') {
-      return isPaperTrade(item.trade)
-        ? historyVisibilitySet.has('paper_trade')
-        : historyVisibilitySet.has('live_trade');
+
+    if (historyEntryTypeFilter === 'all') {
+      if (item.type === 'trade' && !matchesTradeTypeFilter(item.trade, historyTradeFilter)) return false;
+      return true;
     }
-    if (item.type === 'no_trade') return historyVisibilitySet.has('no_trade_day');
-    if (item.type === 'session') {
-      const sessionFilterKey = normalizeSessionType(item.session.session_type) as HistoryVisibilityFilter;
-      return historyVisibilitySet.has(sessionFilterKey);
-    }
-    return true;
+
+    if (historyEntryTypeFilter === 'trade_all') return item.type === 'trade' || item.type === 'no_trade';
+    if (historyEntryTypeFilter === 'session_all') return item.type === 'session';
+    if (historyEntryTypeFilter === 'live_trade') return item.type === 'trade' && !isPaperTrade(item.trade);
+    if (historyEntryTypeFilter === 'paper_trade') return item.type === 'trade' && isPaperTrade(item.trade);
+    if (historyEntryTypeFilter === 'no_trade_day') return item.type === 'no_trade';
+    if (historyEntryTypeFilter === 'pre_session_plan') return item.type === 'session' && item.session.session_type === 'chart';
+    if (historyEntryTypeFilter === 'chart_session') return item.type === 'session' && item.session.session_type === 'chart';
+    if (historyEntryTypeFilter === 'post_session_review') return item.type === 'session' && item.session.session_type === 'journal';
+    return false;
   });
-  const historyVisibilityLabels: Record<HistoryVisibilityFilter, string> = {
-    live_trade: 'Live trade',
-    paper_trade: 'Paper trade',
-    no_trade_day: 'No-trade day',
-    pre_session_plan: 'Pre-session plan',
-    chart_session: 'Chart session',
-    post_session_review: 'Post-session review'
-  };
-  const historySessionSubtypeKeys: HistoryVisibilityFilter[] = ['pre_session_plan', 'chart_session', 'post_session_review'];
-  const areAllSessionSubtypesVisible = historySessionSubtypeKeys.every((key) => historyVisibilitySet.has(key));
-  const isHistoryAllVisible = historyVisibilityFilter.length === 6;
-  const historyVisibilitySummary = isHistoryAllVisible
-    ? 'All'
-    : (() => {
-      const selected = [...historyVisibilityFilter];
-      const includeSessions = historySessionSubtypeKeys.every((key) => selected.includes(key));
-      const withoutSessionSubtypes = selected.filter((item) => !historySessionSubtypeKeys.includes(item));
-      const labels = [
-        ...withoutSessionSubtypes.map((item) => historyVisibilityLabels[item]),
-        ...(includeSessions ? ['Session (all)'] : selected.filter((item) => historySessionSubtypeKeys.includes(item)).map((item) => historyVisibilityLabels[item]))
-      ];
-      return labels.join(', ') || 'None';
-    })();
   const historyDateScopeLabel = historyDateFilter === 'all_time'
     ? 'All time'
     : historyDateFilter === 'this_month'
@@ -587,20 +525,36 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         ? 'Last 30 days'
         : `Custom ${historyDateRange.start} → ${historyDateRange.end}`;
 
-  const selectedWeekKey = selectedReviewWeekStart;
+  const historyEntryFilterLabel = historyEntryTypeFilter === 'all'
+    ? 'All entries'
+    : historyEntryTypeFilter === 'trade_all'
+      ? 'Trade (all)'
+      : historyEntryTypeFilter === 'session_all'
+        ? 'Session (all)'
+        : historyEntryTypeFilter === 'live_trade'
+          ? 'Live trade'
+          : historyEntryTypeFilter === 'paper_trade'
+            ? 'Paper trade'
+            : historyEntryTypeFilter === 'no_trade_day'
+              ? 'No-trade day'
+              : historyEntryTypeFilter === 'pre_session_plan'
+                ? 'Pre-session plan'
+                : historyEntryTypeFilter === 'chart_session'
+                  ? 'Chart session'
+                  : 'Post-session review';
+
+  const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
   const weekLiveTrades = weekTrades.filter((t) => !isPaperTrade(t));
   const weekPaperTrades = weekTrades.filter((t) => isPaperTrade(t));
   const weekTradesForReview = filterTradesByType(weekTrades, reviewTradeFilter);
   const selectedReviewEndKey = addDaysKey(selectedWeekKey, 6);
   const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
-  const selectedReviewWeekLabel = formatSundayWeekLabel(selectedWeekKey);
-  const selectedReviewWeekInput = weekInputFromKey(selectedWeekKey);
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
-  const latestChartSession = sessions.find((session) => normalizeSessionType(session.session_type) === 'chart_session');
-  const latestPostSessionReview = sessions.find((session) => normalizeSessionType(session.session_type) === 'post_session_review');
+  const latestChartSession = sessions.find((session) => session.session_type === 'chart');
+  const latestJournalSession = sessions.find((session) => session.session_type === 'journal');
 
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
@@ -739,44 +693,27 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setTab('history');
   }
 
-  function applySessionDefaults(type: SessionRow['session_type']) {
-    setSessionDraft((prev) => {
-      const next = createSessionDraft(normalizeSessionType(type), settings);
-      return {
-        ...next,
-        session_date: prev.session_date || next.session_date
-      };
-    });
+  function applySessionDefaults(type: 'chart' | 'journal') {
+    const start = normalizeTimeInput(type === 'chart' ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
+    const end = normalizeTimeInput(type === 'chart' ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+    setSessionDraft((prev) => ({
+      ...prev,
+      session_type: type,
+      start_time: start || SESSION_DEFAULT_TIMES[type].start,
+      end_time: end || SESSION_DEFAULT_TIMES[type].end
+    }));
   }
 
   async function addSession() {
-    const normalizedType = normalizeSessionType(sessionDraft.session_type);
-    const duration = normalizedType === 'pre_session_plan'
-      ? Math.max(0, Number(sessionDraft.minutes_spent || 0))
-      : calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
-    const preSessionStart = '00:00';
-    const preSessionEnd = addMinutesToTime(preSessionStart, duration);
+    const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
     const payload = {
       user_id: userId,
-      session_type: normalizeLegacySessionType(sessionDraft.session_type),
+      session_type: sessionDraft.session_type,
       session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
-      start_time: normalizedType === 'pre_session_plan' ? preSessionStart : sessionDraft.start_time,
-      end_time: normalizedType === 'pre_session_plan' ? preSessionEnd : sessionDraft.end_time,
+      start_time: sessionDraft.start_time,
+      end_time: sessionDraft.end_time,
       duration_minutes: duration,
-      notes: sessionDraft.notes || '',
-      higher_timeframe_context: sessionDraft.higher_timeframe_context || null,
-      session_bias: sessionDraft.session_bias || null,
-      bias_confidence: sessionDraft.bias_confidence || null,
-      expected_market_condition: sessionDraft.expected_market_condition || null,
-      primary_setup_focus: sessionDraft.primary_setup_focus || null,
-      sit_out_condition: sessionDraft.sit_out_condition || null,
-      main_objective: sessionDraft.main_objective || null,
-      starting_emotional_state: sessionDraft.starting_emotional_state || null,
-      pre_session_note: sessionDraft.pre_session_note || null,
-      bias_correctness: sessionDraft.bias_correctness || null,
-      market_condition_correctness: sessionDraft.market_condition_correctness || null,
-      setup_focus_correctness: sessionDraft.setup_focus_correctness || null,
-      post_session_emotion: sessionDraft.post_session_emotion || null
+      notes: sessionDraft.notes || ''
     };
     const response = editingSessionId
       ? await supabase.from('sessions').update(payload).eq('id', editingSessionId)
@@ -785,75 +722,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       setError(normalizeSupabaseError(response.error.message));
       return;
     }
-    setSessionDraft(createSessionDraft('chart_session', settings));
+    setSessionDraft({
+      session_type: 'chart',
+      session_date: new Date().toISOString().slice(0, 10),
+      start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+      end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
+      notes: ''
+    });
     setEditingSessionId(null);
     await loadAll();
     setTab('history');
-  }
-
-  function renderPostSessionValidation(
-    draft: SessionDraft,
-    allSessions: SessionRow[],
-    updateDraft: Dispatch<SetStateAction<SessionDraft>>
-  ) {
-    const matchingPlan = allSessions.find((session) => normalizeSessionType(session.session_type) === 'pre_session_plan' && session.session_date === draft.session_date);
-    if (!matchingPlan) {
-      return <div className="small muted">No same-date pre-session plan found yet.</div>;
-    }
-    return (
-      <div className="stack" style={{ border: '1px solid rgba(255,255,255,0.14)', borderRadius: 12, padding: 10 }}>
-        <div className="small muted">Pre-session bias: {matchingPlan.session_bias || '—'}</div>
-        <select value={draft.bias_correctness} onChange={(e) => updateDraft((p) => ({ ...p, bias_correctness: e.target.value }))}>
-          <option value="">Was session bias correct?</option>
-          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
-        <div className="small muted">Pre-session expected condition: {matchingPlan.expected_market_condition || '—'}</div>
-        <select value={draft.market_condition_correctness} onChange={(e) => updateDraft((p) => ({ ...p, market_condition_correctness: e.target.value }))}>
-          <option value="">Was expected condition correct?</option>
-          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
-        <div className="small muted">Pre-session setup focus: {matchingPlan.primary_setup_focus || '—'}</div>
-        <select value={draft.setup_focus_correctness} onChange={(e) => updateDraft((p) => ({ ...p, setup_focus_correctness: e.target.value }))}>
-          <option value="">Was setup focus correct?</option>
-          {correctnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-        </select>
-      </div>
-    );
-  }
-
-  function renderSessionSubtypeDetails(session: SessionRow) {
-    const normalized = normalizeSessionType(session.session_type);
-    if (normalized === 'pre_session_plan') {
-      return (
-        <>
-          <div className="small"><strong>Minutes spent:</strong> {formatMinutesLabel(session.duration_minutes)}</div>
-          <div className="small"><strong>Higher-timeframe context:</strong> {session.higher_timeframe_context || '—'}</div>
-          <div className="small"><strong>Session bias:</strong> {session.session_bias || '—'}</div>
-          <div className="small"><strong>Bias confidence:</strong> {session.bias_confidence || '—'}</div>
-          <div className="small"><strong>Expected market condition:</strong> {session.expected_market_condition || '—'}</div>
-          <div className="small"><strong>Primary setup focus:</strong> {session.primary_setup_focus || '—'}</div>
-          <div className="small"><strong>Sit-out condition:</strong> {session.sit_out_condition || '—'}</div>
-          <div className="small"><strong>Main objective:</strong> {session.main_objective || '—'}</div>
-          <div className="small"><strong>Starting emotional state:</strong> {session.starting_emotional_state || '—'}</div>
-          <div className="small"><strong>Pre-session note:</strong> {session.pre_session_note || '—'}</div>
-        </>
-      );
-    }
-    if (normalized === 'post_session_review') {
-      const matchingPlan = sessions.find((entry) => normalizeSessionType(entry.session_type) === 'pre_session_plan' && entry.session_date === session.session_date);
-      return (
-        <>
-          <div className="small"><strong>Validation · Pre-session bias:</strong> {matchingPlan?.session_bias || '—'}</div>
-          <div className="small"><strong>Validation · Expected condition:</strong> {matchingPlan?.expected_market_condition || '—'}</div>
-          <div className="small"><strong>Validation · Setup focus:</strong> {matchingPlan?.primary_setup_focus || '—'}</div>
-          <div className="small"><strong>Was bias correct?</strong> {session.bias_correctness || '—'}</div>
-          <div className="small"><strong>Was expected condition correct?</strong> {session.market_condition_correctness || '—'}</div>
-          <div className="small"><strong>Was setup focus correct?</strong> {session.setup_focus_correctness || '—'}</div>
-          <div className="small"><strong>Post-session emotion:</strong> {session.post_session_emotion || '—'}</div>
-        </>
-      );
-    }
-    return null;
   }
 
   async function saveReview() {
@@ -1011,21 +889,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (editingNoTradeId === noTradeId) {
       setEditingNoTradeId(null);
       setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
-    }
-    await loadAll();
-  }
-
-  async function removeAttachment(attachment: AttachmentRow) {
-    const confirmed = window.confirm(`Remove attachment "${attachment.file_name}"?`);
-    if (!confirmed) return;
-    const { error: deleteRefError } = await supabase.from('attachments').delete().eq('id', attachment.id);
-    if (deleteRefError) {
-      setError(normalizeSupabaseError(deleteRefError.message));
-      return;
-    }
-    const { error: storageDeleteError } = await supabase.storage.from('attachments').remove([attachment.file_path]);
-    if (storageDeleteError) {
-      setError(`Attachment reference removed, but storage cleanup failed for ${attachment.file_name}. You can remove the file manually in Storage.`);
     }
     await loadAll();
   }
@@ -1505,11 +1368,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
             <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
               <div className="stack">
-                <label className="small muted" htmlFor="settings-journal-start">Post-session review start</label>
+                <label className="small muted" htmlFor="settings-journal-start">Journal session start</label>
                 <input className="settings-session-time-control" id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
               </div>
               <div className="stack">
-                <label className="small muted" htmlFor="settings-journal-end">Post-session review end</label>
+                <label className="small muted" htmlFor="settings-journal-end">Journal session end</label>
                 <input className="settings-session-time-control" id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
               </div>
             </div>
@@ -1761,7 +1624,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <article className="trade"><div className="muted small">Trades</div><div>{periodTrades.length}</div></article>
               <article className="trade"><div className="muted small">No-trade days</div><div>{periodNoTrades.length}</div></article>
               <article className="trade">
-                <div className="muted small">Post-session reviews</div>
+                <div className="muted small">Journal sessions</div>
                 <div>{formatMinutesLabel(periodJournalMinutes)}</div>
                 <div className="small muted">Avg {formatMinutesLabel(periodJournalSessions.length ? Math.round(periodJournalMinutes / periodJournalSessions.length) : 0)} / session</div>
                 <div className="small muted">{periodJournalSessions.length} {periodJournalSessions.length === 1 ? 'session' : 'sessions'}</div>
@@ -1833,8 +1696,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack control-card">
-            <strong>Calendar view</strong>
-            <div className="small muted">Independent calendar controls (does not change the top dashboard period selector).</div>
+            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
             <div className="row calendar-toggle-row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
               <div className="stack" style={{ gap: 6, width: 'auto' }}>
                 <div className="small muted">Range view</div>
@@ -1851,55 +1713,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </div>
               </div>
             </div>
-            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
-              <button
-                className="inline"
-                type="button"
-                onClick={() => setCalendarAnchor((prev) => shiftPeriod(prev, calendarView === 'weekly' ? 'weekly' : 'monthly', -1))}
-              >
-                Prev {calendarView === 'weekly' ? 'week' : 'month'}
-              </button>
-              <button className="inline" type="button" onClick={() => setCalendarAnchor(new Date())}>Today</button>
-              <button
-                className="inline"
-                type="button"
-                onClick={() => setCalendarAnchor((prev) => shiftPeriod(prev, calendarView === 'weekly' ? 'weekly' : 'monthly', 1))}
-              >
-                Next {calendarView === 'weekly' ? 'week' : 'month'}
-              </button>
-            </div>
-            {calendarView === 'month' ? (
-              <div style={{ maxWidth: 220 }}>
-                <label className="small muted" htmlFor="calendar-month-jump">Calendar month</label>
-                <input
-                  id="calendar-month-jump"
-                  type="month"
-                  value={`${calendarAnchor.getUTCFullYear()}-${String(calendarAnchor.getUTCMonth() + 1).padStart(2, '0')}`}
-                  onChange={(e) => {
-                    const [yearText, monthText] = String(e.target.value || '').split('-');
-                    const year = Number(yearText);
-                    const month = Number(monthText);
-                    if (!year || !month) return;
-                    setCalendarAnchor(new Date(Date.UTC(year, month - 1, 1)));
-                  }}
-                />
-              </div>
-            ) : (
-              <div style={{ maxWidth: 220 }}>
-                <label className="small muted" htmlFor="calendar-week-jump">Calendar week</label>
-                <input
-                  id="calendar-week-jump"
-                  type="week"
-                  value={calendarWeekInput}
-                  onChange={(e) => {
-                    const nextWeek = weekKeyFromInput(e.target.value);
-                    setCalendarAnchor(new Date(`${nextWeek}T00:00:00Z`));
-                  }}
-                />
-              </div>
-            )}
             <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day.</div>
-            <div className="small muted">{calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })}</div>
+            <div className="small muted">
+              {dashboardPeriod === 'monthly'
+                ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
+            </div>
             {calendarView === 'month' ? (
               <div className="calendar-grid">
                 {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
@@ -1949,7 +1768,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Coaching</div>
           <section className="card stack">
             <strong>Coaching summary</strong>
-            <div className="small muted">Scope: selected dashboard period + trade-type filter ({calendarScopeLabel}).</div>
             <article className="trade" style={{ borderColor: '#4f6ea6', background: 'rgba(44,78,140,0.14)' }}>
               <div className="small muted">Primary takeaway</div>
               <div className="small">{selectedPeriodTakeaway}</div>
@@ -1970,7 +1788,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Detailed breakdowns & diagnostics</div>
-          <div className="small muted">Scope: selected dashboard period + trade-type filter ({calendarScopeLabel}).</div>
           <details className="card stack">
             <summary className="small" style={{ cursor: 'pointer' }}><strong>Top 3 mistake drags</strong></summary>
             {topMistakeDrags.length ? (
@@ -2123,48 +1940,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'history' && (
         <section className="card stack control-card">
           <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div style={{ minWidth: 220, flex: '2 1 280px' }}>
-              <label className="small muted">Visibility</label>
-              <div className="row" style={{ gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                <button
-                  className="inline"
-                  type="button"
-                  onClick={() => setHistoryVisibilityFilter(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review'])}
-                  style={isHistoryAllVisible ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                >
-                  {isHistoryAllVisible ? '✓ ' : ''}All
-                </button>
-                <button
-                  className="inline"
-                  type="button"
-                  style={areAllSessionSubtypesVisible ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => setHistoryVisibilityFilter((prev) => {
-                    const hasAll = historySessionSubtypeKeys.every((key) => prev.includes(key));
-                    if (hasAll) return prev.filter((item) => !historySessionSubtypeKeys.includes(item));
-                    return Array.from(new Set([...prev, ...historySessionSubtypeKeys]));
-                  })}
-                >
-                  {areAllSessionSubtypesVisible ? '✓ ' : ''}Session (all)
-                </button>
-                {(['live_trade', 'paper_trade', 'no_trade_day', 'pre_session_plan', 'chart_session', 'post_session_review'] as HistoryVisibilityFilter[]).map((option) => {
-                  const selected = historyVisibilityFilter.includes(option);
-                  return (
-                    <button
-                      key={option}
-                      className="inline"
-                      type="button"
-                      style={selected ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                      onClick={() => setHistoryVisibilityFilter((prev) => {
-                        const exists = prev.includes(option);
-                        if (exists) return prev.filter((item) => item !== option);
-                        return [...prev, option];
-                      })}
-                    >
-                      {selected ? '✓ ' : ''}{historyVisibilityLabels[option]}
-                    </button>
-                  );
-                })}
-              </div>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-entry-type-filter">Entry type</label>
+              <select id="history-entry-type-filter" value={historyEntryTypeFilter} onChange={(e) => setHistoryEntryTypeFilter(e.target.value as HistoryEntryTypeFilter)}>
+                <option value="all">All</option>
+                <option value="trade_all">Trade (all)</option>
+                <option value="session_all">Session (all)</option>
+                <option value="live_trade">Live trade</option>
+                <option value="paper_trade">Paper trade</option>
+                <option value="no_trade_day">No-trade day</option>
+                <option value="pre_session_plan">Pre-session plan</option>
+                <option value="chart_session">Chart session</option>
+                <option value="post_session_review">Post-session review</option>
+              </select>
             </div>
             <div style={{ minWidth: 148, flex: '1 1 160px' }}>
               <label className="small muted" htmlFor="history-date-filter">Date range</label>
@@ -2174,6 +1962,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <option value="last_30_days">Last 30 days</option>
                 <option value="custom">Custom range</option>
               </select>
+            </div>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-trade-filter">Trade type</label>
+              <select
+                id="history-trade-filter"
+                value={historyTradeFilter}
+                disabled={!tradeTypeFilterApplies}
+                onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}
+              >
+                <option value="all">All</option>
+                <option value="live">Live only</option>
+                <option value="paper">Paper only</option>
+              </select>
+              {!tradeTypeFilterApplies ? <div className="small muted">Applies when Entry type = All.</div> : null}
             </div>
           </div>
           {historyDateFilter === 'custom' ? (
@@ -2189,11 +1991,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           ) : null}
           <div className="small muted">
-            Active filters: <strong>{historyVisibilitySummary}</strong> · <strong>{historyDateScopeLabel}</strong>
+            Active filters: <strong>{historyEntryFilterLabel}</strong> · <strong>{historyDateScopeLabel}</strong>{tradeTypeFilterApplies ? <> · Trade type <strong>{historyTradeFilter === 'all' ? 'All' : historyTradeFilter === 'live' ? 'Live only' : 'Paper only'}</strong></> : null}
           </div>
-          {filteredActivityItems.map((item) => (
-            item.type === 'trade' ? (
-              <Fragment key={`trade-row-${item.id}`}>
+          {filteredActivityItems.map((item, index) => {
+            const showDateDivider = index === 0 || filteredActivityItems[index - 1]?.date !== item.date;
+            return (
+              <Fragment key={`history-item-${item.type}-${item.id}`}>
+                {showDateDivider ? <div className="small muted" style={{ fontWeight: 700, letterSpacing: '.02em', paddingTop: index === 0 ? 0 : 6 }}>{formatDateShort(item.date)}</div> : null}
+                {item.type === 'trade' ? (
+              <Fragment>
                 <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
                   <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model}</div>
@@ -2238,7 +2044,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 )}
               </Fragment>
             ) : item.type === 'no_trade' ? (
-              <Fragment key={`no-trade-row-${item.id}`}>
+              <Fragment>
                 <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
                   <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
                   <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
@@ -2270,14 +2076,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 )}
               </Fragment>
             ) : (
-              <Fragment key={`session-row-${item.id}`}>
+              <Fragment>
                 <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
-                  <div className="row"><strong>{sessionTypeLabels[item.session.session_type]}</strong><span>{item.session.session_date}</span></div>
+                  <div className="row"><strong>{titleCase(item.session.session_type)} session</strong><span>{item.session.session_date}</span></div>
                   <div className="small muted">
-                    <span className="badge">{normalizeSessionType(item.session.session_type) === 'chart_session' ? 'Chart study' : normalizeSessionType(item.session.session_type) === 'pre_session_plan' ? 'Pre-session planning' : 'Post-session reflection'}</span>{' '}
-                    {normalizeSessionType(item.session.session_type) === 'pre_session_plan'
-                      ? `Duration ${formatMinutesLabel(item.session.duration_minutes)}`
-                      : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
+                    <span className="badge">{item.session.session_type === 'chart' ? 'Chart study' : 'Journal work'}</span>{' '}
+                    {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
                   </div>
                   {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
                   <div className="row">
@@ -2286,7 +2090,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
                       <button className="inline" type="button" onClick={() => {
                         setEditingSessionId(item.session.id);
-                        setSessionDraft(sessionDraftFromRow(item.session));
+                        setSessionDraft({
+                          session_type: item.session.session_type,
+                          session_date: item.session.session_date,
+                          start_time: item.session.start_time.slice(0, 5),
+                          end_time: item.session.end_time.slice(0, 5),
+                          notes: item.session.notes || ''
+                        });
                         setTab('log');
                         setLogMode('session');
                       }}>Edit</button>
@@ -2301,19 +2111,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
                     </div>
                     <div className="stack">
-                      <div className="small muted">{item.session.session_date} · {sessionTypeLabels[item.session.session_type]}</div>
-                      {normalizeSessionType(item.session.session_type) !== 'pre_session_plan' ? <div className="small"><strong>Start:</strong> {item.session.start_time.slice(0, 5)}</div> : null}
-                      {normalizeSessionType(item.session.session_type) !== 'pre_session_plan' ? <div className="small"><strong>End:</strong> {item.session.end_time.slice(0, 5)}</div> : null}
-                      <div className="small"><strong>Duration:</strong> {formatMinutesLabel(item.session.duration_minutes)}</div>
-                      {renderSessionSubtypeDetails(item.session)}
-                      <div className="small"><strong>Notes:</strong></div>
+                      <div className="small muted">{item.session.session_date} · {titleCase(item.session.session_type)} session</div>
+                      <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
+                      <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
+                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                      <div className="small">Notes:</div>
                       <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
                     </div>
                   </article>
                 )}
               </Fragment>
-            )
-          ))}
+            )}
+              </Fragment>
+            );
+          })}
           {!filteredActivityItems.length ? <div className="small muted">No history entries match the selected filters yet.</div> : null}
         </section>
       )}
@@ -2534,17 +2345,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               placeholder="Capture execution thoughts, context, and lessons."
               minRows={5}
             />
-            {editingTradeId ? (
-              <div className="trade stack">
-                <div className="small muted">Existing attachments</div>
-                {editingTradeAttachments.length ? editingTradeAttachments.map((file) => (
-                  <div key={file.id} className="row" style={{ gap: 8, alignItems: 'center' }}>
-                    <span className="small" style={{ overflowWrap: 'anywhere' }}>{file.file_name}</span>
-                    <button className="inline" type="button" onClick={() => void removeAttachment(file)}>Remove</button>
-                  </div>
-                )) : <div className="small muted">No attachments linked to this trade yet.</div>}
-              </div>
-            ) : null}
             <input
               name="files"
               type="file"
@@ -2665,17 +2465,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               placeholder="Describe why you stayed flat and what confirmed discipline."
               minRows={4}
             />
-            {editingNoTradeId ? (
-              <div className="trade stack">
-                <div className="small muted">Existing attachments</div>
-                {editingNoTradeAttachments.length ? editingNoTradeAttachments.map((file) => (
-                  <div key={file.id} className="row" style={{ gap: 8, alignItems: 'center' }}>
-                    <span className="small" style={{ overflowWrap: 'anywhere' }}>{file.file_name}</span>
-                    <button className="inline" type="button" onClick={() => void removeAttachment(file)}>Remove</button>
-                  </div>
-                )) : <div className="small muted">No attachments linked to this no-trade day yet.</div>}
-              </div>
-            ) : null}
             <input
               name="no_trade_files"
               type="file"
@@ -2747,37 +2536,36 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
                 {editingSessionId ? <button className="inline" type="button" onClick={() => {
                   setEditingSessionId(null);
-                  setSessionDraft(createSessionDraft('chart_session', settings));
+                  setSessionDraft({
+                    session_type: 'chart',
+                    session_date: new Date().toISOString().slice(0, 10),
+                    start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+                    end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
+                    notes: ''
+                  });
                 }}>Cancel edit</button> : null}
               </div>
               <div className="small muted">What kind of session did you run? (required)</div>
-              <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(148px, 1fr))', gap: 8 }}>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <button
                   className="inline"
                   type="button"
-                  style={normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('pre_session_plan')}
+                  style={sessionDraft.session_type === 'chart' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => applySessionDefaults('chart')}
                 >
-                  {normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? '✓ ' : ''}Pre-session plan
+                  {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
                 </button>
                 <button
                   className="inline"
                   type="button"
-                  style={normalizeSessionType(sessionDraft.session_type) === 'chart_session' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('chart_session')}
+                  style={sessionDraft.session_type === 'journal' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => applySessionDefaults('journal')}
                 >
-                  {normalizeSessionType(sessionDraft.session_type) === 'chart_session' ? '✓ ' : ''}Chart session
-                </button>
-                <button
-                  className="inline"
-                  type="button"
-                  style={normalizeSessionType(sessionDraft.session_type) === 'post_session_review' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('post_session_review')}
-                >
-                  {normalizeSessionType(sessionDraft.session_type) === 'post_session_review' ? '✓ ' : ''}Post-session review
+                  {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
                 </button>
               </div>
-              <div className="small muted">Selected subtype: <strong>{sessionTypeLabels[normalizeLegacySessionType(sessionDraft.session_type)]}</strong></div>
+              <div className="small muted">Selected subtype: <strong>{sessionDraft.session_type === 'chart' ? 'Chart session' : 'Journal session'}</strong></div>
+              <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <button className="inline" type="button" onClick={() => applySessionDefaults(sessionDraft.session_type)}>Use default times</button>
                 <button
@@ -2788,7 +2576,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     if (!latestChartSession) return;
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'chart_session',
+                      session_type: 'chart',
                       start_time: latestChartSession.start_time.slice(0, 5),
                       end_time: latestChartSession.end_time.slice(0, 5),
                       notes: latestChartSession.notes || ''
@@ -2800,95 +2588,36 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <button
                   className="inline"
                   type="button"
-                  disabled={!latestPostSessionReview}
+                  disabled={!latestJournalSession}
                   onClick={() => {
-                    if (!latestPostSessionReview) return;
+                    if (!latestJournalSession) return;
                     setSessionDraft((p) => ({
                       ...p,
-                      session_type: 'post_session_review',
-                      start_time: latestPostSessionReview.start_time.slice(0, 5),
-                      end_time: latestPostSessionReview.end_time.slice(0, 5),
-                      notes: latestPostSessionReview.notes || ''
+                      session_type: 'journal',
+                      start_time: latestJournalSession.start_time.slice(0, 5),
+                      end_time: latestJournalSession.end_time.slice(0, 5),
+                      notes: latestJournalSession.notes || ''
                     }));
                   }}
                 >
-                  Duplicate last post-session review
+                  Duplicate last journal session
                 </button>
               </div>
               <label className="small muted">Date</label>
               <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
-              {normalizeSessionType(sessionDraft.session_type) === 'pre_session_plan' ? (
-                <>
-                  <label className="small muted">Minutes spent</label>
-                  <select value={sessionDraft.minutes_spent} onChange={(e) => setSessionDraft((p) => ({ ...p, minutes_spent: e.target.value }))}>
-                    {preSessionMinutesOptions.map((minutes) => <option key={minutes} value={minutes}>{minutes}m</option>)}
-                  </select>
-                  <label className="small muted">Higher-timeframe context</label>
-                  <textarea placeholder="Key levels, trend context, liquidity map, news context." value={sessionDraft.higher_timeframe_context} onChange={(e) => setSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))} />
-                  <div className="row">
-                    <label className="small muted">Session bias</label>
-                    <button className="info-btn" aria-label="Session bias help" type="button" onClick={() => setOpenHelp('session_bias')}>i</button>
-                  </div>
-                  <select value={sessionDraft.session_bias} onChange={(e) => setSessionDraft((p) => ({ ...p, session_bias: e.target.value }))}>
-                    <option value="">Select bias</option>
-                    {sessionBiasOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <div className="small muted">Session bias = your directional expectation before execution starts.</div>
-                  <label className="small muted">Bias confidence</label>
-                  <select value={sessionDraft.bias_confidence} onChange={(e) => setSessionDraft((p) => ({ ...p, bias_confidence: e.target.value }))}>
-                    <option value="">Select confidence</option>
-                    {biasConfidenceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Expected market condition</label>
-                  <select value={sessionDraft.expected_market_condition} onChange={(e) => setSessionDraft((p) => ({ ...p, expected_market_condition: e.target.value }))}>
-                    <option value="">Select market condition</option>
-                    {expectedMarketConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Primary setup focus</label>
-                  <select value={sessionDraft.primary_setup_focus} onChange={(e) => setSessionDraft((p) => ({ ...p, primary_setup_focus: e.target.value }))}>
-                    <option value="">Select setup focus</option>
-                    {primarySetupFocusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Sit-out condition</label>
-                  <input value={sessionDraft.sit_out_condition} onChange={(e) => setSessionDraft((p) => ({ ...p, sit_out_condition: e.target.value }))} placeholder="When will you stand down?" />
-                  <label className="small muted">Main objective</label>
-                  <input value={sessionDraft.main_objective} onChange={(e) => setSessionDraft((p) => ({ ...p, main_objective: e.target.value }))} placeholder="Process objective for this session" />
-                  <label className="small muted">Starting emotional state</label>
-                  <select value={sessionDraft.starting_emotional_state} onChange={(e) => setSessionDraft((p) => ({ ...p, starting_emotional_state: e.target.value }))}>
-                    <option value="">Select emotional state</option>
-                    {emotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Pre-session note (optional)</label>
-                  <textarea placeholder="Short note before the session starts." value={sessionDraft.pre_session_note} onChange={(e) => setSessionDraft((p) => ({ ...p, pre_session_note: e.target.value }))} />
-                </>
-              ) : (
-                <>
-                  <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
-                    <div className="stack">
-                      <label className="small muted">Start time (local)</label>
-                      <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
-                    </div>
-                    <div className="stack">
-                      <label className="small muted">End time (local)</label>
-                      <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
-                  <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
-                  <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
-                </>
-              )}
-              {normalizeSessionType(sessionDraft.session_type) === 'post_session_review' && (
-                <>
-                  <div className="small muted">Post-session validation (matching same-date pre-session plan when available)</div>
-                  {renderPostSessionValidation(sessionDraft, sessions, setSessionDraft)}
-                  <label className="small muted">Post-session emotion</label>
-                  <select value={sessionDraft.post_session_emotion} onChange={(e) => setSessionDraft((p) => ({ ...p, post_session_emotion: e.target.value }))}>
-                    <option value="">Select emotion</option>
-                    {emotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                </>
-              )}
+              <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                <div className="stack">
+                  <label className="small muted">Start time (local)</label>
+                  <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                </div>
+                <div className="stack">
+                  <label className="small muted">End time (local)</label>
+                  <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                </div>
+              </div>
+              <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+              <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
+              <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
               <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
             </form>
           )}
@@ -2898,12 +2627,21 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       {tab === 'review' && (
         <section className="card stack control-card">
           <strong>Weekly review</strong>
-          <div className="chip">{selectedReviewWeekLabel} · {selectedReviewRangeLabel}</div>
           {!trades.length && !noTrades.length && !sessions.length ? (
             <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
           ) : null}
-          <div style={{ maxWidth: 220 }}>
-            <input className="review-week-control" type="week" value={selectedReviewWeekInput} onChange={(e) => setSelectedReviewWeekStart(weekKeyFromInput(e.target.value))} />
+          <div className="grid review-week-selector-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <input className="review-week-control" type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
+            <select className="review-week-control" value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
+              {[currentWeekInput(), ...reviews.map((r) => weekInputFromKey(r.week_key))]
+                .filter((v, i, a) => v && a.indexOf(v) === i)
+                .sort((a, b) => b.localeCompare(a))
+                .map((w) => {
+                  const sunday = weekKeyFromInput(w);
+                  const saturday = addDaysKey(sunday, 6);
+                  return <option value={w} key={w}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${w})`}</option>;
+                })}
+            </select>
           </div>
           <div className="chip">{reviewStatus}</div>
           <div style={{ maxWidth: 220 }}>
@@ -3010,8 +2748,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       ? 'In-trade emotion definitions'
                       : openHelp === 'no_trade_mindset'
                         ? 'No-trade mindset definitions'
-                        : openHelp === 'session_bias'
-                          ? 'Session bias definitions'
                         : 'Setup model definitions'}
             </strong>
             <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
@@ -4620,16 +4356,16 @@ function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
       .map((session) => weekKeyFromDate(session.session_date))
       .filter(Boolean)
   );
-  if (!weeksWithJournal.size) return 'No post-session reviews were logged in this period.';
+  if (!weeksWithJournal.size) return 'No journal sessions were logged in this period.';
   const withJournal = trades.filter((trade) => weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   const withoutJournal = trades.filter((trade) => !weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
   if (withJournal.length < 2 || withoutJournal.length < 2) return 'Session signal is limited (small sample of journal vs non-journal weeks).';
   const avg = (rows: TradeRow[]) => rows.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / rows.length;
   const withAvg = avg(withJournal);
   const withoutAvg = avg(withoutJournal);
-  if (withAvg - withoutAvg > 5) return `Post-session-review weeks outperformed non-review weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
-  if (withoutAvg - withAvg > 5) return `Non-review weeks outperformed post-session-review weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
-  return 'Post-session-review vs non-review weeks are currently similar in outcome.';
+  if (withAvg - withoutAvg > 5) return `Journal-session weeks outperformed non-journal weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
+  if (withoutAvg - withAvg > 5) return `Non-journal weeks outperformed journal-session weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
+  return 'Journal-session vs non-journal weeks are currently similar in outcome.';
 }
 
 function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
@@ -5268,13 +5004,8 @@ function weekKeyFromInput(weekInput: string) {
   return monday.toISOString().slice(0, 10);
 }
 
-function formatSundayWeekLabel(weekStartSunday: string) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekStartSunday || ''))) return 'Week —';
-  const year = Number(weekStartSunday.slice(0, 4));
-  const firstSundayWindow = sundayWeekStart(`${year}-01-01`);
-  const diffDays = Math.floor((new Date(`${weekStartSunday}T00:00:00Z`).getTime() - new Date(`${firstSundayWindow}T00:00:00Z`).getTime()) / (24 * 60 * 60 * 1000));
-  const weekNumber = Math.max(1, Math.floor(diffDays / 7) + 1);
-  return `Week ${weekNumber}, ${year}`;
+function currentWeekInput() {
+  return weekInputFromKey(currentWeekKey());
 }
 
 function splitDisplayName(displayName: string, email?: string) {
@@ -5294,89 +5025,6 @@ function buildInitials(firstName: string, lastName: string, email?: string) {
   if (f || l) return `${f}${l}`.toUpperCase();
   const fallback = String(email || '').trim()[0] || 'U';
   return fallback.toUpperCase();
-}
-
-function normalizeSessionType(type: SessionRow['session_type']) {
-  if (type === 'chart') return 'chart_session';
-  if (type === 'journal') return 'post_session_review';
-  return type;
-}
-
-function normalizeLegacySessionType(type: SessionRow['session_type']) {
-  if (type === 'chart_session') return 'chart';
-  if (type === 'post_session_review') return 'journal';
-  return type;
-}
-
-function sessionDraftFromRow(session: SessionRow): SessionDraft {
-  return {
-    session_type: normalizeSessionType(session.session_type),
-    session_date: session.session_date || new Date().toISOString().slice(0, 10),
-    start_time: normalizeTimeInput(session.start_time) || SESSION_DEFAULT_TIMES.chart.start,
-    end_time: normalizeTimeInput(session.end_time) || SESSION_DEFAULT_TIMES.chart.end,
-    notes: session.notes || '',
-    higher_timeframe_context: session.higher_timeframe_context || '',
-    session_bias: session.session_bias || '',
-    bias_confidence: session.bias_confidence || '',
-    expected_market_condition: session.expected_market_condition || '',
-    primary_setup_focus: session.primary_setup_focus || '',
-    sit_out_condition: session.sit_out_condition || '',
-    main_objective: session.main_objective || '',
-    starting_emotional_state: session.starting_emotional_state || '',
-    pre_session_note: session.pre_session_note || '',
-    bias_correctness: session.bias_correctness || '',
-    market_condition_correctness: session.market_condition_correctness || '',
-    setup_focus_correctness: session.setup_focus_correctness || '',
-    post_session_emotion: session.post_session_emotion || '',
-    minutes_spent: normalizePreSessionMinutesValue(session.duration_minutes)
-  };
-}
-
-function createSessionDraft(type: SessionRow['session_type'], settings: SettingsRow | null): SessionDraft {
-  const normalizedType = normalizeSessionType(type);
-  const chartStart = normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start;
-  const chartEnd = normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end;
-  const journalStart = normalizeTimeInput(settings?.journal_session_start_default || '') || SESSION_DEFAULT_TIMES.journal.start;
-  const journalEnd = normalizeTimeInput(settings?.journal_session_end_default || '') || SESSION_DEFAULT_TIMES.journal.end;
-  const isPlan = normalizedType === 'pre_session_plan';
-  const isChart = normalizedType === 'chart_session';
-  return {
-    session_type: normalizedType,
-    session_date: new Date().toISOString().slice(0, 10),
-    start_time: isPlan ? chartStart : (isChart ? chartStart : journalStart),
-    end_time: isPlan ? chartEnd : (isChart ? chartEnd : journalEnd),
-    notes: '',
-    higher_timeframe_context: '',
-    session_bias: '',
-    bias_confidence: '',
-    expected_market_condition: '',
-    primary_setup_focus: '',
-    sit_out_condition: '',
-    main_objective: '',
-    starting_emotional_state: '',
-    pre_session_note: '',
-    bias_correctness: '',
-    market_condition_correctness: '',
-    setup_focus_correctness: '',
-    post_session_emotion: '',
-    minutes_spent: '15'
-  };
-}
-
-function normalizePreSessionMinutesValue(value: unknown) {
-  const numeric = Number(value || 15);
-  const bounded = Math.min(180, Math.max(5, Number.isFinite(numeric) ? numeric : 15));
-  const rounded = Math.round(bounded / 5) * 5;
-  return String(rounded);
-}
-
-function addMinutesToTime(baseTime: string, minutes: number) {
-  const [rawHours, rawMinutes] = String(baseTime || '00:00').split(':').map(Number);
-  const baseTotal = (Number.isFinite(rawHours) ? rawHours : 0) * 60 + (Number.isFinite(rawMinutes) ? rawMinutes : 0);
-  const next = (baseTotal + Math.max(0, Math.floor(minutes))) % (24 * 60);
-  const hours = Math.floor(next / 60);
-  const mins = next % 60;
-  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}`;
 }
 
 function calculateDurationMinutes(startTime: string, endTime: string) {
