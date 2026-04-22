@@ -216,7 +216,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
   const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
   const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
-  const [historyTradeFilter, setHistoryTradeFilter] = useState<TradeTypeFilter>('all');
   const [historyEntryTypeFilter, setHistoryEntryTypeFilter] = useState<HistoryEntryTypeFilter>('all');
   const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
   const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
@@ -498,12 +497,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const todayKey = new Date().toISOString().slice(0, 10);
   const historyDateRange = getHistoryDateRange(historyDateFilter, todayKey, historyDateStart, historyDateEnd);
-  const tradeTypeFilterApplies = historyEntryTypeFilter === 'all';
   const filteredActivityItems = activityItems.filter((item) => {
     if (!inDateRange(item.date, historyDateRange.start, historyDateRange.end)) return false;
 
     if (historyEntryTypeFilter === 'all') {
-      if (item.type === 'trade' && !matchesTradeTypeFilter(item.trade, historyTradeFilter)) return false;
       return true;
     }
 
@@ -1963,20 +1960,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <option value="custom">Custom range</option>
               </select>
             </div>
-            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
-              <label className="small muted" htmlFor="history-trade-filter">Trade type</label>
-              <select
-                id="history-trade-filter"
-                value={historyTradeFilter}
-                disabled={!tradeTypeFilterApplies}
-                onChange={(e) => setHistoryTradeFilter(e.target.value as TradeTypeFilter)}
-              >
-                <option value="all">All</option>
-                <option value="live">Live only</option>
-                <option value="paper">Paper only</option>
-              </select>
-              {!tradeTypeFilterApplies ? <div className="small muted">Applies when Entry type = All.</div> : null}
-            </div>
           </div>
           {historyDateFilter === 'custom' ? (
             <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
@@ -1991,7 +1974,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           ) : null}
           <div className="small muted">
-            Active filters: <strong>{historyEntryFilterLabel}</strong> · <strong>{historyDateScopeLabel}</strong>{tradeTypeFilterApplies ? <> · Trade type <strong>{historyTradeFilter === 'all' ? 'All' : historyTradeFilter === 'live' ? 'Live only' : 'Paper only'}</strong></> : null}
+            Active filters: <strong>{historyEntryFilterLabel}</strong> · <strong>{historyDateScopeLabel}</strong>
           </div>
           {filteredActivityItems.map((item, index) => {
             const showDateDivider = index === 0 || filteredActivityItems[index - 1]?.date !== item.date;
