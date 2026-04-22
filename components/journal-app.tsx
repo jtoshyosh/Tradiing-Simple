@@ -256,6 +256,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     end_time: SESSION_DEFAULT_TIMES.chart.end,
     notes: ''
   });
+  const [sessionSubtypeView, setSessionSubtypeView] = useState<'pre_session_plan' | 'chart_session' | 'post_session_review'>('chart_session');
   const [pending, startTransition] = useTransition();
   const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
   const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
@@ -2061,9 +2062,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ) : (
               <Fragment>
                 <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
-                  <div className="row"><strong>{titleCase(item.session.session_type)} session</strong><span>{item.session.session_date}</span></div>
+                  <div className="row"><strong>{sessionSubtypeLabel(item.session.session_type)}</strong><span>{item.session.session_date}</span></div>
                   <div className="small muted">
-                    <span className="badge">{item.session.session_type === 'chart' ? 'Chart study' : 'Journal work'}</span>{' '}
+                    <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
                     {item.session.start_time.slice(0, 5)}–{item.session.end_time.slice(0, 5)} · {formatMinutesLabel(item.session.duration_minutes)}
                   </div>
                   {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
@@ -2080,6 +2081,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                           end_time: item.session.end_time.slice(0, 5),
                           notes: item.session.notes || ''
                         });
+                        setSessionSubtypeView(item.session.session_type === 'journal' ? 'post_session_review' : 'chart_session');
                         setTab('log');
                         setLogMode('session');
                       }}>Edit</button>
@@ -2094,7 +2096,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
                     </div>
                     <div className="stack">
-                      <div className="small muted">{item.session.session_date} · {titleCase(item.session.session_type)} session</div>
+                      <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(item.session.session_type)}</div>
                       <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
                       <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
                       <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
@@ -2519,6 +2521,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
                 {editingSessionId ? <button className="inline" type="button" onClick={() => {
                   setEditingSessionId(null);
+                  setSessionSubtypeView('chart_session');
                   setSessionDraft({
                     session_type: 'chart',
                     session_date: new Date().toISOString().slice(0, 10),
@@ -2533,22 +2536,30 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <button
                   className="inline"
                   type="button"
-                  style={sessionDraft.session_type === 'chart' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('chart')}
+                  style={sessionSubtypeView === 'pre_session_plan' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('pre_session_plan'); applySessionDefaults('chart'); }}
                 >
-                  {sessionDraft.session_type === 'chart' ? '✓ ' : ''}Chart session
+                  {sessionSubtypeView === 'pre_session_plan' ? '✓ ' : ''}Pre-session plan
                 </button>
                 <button
                   className="inline"
                   type="button"
-                  style={sessionDraft.session_type === 'journal' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
-                  onClick={() => applySessionDefaults('journal')}
+                  style={sessionSubtypeView === 'chart_session' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('chart_session'); applySessionDefaults('chart'); }}
                 >
-                  {sessionDraft.session_type === 'journal' ? '✓ ' : ''}Journal session
+                  {sessionSubtypeView === 'chart_session' ? '✓ ' : ''}Chart session
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionSubtypeView === 'post_session_review' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('post_session_review'); applySessionDefaults('journal'); }}
+                >
+                  {sessionSubtypeView === 'post_session_review' ? '✓ ' : ''}Post-session review
                 </button>
               </div>
-              <div className="small muted">Selected subtype: <strong>{sessionDraft.session_type === 'chart' ? 'Chart session' : 'Journal session'}</strong></div>
-              <div className="small muted">Chart session = chart study, replay, backtesting, and setup prep. Journal session = journaling, review writing, and process reflection.</div>
+              <div className="small muted">Selected subtype: <strong>{sessionSubtypeLabel(sessionSubtypeView)}</strong></div>
+              <div className="small muted">Pre-session plan and Chart session use chart defaults. Post-session review uses review/journal defaults.</div>
               <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                 <button className="inline" type="button" onClick={() => applySessionDefaults(sessionDraft.session_type)}>Use default times</button>
                 <button
@@ -2557,6 +2568,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   disabled={!latestChartSession}
                   onClick={() => {
                     if (!latestChartSession) return;
+                    setSessionSubtypeView('chart_session');
                     setSessionDraft((p) => ({
                       ...p,
                       session_type: 'chart',
@@ -2574,6 +2586,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   disabled={!latestJournalSession}
                   onClick={() => {
                     if (!latestJournalSession) return;
+                    setSessionSubtypeView('post_session_review');
                     setSessionDraft((p) => ({
                       ...p,
                       session_type: 'journal',
@@ -2703,7 +2716,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 ))}
                 {weekSessions.map((s) => (
                   <article key={s.id} className="trade">
-                    <div className="small muted">{s.session_date} · {titleCase(s.session_type)} session</div>
+                    <div className="small muted">{s.session_date} · {sessionSubtypeLabel(s.session_type)}</div>
                     <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
                   </article>
                 ))}
@@ -3421,6 +3434,17 @@ function formatAxisDate(dateStr: string) {
 function formatDateShort(dateStr: string) {
   const date = new Date(`${dateStr}T00:00:00Z`);
   return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+function isChartSessionType(sessionType: string) {
+  return sessionType === 'chart' || sessionType === 'chart_session' || sessionType === 'pre_session_plan';
+}
+
+function sessionSubtypeLabel(sessionType: string) {
+  if (sessionType === 'pre_session_plan') return 'Pre-session plan';
+  if (sessionType === 'chart_session' || sessionType === 'chart') return 'Chart session';
+  if (sessionType === 'post_session_review' || sessionType === 'journal') return 'Post-session review';
+  return titleCase(String(sessionType || 'session').replace(/_/g, ' '));
 }
 
 function sundayWeekStart(dateStr: string) {
