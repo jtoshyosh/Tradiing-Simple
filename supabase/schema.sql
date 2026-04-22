@@ -162,16 +162,26 @@ create table if not exists public.attachments (
   user_id uuid not null references auth.users(id) on delete cascade,
   trade_id uuid references public.trades(id) on delete cascade,
   no_trade_day_id uuid references public.no_trade_days(id) on delete cascade,
+  session_id uuid references public.sessions(id) on delete cascade,
   file_path text not null,
   file_name text not null,
   mime_type text not null,
   byte_size bigint not null,
   created_at timestamptz not null default now(),
   check (
-    (trade_id is not null and no_trade_day_id is null) or
-    (trade_id is null and no_trade_day_id is not null)
+    ((trade_id is not null)::int + (no_trade_day_id is not null)::int + (session_id is not null)::int) = 1
   )
 );
+
+alter table public.attachments
+  add column if not exists session_id uuid references public.sessions(id) on delete cascade;
+
+alter table public.attachments
+  drop constraint if exists attachments_check;
+
+alter table public.attachments
+  add constraint attachments_check
+  check (((trade_id is not null)::int + (no_trade_day_id is not null)::int + (session_id is not null)::int) = 1);
 
 alter table public.users enable row level security;
 alter table public.trades enable row level security;

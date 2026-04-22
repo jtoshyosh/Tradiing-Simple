@@ -79,6 +79,7 @@ export type AttachmentRow = {
   user_id: string;
   trade_id: string | null;
   no_trade_day_id: string | null;
+  session_id: string | null;
   file_path: string;
   file_name: string;
   mime_type: string;

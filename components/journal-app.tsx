@@ -561,7 +561,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   useEffect(() => {
     if (tab !== 'review') return;
     const paths = attachments
-      .filter((a) => weekTradesForReview.some((t) => t.id === a.trade_id) || weekNoTrades.some((n) => n.id === a.no_trade_day_id))
+      .filter((a) =>
+        weekTradesForReview.some((t) => t.id === a.trade_id)
+        || weekNoTrades.some((n) => n.id === a.no_trade_day_id)
+        || weekSessions.some((s) => s.id === a.session_id))
       .map((a) => a.file_path);
     if (!paths.length) {
       setReviewSignedUrls({});
@@ -579,7 +582,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       });
       setReviewSignedUrls(next);
     });
-  }, [tab, selectedWeekKey, attachments, weekTradesForReview, weekNoTrades, supabase]);
+  }, [tab, selectedWeekKey, attachments, weekTradesForReview, weekNoTrades, weekSessions, supabase]);
 
   async function addTrade(formData: FormData) {
     setError('');
@@ -635,6 +638,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         user_id: userId,
         trade_id: data.id,
         no_trade_day_id: null,
+        session_id: null,
         file_path: filePath,
         file_name: file.name,
         mime_type: file.type || 'application/octet-stream',
@@ -677,6 +681,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         user_id: userId,
         trade_id: null,
         no_trade_day_id: data.id,
+        session_id: null,
         file_path: filePath,
         file_name: file.name,
         mime_type: file.type || 'application/octet-stream',
@@ -702,7 +707,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }));
   }
 
-  async function addSession() {
+  async function addSession(formData: FormData) {
     const duration = calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
     const payload = {
       user_id: userId,
@@ -714,11 +719,33 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       notes: sessionDraft.notes || ''
     };
     const response = editingSessionId
-      ? await supabase.from('sessions').update(payload).eq('id', editingSessionId)
-      : await supabase.from('sessions').insert(payload);
+      ? await supabase.from('sessions').update(payload).eq('id', editingSessionId).select('*').single()
+      : await supabase.from('sessions').insert(payload).select('*').single();
     if (response.error) {
       setError(normalizeSupabaseError(response.error.message));
       return;
+    }
+
+    const sessionRow = response.data as SessionRow;
+    const files = formData.getAll('session_files') as File[];
+    for (const file of files) {
+      if (!file || file.size === 0) continue;
+      const filePath = `${userId}/session/${sessionRow.id}/${crypto.randomUUID()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
+      if (uploadError) {
+        setError(normalizeSupabaseError(uploadError.message));
+        continue;
+      }
+      await supabase.from('attachments').insert({
+        user_id: userId,
+        trade_id: null,
+        no_trade_day_id: null,
+        session_id: sessionRow.id,
+        file_path: filePath,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        byte_size: file.size
+      });
     }
     setSessionDraft({
       session_type: 'chart',
@@ -893,12 +920,31 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
   async function deleteSession(sessionId: string) {
     if (!window.confirm('Delete this session?')) return;
+    const linked = attachments.filter((a) => a.session_id === sessionId);
+    if (linked.length) {
+      await supabase.storage.from('attachments').remove(linked.map((a) => a.file_path));
+    }
     const { error: deleteError } = await supabase.from('sessions').delete().eq('id', sessionId);
     if (deleteError) {
       setError(normalizeSupabaseError(deleteError.message));
       return;
     }
     if (detail?.kind === 'session' && detail.id === sessionId) setDetail(null);
+    await loadAll();
+  }
+
+  async function removeSessionAttachment(attachmentId: string) {
+    const target = attachments.find((a) => a.id === attachmentId);
+    if (!target) return;
+    const { error: deleteRowError } = await supabase.from('attachments').delete().eq('id', attachmentId);
+    if (deleteRowError) {
+      setError(normalizeSupabaseError(deleteRowError.message));
+      return;
+    }
+    const { error: removeStorageError } = await supabase.storage.from('attachments').remove([target.file_path]);
+    if (removeStorageError) {
+      setError(`Attachment record was removed, but storage cleanup failed for ${target.file_name}. Remove ${target.file_path} manually from bucket "attachments".`);
+    }
     await loadAll();
   }
 
@@ -916,7 +962,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         ? attachments.filter((a) => a.trade_id === nextDetail.id)
         : nextDetail.kind === 'no_trade'
           ? attachments.filter((a) => a.no_trade_day_id === nextDetail.id)
-          : [];
+          : attachments.filter((a) => a.session_id === nextDetail.id);
 
     if (!linkedAttachments.length) {
       setSignedUrls({});
@@ -1034,8 +1080,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const exportReviews = reviews.filter((review) => inDateRange(review.week_key, rangeStart, rangeEnd));
     const tradeIds = new Set(exportTrades.map((trade) => trade.id));
     const noTradeIds = new Set(exportNoTrades.map((day) => day.id));
+    const sessionIds = new Set(exportSessions.map((session) => session.id));
     const exportAttachments = attachments.filter((file) => (
-      (file.trade_id && tradeIds.has(file.trade_id)) || (file.no_trade_day_id && noTradeIds.has(file.no_trade_day_id))
+      (file.trade_id && tradeIds.has(file.trade_id))
+      || (file.no_trade_day_id && noTradeIds.has(file.no_trade_day_id))
+      || (file.session_id && sessionIds.has(file.session_id))
     ));
     return { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments };
   }
@@ -1213,7 +1262,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         attachment_file_path: file.file_path,
         attachment_mime_type: file.mime_type,
         attachment_byte_size: Number(file.byte_size || 0),
-        notes: `linked_trade_id:${file.trade_id || ''};linked_no_trade_day_id:${file.no_trade_day_id || ''}`
+        notes: `linked_trade_id:${file.trade_id || ''};linked_no_trade_day_id:${file.no_trade_day_id || ''};linked_session_id:${file.session_id || ''}`
       }))
     ];
     const csv = recordsToCsv(rows);
@@ -2069,7 +2118,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   </div>
                   {item.session.notes ? <div className="small">Notes: {item.session.notes}</div> : null}
                   <div className="row">
-                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'}</div>
+                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
                     <div className="row">
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
                       <button className="inline" type="button" onClick={() => {
@@ -2102,6 +2151,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.session.notes || ''} emptyLabel="—" />
+                      <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
                 )}
@@ -2516,7 +2566,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           )}
 
           {logMode === 'session' && (
-            <form className="card stack" action={() => startTransition(() => void addSession())}>
+            <form className="card stack" action={(formData) => startTransition(() => void addSession(formData))}>
               <div className="row">
                 <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
                 {editingSessionId ? <button className="inline" type="button" onClick={() => {
@@ -2614,6 +2664,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
               <label className="small muted" htmlFor="session-notes">Session notes (optional)</label>
               <textarea id="session-notes" placeholder="What did you work on? What improved or still needs reps?" value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              <label className="small muted" htmlFor="session-files">Attach files (optional)</label>
+              <input id="session-files" name="session_files" type="file" multiple />
+              {editingSessionId ? (
+                <div className="stack">
+                  <div className="small muted">Existing attachments</div>
+                  {attachments.filter((a) => a.session_id === editingSessionId).length ? attachments.filter((a) => a.session_id === editingSessionId).map((file) => (
+                    <div className="row small" key={file.id}>
+                      <span>{file.file_name}</span>
+                      <button className="inline" type="button" onClick={() => void removeSessionAttachment(file.id)}>Remove</button>
+                    </div>
+                  )) : <div className="small muted">No attachments linked to this session.</div>}
+                </div>
+              ) : null}
               <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
             </form>
           )}
@@ -2718,6 +2781,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <article key={s.id} className="trade">
                     <div className="small muted">{s.session_date} · {sessionSubtypeLabel(s.session_type)}</div>
                     <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {s.duration_minutes}m</div>
+                    <div className="small muted">Attachments: {attachments.filter((a) => a.session_id === s.id).length}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={s.notes || ''} emptyLabel="—" />
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === s.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
                 ))}
                 {!weekTradesForReview.length && !weekNoTrades.length && !weekSessions.length && <div className="small muted">No entries for selected week and trade-type filter.</div>}
