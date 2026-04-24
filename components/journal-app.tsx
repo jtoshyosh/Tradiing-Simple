@@ -4025,7 +4025,10 @@ function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
 }
 
 function sessionStyleKey(sessionType: string) {
-  return resolveSessionSubtype(sessionType) === 'post_session_review' ? 'journal' : 'chart';
+  const subtype = resolveSessionSubtype(sessionType);
+  if (subtype === 'pre_session_plan') return 'pre';
+  if (subtype === 'post_session_review') return 'post';
+  return 'chart';
 }
 
 function sessionSubtypeLabel(sessionType: string) {

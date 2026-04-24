@@ -65,8 +65,8 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   color: #dbe7ff;
 }
 .trade { border:1px solid rgba(70, 92, 130, 0.75); border-radius:13px; padding:11px; background:rgba(255,255,255,.02); }
-.trade.trade-live { background: rgba(86, 228, 205, 0.11); border-color: rgba(80, 191, 176, 0.85); }
-.trade.trade-paper { background: rgba(123, 156, 219, 0.1); border-color: rgba(95, 124, 184, 0.85); }
+.trade.trade-live { background: rgba(72, 206, 184, 0.13); border-color: rgba(72, 171, 157, 0.9); }
+.trade.trade-paper { background: rgba(112, 141, 198, 0.1); border-color: rgba(90, 113, 164, 0.86); }
 .trade.no-trade { background: rgba(255,200,120,.08); border-color: #6d5a3c; }
 .badge { display:inline-block; border:1px solid #425579; border-radius:999px; padding:4px 8px; font-size:12px; margin:2px; background: rgba(24, 39, 68, 0.55); }
 .muted { color: var(--muted); }
@@ -135,12 +135,17 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   font-size: 14px;
 }
 .trade.session-chart {
-  background: rgba(102, 163, 255, 0.1);
-  border-color: #3e5d8f;
+  background: rgba(96, 132, 188, 0.1);
+  border-color: rgba(78, 104, 150, 0.9);
 }
+.trade.session-pre {
+  background: rgba(112, 99, 194, 0.11);
+  border-color: rgba(98, 84, 170, 0.9);
+}
+.trade.session-post,
 .trade.session-journal {
-  background: rgba(126, 232, 173, 0.1);
-  border-color: #3f7d63;
+  background: rgba(92, 169, 150, 0.1);
+  border-color: rgba(76, 134, 122, 0.88);
 }
 .dashboard-controls {
   padding: 12px;
