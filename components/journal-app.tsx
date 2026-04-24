@@ -2362,7 +2362,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             ) : (
               <Fragment>
-                <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                <article className={`trade session-${sessionStyleKey(item.session.session_type)}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
                   <div className="row"><strong>{sessionSubtypeLabel(item.session.session_type)}</strong><span>{item.session.session_date}</span></div>
                   <div className="small muted">
                     <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
@@ -2417,7 +2417,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   </div>
                 </article>
                 {detail?.kind === 'session' && detail.id === item.session.id && (
-                  <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
+                  <article className={`trade session-${sessionStyleKey(item.session.session_type)}`} style={{ marginTop: -4 }}>
                     <div className="row">
                       <strong>Session detail</strong>
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
@@ -4022,6 +4022,10 @@ function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
   if (sessionType === 'pre_session_plan') return 'pre_session_plan';
   if (sessionType === 'post_session_review' || sessionType === 'journal') return 'post_session_review';
   return 'chart_session';
+}
+
+function sessionStyleKey(sessionType: string) {
+  return resolveSessionSubtype(sessionType) === 'post_session_review' ? 'journal' : 'chart';
 }
 
 function sessionSubtypeLabel(sessionType: string) {
