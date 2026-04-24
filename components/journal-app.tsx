@@ -66,7 +66,8 @@ const sitOutConditionOptions = ['No A+ setup', 'No displacement', 'News risk', '
 const sessionObjectiveOptions = ['Trade only A+ setups', 'Follow my plan regardless of outcome', 'Avoid overtrading', 'Be patient for one clean setup', 'Review and observe, not force trades'] as const;
 const startingEmotionalStateOptions = ['Calm', 'Confident', 'Distracted', 'Impatient', 'Frustrated', 'Tired', 'Anxious'] as const;
 const postSessionEmotionOptions = ['Calm', 'Satisfied', 'Frustrated', 'Mentally drained'] as const;
-const validationCorrectnessOptions = ['Correct', 'Partially correct', 'Incorrect'] as const;
+const validationYesPartialNoNaOptions = ['Yes', 'Partially', 'No', 'N/A'] as const;
+const setupFocusOutcomeOptions = ['It appeared and I followed it', 'It appeared but I did not take it', 'A different setup appeared instead', 'No valid setup appeared', 'N/A'] as const;
 const marketContextQualityOptions = ['Strongly aligned', 'Mostly aligned', 'Mixed / unclear', 'Against context'] as const;
 const liquidityStructureQualityOptions = ['Clear sweep + structure shift', 'Structure shift only', 'Liquidity sweep only', 'Minor structure only', 'No clear confirmation'] as const;
 const displacementQualityOptions = ['Strong displacement', 'Moderate displacement', 'Weak displacement', 'Choppy / overlapping'] as const;
@@ -341,9 +342,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [postSessionDraft, setPostSessionDraft] = useState<PostSessionMeta>({
     post_session_emotion: postSessionEmotionOptions[0],
     validation: {
-      bias_correctness: validationCorrectnessOptions[1],
-      expected_condition_correctness: validationCorrectnessOptions[1],
-      setup_focus_correctness: validationCorrectnessOptions[1]
+      bias_correctness: validationYesPartialNoNaOptions[1],
+      expected_condition_correctness: validationYesPartialNoNaOptions[1],
+      setup_focus_correctness: setupFocusOutcomeOptions[4]
     }
   });
   const [pending, startTransition] = useTransition();
@@ -2402,9 +2403,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                           setPostSessionDraft({
                             post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
                             validation: {
-                              bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
-                              expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
-                              setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
+                              bias_correctness: normalizeValidationYesPartialNoNa(parsed.meta.validation?.bias_correctness),
+                              expected_condition_correctness: normalizeValidationYesPartialNoNa(parsed.meta.validation?.expected_condition_correctness),
+                              setup_focus_correctness: normalizeSetupFocusOutcome(parsed.meta.validation?.setup_focus_correctness)
                             }
                           });
                         }
@@ -3057,17 +3058,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Session bias planned: <strong>{referencedPreSessionMeta.session_bias}</strong></div>
                       <label className="small muted">Was that bias correct?</label>
                       <select value={postSessionDraft.validation.bias_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, bias_correctness: e.target.value } }))}>
-                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        {validationYesPartialNoNaOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select>
                       <div className="small">Expected condition planned: <strong>{referencedPreSessionMeta.expected_market_condition}</strong></div>
                       <label className="small muted">Was expected condition correct?</label>
                       <select value={postSessionDraft.validation.expected_condition_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, expected_condition_correctness: e.target.value } }))}>
-                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        {validationYesPartialNoNaOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select>
                       <div className="small">Primary setup focus planned: <strong>{referencedPreSessionMeta.primary_setup_focus}</strong></div>
-                      <label className="small muted">Was setup focus correct?</label>
+                      <label className="small muted">What happened with my planned setup focus?</label>
                       <select value={postSessionDraft.validation.setup_focus_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, setup_focus_correctness: e.target.value } }))}>
-                        {validationCorrectnessOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        {setupFocusOutcomeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                       </select>
                     </>
                   ) : <div className="small muted">No same-date pre-session plan found. Log one first to compare planned vs actual context.</div>}
@@ -5188,6 +5189,22 @@ function setupGradeColor(grade: string) {
   if (grade === 'C') return '#facc15';
   if (grade === 'D') return '#ff6b6b';
   return '#93a6c9';
+}
+
+function normalizeValidationYesPartialNoNa(raw: unknown) {
+  const value = String(raw || '').trim();
+  if (value === 'Correct') return 'Yes';
+  if (value === 'Partially correct') return 'Partially';
+  if (value === 'Incorrect') return 'No';
+  return validationYesPartialNoNaOptions.includes(value as typeof validationYesPartialNoNaOptions[number]) ? value : validationYesPartialNoNaOptions[3];
+}
+
+function normalizeSetupFocusOutcome(raw: unknown) {
+  const value = String(raw || '').trim();
+  if (value === 'Correct') return setupFocusOutcomeOptions[0];
+  if (value === 'Partially correct') return setupFocusOutcomeOptions[2];
+  if (value === 'Incorrect') return setupFocusOutcomeOptions[3];
+  return setupFocusOutcomeOptions.includes(value as typeof setupFocusOutcomeOptions[number]) ? value : setupFocusOutcomeOptions[4];
 }
 
 function toEditorText(value: string) {
