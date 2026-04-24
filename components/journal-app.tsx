@@ -495,6 +495,27 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const avgLoserResult = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / losingTrades.length : 0;
   const periodWinRate = periodTrades.length ? (periodWins / periodTrades.length) * 100 : 0;
   const periodAvgR = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0) / periodTrades.length : 0;
+  const gradedTrades = periodTrades.filter((trade) => {
+    const score = Number((trade as TradeRow & { setup_score?: number | null }).setup_score ?? NaN);
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return Number.isFinite(score) && ['A+', 'A', 'B', 'C', 'D'].includes(grade);
+  });
+  const avgSetupScore = gradedTrades.length ? gradedTrades.reduce((sum, trade) => sum + Number((trade as TradeRow & { setup_score?: number | null }).setup_score || 0), 0) / gradedTrades.length : null;
+  const aPlusOrA = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'A+' || grade === 'A';
+  });
+  const aaRate = gradedTrades.length ? (aPlusOrA.length / gradedTrades.length) * 100 : null;
+  const strongQualityTrades = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'A+' || grade === 'A';
+  });
+  const weakQualityTrades = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'C' || grade === 'D';
+  });
+  const strongQualityAvgR = strongQualityTrades.length ? strongQualityTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / strongQualityTrades.length : null;
+  const weakQualityAvgR = weakQualityTrades.length ? weakQualityTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / weakQualityTrades.length : null;
   const periodAvgEmotion = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length : 0;
   const pressureBuckets = [1, 2, 3, 4, 5].map((level) => ({
     level,
@@ -1881,6 +1902,34 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           </section>
 
+          <section className="card stack">
+            <strong>Setup Quality</strong>
+            <div className="small muted">Scope: selected period + trade type filter. Uses graded trades only.</div>
+            <div className="grid">
+              <article className="trade">
+                <div className="muted small">Avg setup score</div>
+                <div>{avgSetupScore == null ? '—' : avgSetupScore.toFixed(1)}</div>
+                <div className="small muted">{gradedTrades.length} graded trade{gradedTrades.length === 1 ? '' : 's'}</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">A/A+ rate</div>
+                <div>{aaRate == null ? '—' : `${aaRate.toFixed(0)}%`}</div>
+                <div className="small muted">Definition: graded trades with grade A or A+</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Quality outcome insight</div>
+                {strongQualityAvgR == null && weakQualityAvgR == null ? (
+                  <div className="small muted">Sample too small for A/A+ vs C/D comparison.</div>
+                ) : (
+                  <>
+                    <div className="small">A/A+ setups avg: <span style={{ color: rValueColor(strongQualityAvgR || 0) }}>{strongQualityAvgR == null ? '—' : `${strongQualityAvgR.toFixed(2)}R`}</span></div>
+                    <div className="small">C/D setups avg: <span style={{ color: rValueColor(weakQualityAvgR || 0) }}>{weakQualityAvgR == null ? '—' : `${weakQualityAvgR.toFixed(2)}R`}</span></div>
+                  </>
+                )}
+              </article>
+            </div>
+          </section>
+
           <section className="card stack control-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Performance chart</strong>
@@ -2225,7 +2274,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               <Fragment>
                 <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
-                  <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model}</div>
+                  <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model} {resolveSetupGrade(item.trade) ? <span className="badge" style={{ borderColor: setupGradeColor(resolveSetupGrade(item.trade) || ''), color: setupGradeColor(resolveSetupGrade(item.trade) || '') }}>Setup {resolveSetupGrade(item.trade)}</span> : null}</div>
                   <div className="small">
                     {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
                   </div>
@@ -2259,6 +2308,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
                       <div className="small">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
                       <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
+                      <section className="trade stack" style={{ padding: '8px 10px' }}>
+                        <strong>Setup Quality</strong>
+                        <div className="small">Setup Score: {resolveSetupScore(item.trade) == null ? 'pending' : resolveSetupScore(item.trade)}</div>
+                        <div className="small">Setup Grade: {resolveSetupGrade(item.trade) || 'Setup Grade pending'}</div>
+                        <div className="small muted">{setupGradeLabel(resolveSetupGrade(item.trade))}</div>
+                        <div className="small muted">Suggested setup tags</div>
+                        <div>{resolveSetupTags(item.trade).length ? resolveSetupTags(item.trade).map((tag) => <span className="badge" key={tag}>{tag}</span>) : <span className="small muted">None</span>}</div>
+                        {(resolveSetupAnswers(item.trade).market_context_quality || resolveSetupAnswers(item.trade).liquidity_structure_quality || resolveSetupAnswers(item.trade).displacement_quality || resolveSetupAnswers(item.trade).poi_quality || resolveSetupAnswers(item.trade).target_room_quality) ? (
+                          <div className="small muted">
+                            Market Context: {resolveSetupAnswers(item.trade).market_context_quality || '—'} · Liquidity/Structure: {resolveSetupAnswers(item.trade).liquidity_structure_quality || '—'} · Displacement: {resolveSetupAnswers(item.trade).displacement_quality || '—'} · POI: {resolveSetupAnswers(item.trade).poi_quality || '—'} · Target Room: {resolveSetupAnswers(item.trade).target_room_quality || '—'}
+                          </div>
+                        ) : null}
+                      </section>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -5056,6 +5118,69 @@ function evaluateSetupQuality(input: {
   if ((grade === 'A' || grade === 'A+') && input.r_multiple < 0 && input.classification === 'Valid setup' && !hasMajorMistakeTags) tags.add('Rule-Following Loss');
   if ((grade === 'C' || grade === 'D') && input.r_multiple > 0) tags.add('Won Despite Weak Setup');
   return { score, grade, label, tags: Array.from(tags) };
+}
+
+function resolveSetupAnswers(trade: TradeRow) {
+  return {
+    market_context_quality: String((trade as TradeRow & { market_context_quality?: string | null }).market_context_quality || ''),
+    liquidity_structure_quality: String((trade as TradeRow & { liquidity_structure_quality?: string | null }).liquidity_structure_quality || ''),
+    displacement_quality: String((trade as TradeRow & { displacement_quality?: string | null }).displacement_quality || ''),
+    poi_quality: String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || ''),
+    target_room_quality: String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || '')
+  };
+}
+
+function resolveSetupScore(trade: TradeRow) {
+  const raw = Number((trade as TradeRow & { setup_score?: number | null }).setup_score ?? NaN);
+  if (Number.isFinite(raw)) return Math.round(raw);
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.score;
+}
+
+function resolveSetupGrade(trade: TradeRow) {
+  const stored = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+  if (['A+', 'A', 'B', 'C', 'D'].includes(stored)) return stored;
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.grade;
+}
+
+function resolveSetupTags(trade: TradeRow) {
+  const stored = (trade as TradeRow & { setup_auto_tags?: string[] | null }).setup_auto_tags;
+  if (Array.isArray(stored) && stored.length) return stored.map((value) => String(value));
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.tags;
+}
+
+function setupGradeLabel(grade: string | null) {
+  if (grade === 'A+') return 'A+ Setup';
+  if (grade === 'A') return 'High-Quality Setup';
+  if (grade === 'B') return 'Valid Setup';
+  if (grade === 'C') return 'Questionable Setup';
+  if (grade === 'D') return 'Low-Quality / Avoid';
+  return 'Setup Grade pending';
+}
+
+function setupGradeColor(grade: string) {
+  if (grade === 'A+' || grade === 'A') return '#4ad66d';
+  if (grade === 'B') return '#86efac';
+  if (grade === 'C') return '#facc15';
+  if (grade === 'D') return '#ff6b6b';
+  return '#93a6c9';
 }
 
 function toEditorText(value: string) {
