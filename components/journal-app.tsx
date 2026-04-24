@@ -2272,7 +2272,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 {showDateDivider ? <div className="small muted" style={{ fontWeight: 700, letterSpacing: '.02em', paddingTop: index === 0 ? 0 : 6 }}>{formatDateShort(item.date)}</div> : null}
                 {item.type === 'trade' ? (
               <Fragment>
-                <article className="trade" ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
+                <article className={`trade ${isPaperTrade(item.trade) ? 'trade-paper' : 'trade-live'}`} ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
                   <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
                   <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model} {resolveSetupGrade(item.trade) ? <span className="badge" style={{ borderColor: setupGradeColor(resolveSetupGrade(item.trade) || ''), color: setupGradeColor(resolveSetupGrade(item.trade) || '') }}>Setup {resolveSetupGrade(item.trade)}</span> : null}</div>
                   <div className="small">
@@ -2291,7 +2291,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   </div>
                 </article>
                 {detail?.kind === 'trade' && detail.id === item.trade.id && (
-                  <article className="trade" style={{ marginTop: -4 }}>
+                  <article className={`trade ${isPaperTrade(item.trade) ? 'trade-paper' : 'trade-live'}`} style={{ marginTop: -4 }}>
                     <div className="row">
                       <strong>Trade detail</strong>
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
