@@ -67,6 +67,19 @@ const sessionObjectiveOptions = ['Trade only A+ setups', 'Follow my plan regardl
 const startingEmotionalStateOptions = ['Calm', 'Confident', 'Distracted', 'Impatient', 'Frustrated', 'Tired', 'Anxious'] as const;
 const postSessionEmotionOptions = ['Calm', 'Satisfied', 'Frustrated', 'Mentally drained'] as const;
 const validationCorrectnessOptions = ['Correct', 'Partially correct', 'Incorrect'] as const;
+const marketContextQualityOptions = ['Strongly aligned', 'Mostly aligned', 'Mixed / unclear', 'Against context'] as const;
+const liquidityStructureQualityOptions = ['Clear sweep + structure shift', 'Structure shift only', 'Liquidity sweep only', 'Minor structure only', 'No clear confirmation'] as const;
+const displacementQualityOptions = ['Strong displacement', 'Moderate displacement', 'Weak displacement', 'Choppy / overlapping'] as const;
+const poiQualityOptions = ['Strong confluence POI', 'Clean POI only', 'Fib / level confluence only', 'Questionable POI', 'No clear POI'] as const;
+const targetRoomQualityOptions = ['2R+', '1.5R–2R', '1R–1.5R', 'Less than 1R', 'Not checked'] as const;
+const setupQualityWeights = { market_context: 0.2, liquidity_structure: 0.25, displacement: 0.25, poi: 0.2, target_room: 0.1 } as const;
+const setupQualityScores = {
+  market_context: { 'Strongly aligned': 100, 'Mostly aligned': 75, 'Mixed / unclear': 45, 'Against context': 15 },
+  liquidity_structure: { 'Clear sweep + structure shift': 100, 'Structure shift only': 80, 'Liquidity sweep only': 65, 'Minor structure only': 40, 'No clear confirmation': 15 },
+  displacement: { 'Strong displacement': 100, 'Moderate displacement': 75, 'Weak displacement': 45, 'Choppy / overlapping': 15 },
+  poi: { 'Strong confluence POI': 100, 'Clean POI only': 80, 'Fib / level confluence only': 65, 'Questionable POI': 40, 'No clear POI': 10 },
+  target_room: { '2R+': 100, '1.5R–2R': 80, '1R–1.5R': 55, 'Less than 1R': 20 }
+} as const;
 type EntryEmotion = (typeof entryEmotionOptions)[number]['value'];
 type InTradeEmotion = (typeof inTradeEmotionOptions)[number]['value'];
 type NoTradeMindset = (typeof noTradeMindsetOptions)[number]['value'];
@@ -213,6 +226,11 @@ type TradeDraft = {
   r_multiple_decimal: string;
   minutes_in_trade: string;
   emotional_pressure: string;
+  market_context_quality: string;
+  liquidity_structure_quality: string;
+  displacement_quality: string;
+  poi_quality: string;
+  target_room_quality: string;
   entry_emotion: EntryEmotion;
   in_trade_emotion: InTradeEmotion;
   is_paper_trade: boolean;
@@ -278,6 +296,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     r_multiple_decimal: '00',
     minutes_in_trade: '',
     emotional_pressure: '1',
+    market_context_quality: '',
+    liquidity_structure_quality: '',
+    displacement_quality: '',
+    poi_quality: '',
+    target_room_quality: '',
     entry_emotion: entryEmotionOptions[0].value,
     in_trade_emotion: inTradeEmotionOptions[0].value,
     is_paper_trade: false,
@@ -288,6 +311,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [newMistakeTag, setNewMistakeTag] = useState('');
   const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
   const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
+  const [setupQualityOpen, setSetupQualityOpen] = useState(false);
   const [logMode, setLogMode] = useState<LogMode>('trade');
   const [tradeLogSubtype, setTradeLogSubtype] = useState<'live_trade' | 'paper_trade' | 'no_trade'>('live_trade');
   const [accountOpen, setAccountOpen] = useState(false);
@@ -606,6 +630,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 : historyEntryTypeFilter === 'chart_session'
                   ? 'Chart session'
                   : 'Post-session review';
+  const setupQualityPreview = useMemo(() => evaluateSetupQuality({
+    market_context_quality: tradeDraft.market_context_quality,
+    liquidity_structure_quality: tradeDraft.liquidity_structure_quality,
+    displacement_quality: tradeDraft.displacement_quality,
+    poi_quality: tradeDraft.poi_quality,
+    target_room_quality: tradeDraft.target_room_quality,
+    classification: tradeDraft.classification,
+    r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
+    mistake_tags: tradeDraft.mistake_tags
+  }), [tradeDraft.market_context_quality, tradeDraft.liquidity_structure_quality, tradeDraft.displacement_quality, tradeDraft.poi_quality, tradeDraft.target_room_quality, tradeDraft.classification, tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal, tradeDraft.mistake_tags]);
 
   const selectedWeekKey = weekKeyFromInput(weekInput);
   const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
@@ -638,20 +672,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       summary: `Mindset: ${resolveNoTradeMindset(day)}`,
       attachmentCount: attachments.filter((a) => a.no_trade_day_id === day.id).length
     }));
-    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => {
-      const subtype = resolveSessionSubtypeFromSession(session);
-      return {
-        id: session.id,
-        kind: 'session',
-        dateKey: session.session_date,
-        timeLabel: subtype === 'pre_session_plan'
-          ? `${session.session_date} · ${formatMinutesLabel(session.duration_minutes)}`
-          : `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
-        title: sessionSubtypeLabel(subtype),
-        summary: `${sessionSubtypeTagLabel(subtype)} · ${formatMinutesLabel(session.duration_minutes)}`,
-        attachmentCount: attachments.filter((a) => a.session_id === session.id).length
-      };
-    });
+    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => ({
+      id: session.id,
+      kind: 'session',
+      dateKey: session.session_date,
+      timeLabel: `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
+      title: sessionSubtypeLabel(session.session_type),
+      summary: `${sessionSubtypeTagLabel(session.session_type)} · ${formatMinutesLabel(session.duration_minutes)}`,
+      attachmentCount: attachments.filter((a) => a.session_id === session.id).length
+    }));
     return [...tradeItems, ...noTradeItems, ...sessionItems].sort((a, b) => {
       if (a.dateKey === b.dateKey) return a.timeLabel < b.timeLabel ? 1 : -1;
       return a.dateKey < b.dateKey ? 1 : -1;
@@ -724,6 +753,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       entry_emotion: normalizeEntryEmotion(tradeDraft.entry_emotion),
       in_trade_emotion: normalizeInTradeEmotion(tradeDraft.in_trade_emotion),
       is_paper_trade: Boolean(tradeDraft.is_paper_trade),
+      market_context_quality: tradeDraft.market_context_quality || null,
+      liquidity_structure_quality: tradeDraft.liquidity_structure_quality || null,
+      displacement_quality: tradeDraft.displacement_quality || null,
+      poi_quality: tradeDraft.poi_quality || null,
+      target_room_quality: tradeDraft.target_room_quality || null,
+      setup_score: setupQualityPreview.score,
+      setup_grade: setupQualityPreview.grade,
+      setup_auto_tags: setupQualityPreview.tags,
       mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
       notes: String(tradeDraft.notes || '')
     };
@@ -977,14 +1014,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       r_multiple_decimal: '00',
       minutes_in_trade: '',
       emotional_pressure: '1',
+      market_context_quality: '',
+      liquidity_structure_quality: '',
+      displacement_quality: '',
+      poi_quality: '',
+      target_room_quality: '',
       entry_emotion: entryEmotionOptions[0].value,
-    in_trade_emotion: inTradeEmotionOptions[0].value,
+      in_trade_emotion: inTradeEmotionOptions[0].value,
       is_paper_trade: false,
       mistake_tags: [],
       notes: ''
     });
     setTradeExtract(null);
     setMistakePickerOpen(false);
+    setSetupQualityOpen(false);
     setTradeLogSubtype('live_trade');
   }
 
@@ -1006,6 +1049,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ...parseRMultipleToParts(trade.r_multiple),
       minutes_in_trade: String(trade.minutes_in_trade ?? ''),
       emotional_pressure: String(trade.emotional_pressure ?? 1),
+      market_context_quality: String((trade as TradeRow & { market_context_quality?: string | null }).market_context_quality || ''),
+      liquidity_structure_quality: String((trade as TradeRow & { liquidity_structure_quality?: string | null }).liquidity_structure_quality || ''),
+      displacement_quality: String((trade as TradeRow & { displacement_quality?: string | null }).displacement_quality || ''),
+      poi_quality: String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || ''),
+      target_room_quality: String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || ''),
       entry_emotion: resolveEntryEmotion(trade as TradeRow),
       in_trade_emotion: resolveInTradeEmotion(trade as TradeRow),
       is_paper_trade: Boolean(trade.is_paper_trade),
@@ -1013,6 +1061,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       notes: trade.notes || ''
     });
     setMistakePickerOpen(false);
+    setSetupQualityOpen(true);
     setTradeLogSubtype(Boolean(trade.is_paper_trade) ? 'paper_trade' : 'live_trade');
   }
 
@@ -2251,99 +2300,91 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             ) : (
               <Fragment>
-                {(() => {
-                  const sessionSubtype = resolveSessionSubtypeFromSession(item.session);
-                  const preSessionMeta = getPreSessionMeta(item.session);
-                  return (
-                    <>
-                      <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
-                        <div className="row"><strong>{sessionSubtypeLabel(sessionSubtype)}</strong><span>{item.session.session_date}</span></div>
-                        <div className="small muted">
-                          <span className="badge">{sessionSubtypeTagLabel(sessionSubtype)}</span>{' '}
-                          {sessionSubtype === 'pre_session_plan' ? `Duration-first entry · ${formatMinutesLabel(item.session.duration_minutes)}` : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
-                        </div>
-                        {sessionSubtype === 'pre_session_plan' && preSessionMeta ? <div className="small muted">Bias: {preSessionMeta.session_bias} · Condition: {preSessionMeta.expected_market_condition}</div> : null}
-                        {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
-                        <div className="row">
-                          <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
-                          <div className="row">
-                            <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
-                            <button className="inline" type="button" onClick={() => {
-                              const parsed = parseSessionNotes(item.session.notes || '');
-                              const subtype = resolveSessionSubtypeFromSession(item.session);
-                              setEditingSessionId(item.session.id);
-                              setSessionDraft({
-                                session_type: item.session.session_type,
-                                session_date: item.session.session_date,
-                                start_time: item.session.start_time.slice(0, 5),
-                                end_time: item.session.end_time.slice(0, 5),
-                                notes: parsed.note || ''
-                              });
-                              if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
-                                setPreSessionDraft({
-                                  minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
-                                  higher_timeframe_context: parsed.meta.higher_timeframe_context || higherTimeframeContextOptions[4],
-                                  session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
-                                  bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
-                                  expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
-                                  primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
-                                  sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
-                                  main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
-                                  starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
-                                });
-                              }
-                              if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
-                                setPostSessionDraft({
-                                  post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
-                                  validation: {
-                                    bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
-                                    expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
-                                    setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
-                                  }
-                                });
-                              }
-                              setSessionSubtypeView(subtype);
-                              setTab('log');
-                              setLogMode('session');
-                            }}>Edit</button>
-                            <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
-                          </div>
-                        </div>
-                      </article>
-                      {detail?.kind === 'session' && detail.id === item.session.id && (
-                        <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
-                          <div className="row">
-                            <strong>Session detail</strong>
-                            <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
-                          </div>
-                          <div className="stack">
-                            <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(sessionSubtype)}</div>
-                            <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
-                            {sessionSubtype === 'pre_session_plan' && preSessionMeta ? (
-                              <>
-                                <div className="small">Higher-timeframe context: {preSessionMeta.higher_timeframe_context}</div>
-                                <div className="small">Session bias: {preSessionMeta.session_bias} ({preSessionMeta.bias_confidence})</div>
-                                <div className="small">Expected market condition: {preSessionMeta.expected_market_condition}</div>
-                                <div className="small">Primary setup focus: {preSessionMeta.primary_setup_focus}</div>
-                                <div className="small">Sit-out condition: {preSessionMeta.sit_out_condition}</div>
-                                <div className="small">Main objective: {preSessionMeta.main_objective}</div>
-                                <div className="small">Starting emotional state: {preSessionMeta.starting_emotional_state}</div>
-                              </>
-                            ) : (
-                              <>
-                                <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
-                                <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
-                              </>
-                            )}
-                            <div className="small">Notes:</div>
-                            <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
-                            <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
-                          </div>
-                        </article>
+                <article className={`trade session-${item.session.session_type}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                  <div className="row"><strong>{sessionSubtypeLabel(item.session.session_type)}</strong><span>{item.session.session_date}</span></div>
+                  <div className="small muted">
+                    <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
+                    {isPreSessionPlan(item.session) ? `Duration-first entry · ${formatMinutesLabel(item.session.duration_minutes)}` : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
+                  </div>
+                  {isPreSessionPlan(item.session) && getPreSessionMeta(item.session) ? <div className="small muted">Bias: {getPreSessionMeta(item.session)?.session_bias} · Condition: {getPreSessionMeta(item.session)?.expected_market_condition}</div> : null}
+                  {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
+                  <div className="row">
+                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => {
+                        const parsed = parseSessionNotes(item.session.notes || '');
+                        const subtype = resolveSessionSubtype(item.session.session_type);
+                        setEditingSessionId(item.session.id);
+                        setSessionDraft({
+                          session_type: item.session.session_type,
+                          session_date: item.session.session_date,
+                          start_time: item.session.start_time.slice(0, 5),
+                          end_time: item.session.end_time.slice(0, 5),
+                          notes: parsed.note || ''
+                        });
+                        if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
+                          setPreSessionDraft({
+                            minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
+                            higher_timeframe_context: parsed.meta.higher_timeframe_context || higherTimeframeContextOptions[4],
+                            session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
+                            bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
+                            expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
+                            primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
+                            sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
+                            main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
+                            starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
+                          });
+                        }
+                        if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
+                          setPostSessionDraft({
+                            post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
+                            validation: {
+                              bias_correctness: parsed.meta.validation?.bias_correctness || validationCorrectnessOptions[1],
+                              expected_condition_correctness: parsed.meta.validation?.expected_condition_correctness || validationCorrectnessOptions[1],
+                              setup_focus_correctness: parsed.meta.validation?.setup_focus_correctness || validationCorrectnessOptions[1]
+                            }
+                          });
+                        }
+                        setSessionSubtypeView(subtype);
+                        setTab('log');
+                        setLogMode('session');
+                      }}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'session' && detail.id === item.session.id && (
+                  <article className={`trade session-${item.session.session_type}`} style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>Session detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(item.session.session_type)}</div>
+                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                      {isPreSessionPlan(item.session) && getPreSessionMeta(item.session) ? (
+                        <>
+                          <div className="small">Higher-timeframe context: {getPreSessionMeta(item.session)?.higher_timeframe_context}</div>
+                          <div className="small">Session bias: {getPreSessionMeta(item.session)?.session_bias} ({getPreSessionMeta(item.session)?.bias_confidence})</div>
+                          <div className="small">Expected market condition: {getPreSessionMeta(item.session)?.expected_market_condition}</div>
+                          <div className="small">Primary setup focus: {getPreSessionMeta(item.session)?.primary_setup_focus}</div>
+                          <div className="small">Sit-out condition: {getPreSessionMeta(item.session)?.sit_out_condition}</div>
+                          <div className="small">Main objective: {getPreSessionMeta(item.session)?.main_objective}</div>
+                          <div className="small">Starting emotional state: {getPreSessionMeta(item.session)?.starting_emotional_state}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
+                          <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
+                        </>
                       )}
-                    </>
-                  );
-                })()}
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
+                      <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
               </Fragment>
             )}
               </Fragment>
@@ -2463,6 +2504,53 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <select name="model" value={addTradeModel} onChange={(e) => { setAddTradeModel(e.target.value); setTradeDraft((p) => ({ ...p, model: e.target.value })); }} disabled={classificationLocksSetup}>
               {(familyModels[addTradeFamily] || [NA_MODEL]).map((m) => <option key={m}>{m}</option>)}
             </select>
+            <section className="trade stack" style={{ padding: '10px 12px' }}>
+              <div className="row">
+                <strong>Setup Quality Check</strong>
+                <button className="inline" type="button" onClick={() => setSetupQualityOpen((open) => !open)}>
+                  {setupQualityOpen ? 'Hide' : (setupQualityPreview.grade ? `${setupQualityPreview.grade} · ${setupQualityPreview.score}` : 'Setup Grade pending')}
+                </button>
+              </div>
+              {setupQualityOpen ? (
+                <div className="stack">
+                  <label className="small muted">Did the setup align with market context?</label>
+                  <div className="small muted">HTF bias + session flow + structure + key levels</div>
+                  <select value={tradeDraft.market_context_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, market_context_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {marketContextQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">What did price do before entry?</label>
+                  <select value={tradeDraft.liquidity_structure_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, liquidity_structure_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {liquidityStructureQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">How strong was displacement?</label>
+                  <div className="small muted">Strong = clearly larger than recent candles, closes near its extreme, clean move<br />Moderate = noticeably stronger than recent candles, but not explosive<br />Weak = only slightly better than normal<br />Choppy / overlapping = messy overlap, no clear impulse</div>
+                  <select value={tradeDraft.displacement_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, displacement_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {displacementQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">What was the quality of the entry zone?</label>
+                  <div className="small muted">A POI can be an FVG, fib level, VWAP, prior level, HTF level, order block, or other key entry zone. Not every valid setup requires an FVG. “Fib / level confluence only” is for trades where the entry was mainly based on a fib level or key level rather than an FVG.</div>
+                  <select value={tradeDraft.poi_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, poi_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {poiQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Was there enough room to target?</label>
+                  <select value={tradeDraft.target_room_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, target_room_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {targetRoomQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <article className="trade" style={{ padding: '8px 10px' }}>
+                    <div className="small"><strong>Setup Score:</strong> {setupQualityPreview.score ?? 'pending'}</div>
+                    <div className="small"><strong>Setup Grade:</strong> {setupQualityPreview.grade || 'Setup Grade pending'}</div>
+                    <div className="small muted">{setupQualityPreview.label}</div>
+                  </article>
+                  <div className="small muted">Suggested setup tags:</div>
+                  <div>{setupQualityPreview.tags.length ? setupQualityPreview.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>) : <span className="small muted">No diagnostics yet.</span>}</div>
+                </div>
+              ) : null}
+            </section>
             <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
             <label className="small muted">R multiple</label>
             <div className="row">
@@ -3845,7 +3933,7 @@ function getPreSessionMeta(session: Pick<SessionRow, 'session_type' | 'notes'>) 
     const parsed = parseSessionNotes(session.notes || '');
     if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
   }
-  if (session.session_type === 'chart' || session.session_type === 'chart_session') {
+  if (session.session_type === 'chart') {
     const parsed = parseSessionNotes(session.notes || '');
     if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
   }
@@ -3874,11 +3962,6 @@ function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
   return 'chart_session';
 }
 
-function resolveSessionSubtypeFromSession(session: Pick<SessionRow, 'session_type' | 'notes'>): SessionSubtypeView {
-  if (isPreSessionPlan(session)) return 'pre_session_plan';
-  return resolveSessionSubtype(session.session_type);
-}
-
 function sessionSubtypeLabel(sessionType: string) {
   if (sessionType === 'pre_session_plan') return 'Pre-session plan';
   if (sessionType === 'chart_session' || sessionType === 'chart') return 'Chart session';
@@ -3887,10 +3970,7 @@ function sessionSubtypeLabel(sessionType: string) {
 }
 
 function sessionSubtypeTagLabel(sessionType: string) {
-  const subtype = resolveSessionSubtype(sessionType);
-  if (subtype === 'pre_session_plan') return 'Pre-session plan';
-  if (subtype === 'post_session_review') return 'Post-session review';
-  return 'Chart session';
+  return isChartSessionType(sessionType) ? 'Chart study' : 'Review work';
 }
 
 function sundayWeekStart(dateStr: string) {
@@ -4926,6 +5006,56 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   const negative = wholeRaw === '-0' || wholePart < 0;
   const signed = negative ? -magnitude : magnitude;
   return Number(signed.toFixed(2));
+}
+
+function evaluateSetupQuality(input: {
+  market_context_quality: string;
+  liquidity_structure_quality: string;
+  displacement_quality: string;
+  poi_quality: string;
+  target_room_quality: string;
+  classification: TradeClassification;
+  r_multiple: number;
+  mistake_tags: string[];
+}) {
+  const marketScore = setupQualityScores.market_context[input.market_context_quality as keyof typeof setupQualityScores.market_context];
+  const liquidityScore = setupQualityScores.liquidity_structure[input.liquidity_structure_quality as keyof typeof setupQualityScores.liquidity_structure];
+  const displacementScore = setupQualityScores.displacement[input.displacement_quality as keyof typeof setupQualityScores.displacement];
+  const poiScore = setupQualityScores.poi[input.poi_quality as keyof typeof setupQualityScores.poi];
+  const targetScore = setupQualityScores.target_room[input.target_room_quality as keyof typeof setupQualityScores.target_room];
+  const complete = typeof marketScore === 'number' && typeof liquidityScore === 'number' && typeof displacementScore === 'number' && typeof poiScore === 'number' && typeof targetScore === 'number' && input.target_room_quality !== 'Not checked';
+  const score = complete
+    ? Math.round(
+      marketScore * setupQualityWeights.market_context
+      + liquidityScore * setupQualityWeights.liquidity_structure
+      + displacementScore * setupQualityWeights.displacement
+      + poiScore * setupQualityWeights.poi
+      + targetScore * setupQualityWeights.target_room
+    )
+    : null;
+  const grade = score == null ? null : score >= 90 ? 'A+' : score >= 80 ? 'A' : score >= 68 ? 'B' : score >= 55 ? 'C' : 'D';
+  const label = grade === 'A+' ? 'A+ Setup' : grade === 'A' ? 'High-Quality Setup' : grade === 'B' ? 'Valid Setup' : grade === 'C' ? 'Questionable Setup' : grade === 'D' ? 'Low-Quality / Avoid' : 'Setup Grade pending';
+  const tags = new Set<string>();
+  if (input.market_context_quality === 'Mixed / unclear') tags.add('Mixed Context');
+  if (input.market_context_quality === 'Against context') tags.add('Against Context');
+  if (input.liquidity_structure_quality === 'No clear confirmation') tags.add('No Structure Confirmation');
+  if (input.liquidity_structure_quality === 'Minor structure only') tags.add('Minor Structure Only');
+  if (input.displacement_quality === 'Weak displacement') tags.add('Weak Displacement');
+  if (input.displacement_quality === 'Choppy / overlapping') {
+    tags.add('Choppy Price Action');
+    tags.add('Weak Displacement');
+  }
+  if (input.poi_quality === 'Fib / level confluence only') tags.add('Fib/Level-Only POI');
+  if (input.poi_quality === 'Questionable POI') tags.add('Questionable POI');
+  if (input.poi_quality === 'No clear POI') tags.add('No Clear POI');
+  if (input.target_room_quality === 'Less than 1R') tags.add('Poor R:R');
+  if (input.target_room_quality === 'Not checked') tags.add('R:R Not Checked');
+  if ((input.classification === 'Valid setup') && (grade === 'C' || grade === 'D')) tags.add('Classification Mismatch');
+  if (input.classification === 'FOMO trade' || input.classification === 'Forced trade') tags.add('Rule-Breaking Trade');
+  const hasMajorMistakeTags = normalizeMistakeTags(input.mistake_tags).length > 0;
+  if ((grade === 'A' || grade === 'A+') && input.r_multiple < 0 && input.classification === 'Valid setup' && !hasMajorMistakeTags) tags.add('Rule-Following Loss');
+  if ((grade === 'C' || grade === 'D') && input.r_multiple > 0) tags.add('Won Despite Weak Setup');
+  return { score, grade, label, tags: Array.from(tags) };
 }
 
 function toEditorText(value: string) {

@@ -22,6 +22,14 @@ export type TradeRow = {
   entry_emotion?: string | null;
   in_trade_emotion?: string | null;
   is_paper_trade?: boolean | null;
+  market_context_quality?: string | null;
+  liquidity_structure_quality?: string | null;
+  displacement_quality?: string | null;
+  poi_quality?: string | null;
+  target_room_quality?: string | null;
+  setup_score?: number | null;
+  setup_grade?: string | null;
+  setup_auto_tags?: string[] | null;
   mistake_tags: string[];
   notes: string | null;
 };
