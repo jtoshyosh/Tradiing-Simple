@@ -104,6 +104,12 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
 .playbook-reference-card { padding:8px 10px; border-color: rgba(74, 103, 149, 0.72); background: rgba(31, 48, 77, 0.22); }
 .playbook-reference-toggle,
 .playbook-reference-link { min-height: 28px; padding: 4px 8px; font-size: 11px; }
+.playbook-reference-body .rich-content { line-height: 1.3; }
+.playbook-reference-body .rich-content div,
+.playbook-reference-body .rich-content p { margin: 0 0 4px; }
+.playbook-reference-body .rich-content ul,
+.playbook-reference-body .rich-content ol { margin: 0 0 4px 18px; padding: 0; }
+.playbook-reference-body .rich-content li { margin: 0 0 2px; }
 .chip { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:12px; }
 .version { background:#17386f; color:#d8e6ff; border-color:#4568ad; font-weight:700; }
 .small { font-size:13px; }

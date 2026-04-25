@@ -814,13 +814,25 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     [playbookSectionMap]
   );
 
-  function playbookExcerpt(value: string, maxLength = 220) {
-    const cleaned = value
-      .replace(/[*_`>#-]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (cleaned.length <= maxLength) return cleaned;
-    return `${cleaned.slice(0, maxLength).trimEnd()}…`;
+  function playbookExcerpt(value: string, maxLines = 6, maxChars = 420) {
+    const source = /<\/?[a-z][\s\S]*>/i.test(value || '') ? htmlToEditorText(String(value || '')) : String(value || '');
+    const lines = source.replace(/\r/g, '').split('\n');
+    const excerptLines: string[] = [];
+    let charCount = 0;
+    let truncated = false;
+    for (const line of lines) {
+      const nextCount = charCount + line.length + 1;
+      if (excerptLines.length >= maxLines || nextCount > maxChars) {
+        truncated = true;
+        break;
+      }
+      excerptLines.push(line);
+      charCount = nextCount;
+    }
+    const excerpt = excerptLines.join('\n').trimEnd();
+    if (!truncated) return excerpt;
+    if (!excerpt) return '…';
+    return `${excerpt}\n…`;
   }
 
   const periodRange = dashboardPeriod === 'lifetime'
@@ -1949,8 +1961,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     {isOpen ? 'Collapse' : 'Expand'}
                   </button>
                 </div>
-                <div className="small muted" style={{ marginTop: 4 }}>
-                  {isOpen ? section.content : playbookExcerpt(section.content)}
+                <div className="playbook-reference-body" style={{ marginTop: 4 }}>
+                  <RichTextContent
+                    value={isOpen ? section.content : playbookExcerpt(section.content)}
+                    emptyLabel="No notes yet."
+                  />
                 </div>
                 <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
                   <button className="inline playbook-reference-link" type="button" onClick={() => openPlaybookSection(section.key)}>
