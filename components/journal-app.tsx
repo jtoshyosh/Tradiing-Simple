@@ -798,18 +798,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     [mergedPlaybookSections]
   );
   const preSessionPlaybookSections = useMemo(() => {
-    const keys = new Set<string>(PLAYBOOK_DEFAULT_PRE_SESSION_KEYS);
-    for (const section of mergedPlaybookSections) {
-      if (section.pin_pre_session) keys.add(section.key);
-    }
-    return Array.from(keys).map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section));
+    return mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_pre_session))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section));
   }, [mergedPlaybookSections, playbookSectionMap]);
   const reviewPlaybookSections = useMemo(() => {
-    const keys = new Set<string>(PLAYBOOK_DEFAULT_REVIEW_KEYS);
-    for (const section of mergedPlaybookSections) {
-      if (section.pin_review) keys.add(section.key);
-    }
-    return Array.from(keys).map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section));
+    return mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_review))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section));
   }, [mergedPlaybookSections, playbookSectionMap]);
   const tradePlaybookSections = useMemo(
     () => PLAYBOOK_TRADE_REFERENCE_KEYS.map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section)),
