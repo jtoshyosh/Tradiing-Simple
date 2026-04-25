@@ -895,6 +895,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
   const periodExpectancyPnl = periodTrades.length ? periodNetPnl / periodTrades.length : 0;
   const periodExpectancyR = periodTrades.length ? periodNetR / periodTrades.length : 0;
+  const dashboardProcessSummary = useMemo(() => computeProcessAnalytics(periodTrades, periodSessions), [periodTrades, periodSessions]);
   const allTimeStreaks = computeStreaks(dashboardTrades);
   const periodStreaks = computeStreaks(periodTrades);
   const mistakeImpact = computeMistakeImpact(periodTrades);
@@ -1029,6 +1030,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
+  const weeklyProcessSummary = useMemo(() => computeProcessAnalytics(weekTradesForReview, weekSessions), [weekTradesForReview, weekSessions]);
   const weekTradeById = useMemo(() => new Map(weekTradesForReview.map((trade) => [trade.id, trade])), [weekTradesForReview]);
   const weekNoTradeById = useMemo(() => new Map(weekNoTrades.map((day) => [day.id, day])), [weekNoTrades]);
   const weekSessionById = useMemo(() => new Map(weekSessions.map((session) => [session.id, session])), [weekSessions]);
@@ -2333,6 +2335,46 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </div>
           </section>
 
+          <section className="card stack">
+            <strong>Process Analytics</strong>
+            <div className="small muted">Scope: selected period + trade type filter. Uses existing logged post-session + setup-quality data.</div>
+            <div className="grid">
+              <article className="trade">
+                <div className="muted small">Bias accuracy</div>
+                {dashboardProcessSummary.bias.sampleCount ? (
+                  <div>{dashboardProcessSummary.bias.accuracy.toFixed(0)}%</div>
+                ) : <div className="small muted">Not enough post-session bias reviews yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.bias.sampleCount} review{dashboardProcessSummary.bias.sampleCount === 1 ? '' : 's'} (Yes/Partially count as accurate)</div>
+                <div className="muted small" style={{ marginTop: 6 }}>Market condition accuracy</div>
+                {dashboardProcessSummary.marketCondition.sampleCount ? (
+                  <div>{dashboardProcessSummary.marketCondition.accuracy.toFixed(0)}%</div>
+                ) : <div className="small muted">Not enough market-condition reviews yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.marketCondition.sampleCount} review{dashboardProcessSummary.marketCondition.sampleCount === 1 ? '' : 's'} (Yes/Partially count as accurate)</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">A/A+ setup rate</div>
+                {dashboardProcessSummary.setup.gradedCount ? (
+                  <div>{dashboardProcessSummary.setup.aaRate.toFixed(0)}%</div>
+                ) : <div className="small muted">No graded trades in this scope yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.setup.gradedCount} graded trade{dashboardProcessSummary.setup.gradedCount === 1 ? '' : 's'}</div>
+                <div className="muted small" style={{ marginTop: 6 }}>Most common setup weakness</div>
+                <div className="small">{dashboardProcessSummary.setup.topWeaknessLabel || 'Not enough graded setup diagnostics yet.'}</div>
+              </article>
+              <article className="trade">
+                <div className="small">Rule-following losses: <strong>{dashboardProcessSummary.setup.ruleFollowingLosses}</strong></div>
+                <div className="small">Won despite weak setup: <strong>{dashboardProcessSummary.setup.wonDespiteWeak}</strong></div>
+                {dashboardProcessSummary.setup.strongAvgR == null && dashboardProcessSummary.setup.weakAvgR == null ? (
+                  <div className="small muted" style={{ marginTop: 6 }}>Outcome insight needs A/A+ or C/D graded samples.</div>
+                ) : (
+                  <div className="small muted" style={{ marginTop: 6 }}>
+                    A/A+ setups avg: {dashboardProcessSummary.setup.strongAvgR == null ? '—' : `${dashboardProcessSummary.setup.strongAvgR.toFixed(2)}R`} · C/D setups avg: {dashboardProcessSummary.setup.weakAvgR == null ? '—' : `${dashboardProcessSummary.setup.weakAvgR.toFixed(2)}R`}
+                  </div>
+                )}
+              </article>
+            </div>
+            <div className="small muted">Definitions: Bias/Market condition accuracy = post-session validations marked Yes or Partially. A/A+ rate = graded trades with setup grade A or A+.</div>
+          </section>
+
           <section className="card stack control-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Performance chart</strong>
@@ -3532,6 +3574,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
           </div>
           <div className="trade small muted">Review week: {selectedReviewRangeLabel} (Sunday–Saturday). Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week&apos;s process summary</strong>
+              <span className="small muted">{selectedReviewRangeLabel}</span>
+            </div>
+            <div className="small">Bias accuracy: {weeklyProcessSummary.bias.sampleCount ? `${weeklyProcessSummary.bias.accuracy.toFixed(0)}%` : 'Not enough post-session bias reviews yet.'}</div>
+            <div className="small">Market condition accuracy: {weeklyProcessSummary.marketCondition.sampleCount ? `${weeklyProcessSummary.marketCondition.accuracy.toFixed(0)}%` : 'Not enough market-condition reviews yet.'}</div>
+            <div className="small">A/A+ setup rate: {weeklyProcessSummary.setup.gradedCount ? `${weeklyProcessSummary.setup.aaRate.toFixed(0)}%` : 'No graded trades this week.'}</div>
+            <div className="small">Top weakness: {weeklyProcessSummary.setup.topWeaknessLabel || 'Not enough graded setup diagnostics yet.'}</div>
+            <div className="small muted">Uses selected review week only (Sunday–Saturday).</div>
+          </section>
           {renderPlaybookReferenceCards(reviewPlaybookSections, 'Review')}
           <RichTextEditor
             label="1) Reflection on mistakes"
@@ -5651,6 +5704,68 @@ function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
   const negative = wholeRaw === '-0' || wholePart < 0;
   const signed = negative ? -magnitude : magnitude;
   return Number(signed.toFixed(2));
+}
+
+function computeProcessAnalytics(trades: TradeRow[], sessions: SessionRow[]) {
+  const gradedTrades = trades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A' || grade === 'B' || grade === 'C' || grade === 'D';
+  });
+  const strongTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A';
+  });
+  const weakTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'C' || grade === 'D';
+  });
+  const weakTagCounts: Record<string, number> = {};
+  let ruleFollowingLosses = 0;
+  let wonDespiteWeak = 0;
+  for (const trade of gradedTrades) {
+    const tags = resolveSetupTags(trade);
+    if (tags.includes('Rule-Following Loss')) ruleFollowingLosses += 1;
+    if (tags.includes('Won Despite Weak Setup')) wonDespiteWeak += 1;
+    for (const tag of tags) {
+      if (tag === 'Rule-Following Loss' || tag === 'Won Despite Weak Setup') continue;
+      weakTagCounts[tag] = (weakTagCounts[tag] || 0) + 1;
+    }
+  }
+  const topWeaknessCount = Object.values(weakTagCounts).length ? Math.max(...Object.values(weakTagCounts)) : 0;
+  const topWeaknesses = topWeaknessCount
+    ? Object.entries(weakTagCounts).filter(([, count]) => count === topWeaknessCount).map(([tag]) => tag)
+    : [];
+  const postSessionReviews = sessions
+    .filter((session) => session.session_type === 'post_session_review' || session.session_type === 'journal')
+    .map((session) => parseSessionNotes(session.notes).meta)
+    .filter((meta): meta is PostSessionMeta & { kind: 'post_session_review' } => Boolean(meta && meta.kind === 'post_session_review'));
+  const biasSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.bias_correctness))
+    .filter((value) => value !== 'N/A');
+  const biasAccurate = biasSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const marketSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.expected_condition_correctness))
+    .filter((value) => value !== 'N/A');
+  const marketAccurate = marketSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  return {
+    bias: {
+      sampleCount: biasSamples.length,
+      accuracy: biasSamples.length ? (biasAccurate / biasSamples.length) * 100 : 0
+    },
+    marketCondition: {
+      sampleCount: marketSamples.length,
+      accuracy: marketSamples.length ? (marketAccurate / marketSamples.length) * 100 : 0
+    },
+    setup: {
+      gradedCount: gradedTrades.length,
+      aaRate: gradedTrades.length ? (strongTrades.length / gradedTrades.length) * 100 : 0,
+      topWeaknessLabel: topWeaknesses.length ? topWeaknesses.join(' / ') : '',
+      ruleFollowingLosses,
+      wonDespiteWeak,
+      strongAvgR: strongTrades.length ? strongTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / strongTrades.length : null,
+      weakAvgR: weakTrades.length ? weakTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / weakTrades.length : null
+    }
+  };
 }
 
 function evaluateSetupQuality(input: {
