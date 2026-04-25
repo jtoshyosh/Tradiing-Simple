@@ -212,6 +212,8 @@ create table if not exists public.playbook_sections (
   section_key text not null,
   title text not null,
   content text not null default '',
+  pin_pre_session boolean not null default false,
+  pin_review boolean not null default false,
   updated_at timestamptz not null default now(),
   primary key (user_id, section_key)
 );

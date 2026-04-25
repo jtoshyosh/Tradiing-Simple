@@ -97,6 +97,13 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
 .playbook-jump-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .playbook-jump-chip { min-height: 28px; padding: 4px 8px; font-size: 11px; border-radius: 999px; }
 .playbook-section-item { padding: 10px; gap: 8px; }
+.playbook-pin-row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+.playbook-pin-option { display:inline-flex; align-items:center; gap:6px; }
+.playbook-pin-option input { width: 14px; height: 14px; }
+.playbook-reference-group { display:flex; flex-direction:column; gap:6px; }
+.playbook-reference-card { padding:8px 10px; border-color: rgba(74, 103, 149, 0.72); background: rgba(31, 48, 77, 0.22); }
+.playbook-reference-toggle,
+.playbook-reference-link { min-height: 28px; padding: 4px 8px; font-size: 11px; }
 .chip { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:12px; }
 .version { background:#17386f; color:#d8e6ff; border-color:#4568ad; font-weight:700; }
 .small { font-size:13px; }
@@ -365,6 +372,15 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
     gap: 3px;
   }
   .playbook-jump-chip {
+    min-height: 26px;
+    padding: 3px 7px;
+    font-size: 10.5px;
+  }
+  .playbook-reference-card {
+    padding: 7px 8px;
+  }
+  .playbook-reference-toggle,
+  .playbook-reference-link {
     min-height: 26px;
     padding: 3px 7px;
     font-size: 10.5px;

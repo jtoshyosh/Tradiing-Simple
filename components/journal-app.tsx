@@ -406,6 +406,9 @@ Personal reminders:
 * My job is to execute well, not to catch every move` }
 ] as const;
 const PLAYBOOK_QUICK_REMINDERS_KEY = 'quick_reminders';
+const PLAYBOOK_DEFAULT_PRE_SESSION_KEYS = ['market_bias_framework'] as const;
+const PLAYBOOK_DEFAULT_REVIEW_KEYS = ['post_session_review_reminders'] as const;
+const PLAYBOOK_TRADE_REFERENCE_KEYS = ['entry_model', 'fib_rules'] as const;
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
@@ -594,6 +597,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [playbookQuickReminderDraft, setPlaybookQuickReminderDraft] = useState('');
   const [playbookQuickReminderEditing, setPlaybookQuickReminderEditing] = useState(false);
   const [playbookJumpOpen, setPlaybookJumpOpen] = useState(false);
+  const [playbookReferenceOpen, setPlaybookReferenceOpen] = useState<Record<string, boolean>>({});
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -711,10 +715,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const byKey = new Map(playbookRows.map((row) => [row.section_key, row]));
     return PLAYBOOK_SECTIONS_DEFAULTS.map((section) => {
       const saved = byKey.get(section.key);
+      const defaultPinnedPreSession = PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]);
+      const defaultPinnedReview = PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number]);
       return {
         key: section.key,
         title: saved?.title || section.title,
         content: saved?.content ?? section.content,
+        pin_pre_session: saved?.pin_pre_session ?? defaultPinnedPreSession,
+        pin_review: saved?.pin_review ?? defaultPinnedReview,
         updated_at: saved?.updated_at
       };
     });
@@ -748,8 +756,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     return stamp.toLocaleString();
   }
 
-  async function savePlaybookSection(sectionKey: string, title: string, content: string) {
-    const payload: PlaybookSectionRow = { user_id: userId, section_key: sectionKey, title, content };
+  async function savePlaybookSection(sectionKey: string, title: string, content: string, options?: { pin_pre_session?: boolean; pin_review?: boolean }) {
+    const existing = mergedPlaybookSections.find((section) => section.key === sectionKey);
+    const payload: PlaybookSectionRow = {
+      user_id: userId,
+      section_key: sectionKey,
+      title,
+      content,
+      pin_pre_session: options?.pin_pre_session ?? existing?.pin_pre_session ?? false,
+      pin_review: options?.pin_review ?? existing?.pin_review ?? false
+    };
     const { data, error } = await supabase
       .from('playbook_sections')
       .upsert(payload, { onConflict: 'user_id,section_key' })
@@ -770,8 +786,43 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   async function resetPlaybookSection(sectionKey: string) {
     const defaultSection = PLAYBOOK_SECTIONS_DEFAULTS.find((section) => section.key === sectionKey);
     if (!defaultSection) return;
-    const ok = await savePlaybookSection(defaultSection.key, defaultSection.title, defaultSection.content);
+    const ok = await savePlaybookSection(defaultSection.key, defaultSection.title, defaultSection.content, {
+      pin_pre_session: PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]),
+      pin_review: PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number])
+    });
     if (ok) setPlaybookEditing((prev) => ({ ...prev, [sectionKey]: false }));
+  }
+
+  const playbookSectionMap = useMemo<Map<string, (typeof mergedPlaybookSections)[number]>>(
+    () => new Map(mergedPlaybookSections.map((section) => [section.key, section])),
+    [mergedPlaybookSections]
+  );
+  const preSessionPlaybookSections = useMemo(() => {
+    const keys = new Set<string>(PLAYBOOK_DEFAULT_PRE_SESSION_KEYS);
+    for (const section of mergedPlaybookSections) {
+      if (section.pin_pre_session) keys.add(section.key);
+    }
+    return Array.from(keys).map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section));
+  }, [mergedPlaybookSections, playbookSectionMap]);
+  const reviewPlaybookSections = useMemo(() => {
+    const keys = new Set<string>(PLAYBOOK_DEFAULT_REVIEW_KEYS);
+    for (const section of mergedPlaybookSections) {
+      if (section.pin_review) keys.add(section.key);
+    }
+    return Array.from(keys).map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section));
+  }, [mergedPlaybookSections, playbookSectionMap]);
+  const tradePlaybookSections = useMemo(
+    () => PLAYBOOK_TRADE_REFERENCE_KEYS.map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section)),
+    [playbookSectionMap]
+  );
+
+  function playbookExcerpt(value: string, maxLength = 220) {
+    const cleaned = value
+      .replace(/[*_`>#-]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (cleaned.length <= maxLength) return cleaned;
+    return `${cleaned.slice(0, maxLength).trimEnd()}…`;
   }
 
   const periodRange = dashboardPeriod === 'lifetime'
@@ -1868,6 +1919,51 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
   const initials = buildInitials(accountFirstName, accountLastName, email);
   const logType: LogType = logMode === 'session' ? 'session' : 'trade_log';
+  const showTradePlaybookReferences = logMode === 'trade' && (tradeLogSubtype === 'live_trade' || tradeLogSubtype === 'paper_trade');
+
+  function openPlaybookSection(sectionKey: string) {
+    setTab('playbook');
+    setPlaybookOpen(Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((entry) => [entry.key, entry.key === sectionKey])));
+    setPlaybookJumpOpen(false);
+    requestAnimationFrame(() => {
+      detailAnchors.current[`playbook-${sectionKey}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  function renderPlaybookReferenceCards(
+    sections: Array<{ key: string; title: string; content: string }>,
+    context: 'Pre-session' | 'Trade entry' | 'Review'
+  ) {
+    if (!sections.length) return null;
+    return (
+      <section className="playbook-reference-group" aria-label={`${context} playbook references`}>
+        <div className="small muted">{context} playbook references</div>
+        <div className="stack">
+          {sections.map((section) => {
+            const isOpen = Boolean(playbookReferenceOpen[section.key]);
+            return (
+              <article key={`reference-${context}-${section.key}`} className="trade playbook-reference-card">
+                <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <strong className="small">{section.title}</strong>
+                  <button className="inline playbook-reference-toggle" type="button" onClick={() => setPlaybookReferenceOpen((prev) => ({ ...prev, [section.key]: !isOpen }))}>
+                    {isOpen ? 'Collapse' : 'Expand'}
+                  </button>
+                </div>
+                <div className="small muted" style={{ marginTop: 4 }}>
+                  {isOpen ? section.content : playbookExcerpt(section.content)}
+                </div>
+                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+                  <button className="inline playbook-reference-link" type="button" onClick={() => openPlaybookSection(section.key)}>
+                    View in Playbook
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
 
   return (
     <main className="app">
@@ -2873,6 +2969,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <select name="model" value={addTradeModel} onChange={(e) => { setAddTradeModel(e.target.value); setTradeDraft((p) => ({ ...p, model: e.target.value })); }} disabled={classificationLocksSetup}>
               {(familyModels[addTradeFamily] || [NA_MODEL]).map((m) => <option key={m}>{m}</option>)}
             </select>
+            {showTradePlaybookReferences ? renderPlaybookReferenceCards(tradePlaybookSections, 'Trade entry') : null}
             <section className="trade stack" style={{ padding: '10px 12px' }}>
               <div className="row">
                 <strong>Setup Quality Check</strong>
@@ -3319,6 +3416,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <select value={preSessionDraft.bias_confidence} onChange={(e) => setPreSessionDraft((p) => ({ ...p, bias_confidence: e.target.value }))}>
                     {biasConfidenceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                   </select>
+                  {renderPlaybookReferenceCards(preSessionPlaybookSections, 'Pre-session')}
                   <label className="small muted">Expected market condition</label>
                   <select value={preSessionDraft.expected_market_condition} onChange={(e) => setPreSessionDraft((p) => ({ ...p, expected_market_condition: e.target.value }))}>
                     {expectedMarketConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
@@ -3434,6 +3532,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
           </div>
           <div className="trade small muted">Review week: {selectedReviewRangeLabel} (Sunday–Saturday). Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          {renderPlaybookReferenceCards(reviewPlaybookSections, 'Review')}
           <RichTextEditor
             label="1) Reflection on mistakes"
             helperText="What patterns drove mistakes this week?"
@@ -3620,6 +3719,24 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                         {isOpen ? 'Collapse' : 'Expand'}
                       </button>
                     </div>
+                  </div>
+                  <div className="playbook-pin-row">
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(section.pin_pre_session)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: e.target.checked, pin_review: Boolean(section.pin_review) })}
+                      />
+                      <span className="small muted">Pin to Pre-Session</span>
+                    </label>
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(section.pin_review)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_review: e.target.checked })}
+                      />
+                      <span className="small muted">Pin to Review</span>
+                    </label>
                   </div>
                   {isOpen ? (
                     <>

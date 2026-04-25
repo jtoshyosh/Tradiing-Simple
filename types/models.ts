@@ -99,5 +99,7 @@ export type PlaybookSectionRow = {
   section_key: string;
   title: string;
   content: string;
+  pin_pre_session?: boolean;
+  pin_review?: boolean;
   updated_at?: string;
 };
