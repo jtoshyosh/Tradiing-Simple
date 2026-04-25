@@ -2332,11 +2332,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <div className="small muted">{gradedTrades.length} graded trade{gradedTrades.length === 1 ? '' : 's'}</div>
               </article>
               <article className="trade">
-                <div className="muted small">A/A+ rate</div>
-                <div>{aaRate == null ? '—' : `${aaRate.toFixed(0)}%`}</div>
-                <div className="small muted">Definition: graded trades with grade A or A+</div>
-              </article>
-              <article className="trade">
                 <div className="muted small">Quality outcome insight</div>
                 {strongQualityAvgR == null && weakQualityAvgR == null ? (
                   <div className="small muted">Sample too small for A/A+ vs C/D comparison.</div>
@@ -2351,35 +2346,39 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
 
           <section className="card stack">
-            <strong>Process Analytics</strong>
-            <div className="small muted">Scope: selected period + trade type filter. Uses existing logged post-session + setup-quality data.</div>
+            <strong>Process &amp; Playbook Alignment</strong>
+            <div className="small muted">Scope: selected period + trade type filter. Consolidated validation, setup alignment, and drift/exception signals.</div>
             <div className="grid">
               <article className="trade">
-                <div className="muted small">Bias accuracy</div>
+                <div className="muted small">Validation accuracy</div>
                 {dashboardProcessSummary.bias.sampleCount ? (
-                  <div>{dashboardProcessSummary.bias.accuracy.toFixed(0)}%</div>
+                  <div>Bias: {dashboardProcessSummary.bias.accuracy.toFixed(0)}%</div>
                 ) : <div className="small muted">Not enough post-session bias reviews yet.</div>}
-                <div className="small muted">{dashboardProcessSummary.bias.sampleCount} review{dashboardProcessSummary.bias.sampleCount === 1 ? '' : 's'} (Yes/Partially count as accurate)</div>
-                <div className="muted small" style={{ marginTop: 6 }}>Market condition accuracy</div>
+                <div className="small muted">{dashboardProcessSummary.bias.sampleCount} bias review{dashboardProcessSummary.bias.sampleCount === 1 ? '' : 's'} (Yes/Partially = accurate)</div>
                 {dashboardProcessSummary.marketCondition.sampleCount ? (
-                  <div>{dashboardProcessSummary.marketCondition.accuracy.toFixed(0)}%</div>
+                  <div>Market condition: {dashboardProcessSummary.marketCondition.accuracy.toFixed(0)}%</div>
                 ) : <div className="small muted">Not enough market-condition reviews yet.</div>}
-                <div className="small muted">{dashboardProcessSummary.marketCondition.sampleCount} review{dashboardProcessSummary.marketCondition.sampleCount === 1 ? '' : 's'} (Yes/Partially count as accurate)</div>
+                <div className="small muted">{dashboardProcessSummary.marketCondition.sampleCount} condition review{dashboardProcessSummary.marketCondition.sampleCount === 1 ? '' : 's'} (Yes/Partially = accurate)</div>
               </article>
               <article className="trade">
-                <div className="muted small">A/A+ setup rate</div>
+                <div className="muted small">Setup quality alignment</div>
                 {dashboardProcessSummary.setup.gradedCount ? (
-                  <div>{dashboardProcessSummary.setup.aaRate.toFixed(0)}%</div>
+                  <div>A/A+ setup rate: {dashboardProcessSummary.setup.aaRate.toFixed(0)}%</div>
                 ) : <div className="small muted">No graded trades in this scope yet.</div>}
-                <div className="small muted">{dashboardProcessSummary.setup.gradedCount} graded trade{dashboardProcessSummary.setup.gradedCount === 1 ? '' : 's'}</div>
-                <div className="muted small" style={{ marginTop: 6 }}>Most common setup weakness</div>
-                <div className="small">{dashboardProcessSummary.setup.topWeaknessLabel || 'Not enough graded setup diagnostics yet.'}</div>
+                <div className="small muted">{dashboardProcessSummary.setup.gradedCount} graded trade{dashboardProcessSummary.setup.gradedCount === 1 ? '' : 's'} in scope</div>
+                {dashboardPlaybookAlignment.setup.gradedCount ? (
+                  <>
+                    <div className="small">POI quality rate: {dashboardPlaybookAlignment.setup.poiQualityRate.toFixed(0)}%</div>
+                    <div className="small">Target room discipline: {dashboardPlaybookAlignment.setup.targetRoomRate.toFixed(0)}%</div>
+                  </>
+                ) : <div className="small muted">Need graded trades for POI/target-room alignment signals.</div>}
               </article>
               <article className="trade">
-                <div className="small">Rule-following losses: <strong>{dashboardProcessSummary.setup.ruleFollowingLosses}</strong></div>
-                <div className="small">Won despite weak setup: <strong>{dashboardProcessSummary.setup.wonDespiteWeak}</strong></div>
+                <div className="muted small">Drift & exceptions</div>
+                <div className="small">Most common rule drift: <strong>{dashboardPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</strong></div>
+                <div className="small">Rule-following losses: <strong>{dashboardProcessSummary.setup.ruleFollowingLosses}</strong> · Won despite weak setup: <strong>{dashboardProcessSummary.setup.wonDespiteWeak}</strong></div>
                 {dashboardProcessSummary.setup.strongAvgR == null && dashboardProcessSummary.setup.weakAvgR == null ? (
-                  <div className="small muted" style={{ marginTop: 6 }}>Outcome insight needs A/A+ or C/D graded samples.</div>
+                  <div className="small muted" style={{ marginTop: 6 }}>Outcome comparison needs A/A+ or C/D graded samples (small sample right now).</div>
                 ) : (
                   <div className="small muted" style={{ marginTop: 6 }}>
                     A/A+ setups avg: {dashboardProcessSummary.setup.strongAvgR == null ? '—' : `${dashboardProcessSummary.setup.strongAvgR.toFixed(2)}R`} · C/D setups avg: {dashboardProcessSummary.setup.weakAvgR == null ? '—' : `${dashboardProcessSummary.setup.weakAvgR.toFixed(2)}R`}
@@ -2387,35 +2386,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 )}
               </article>
             </div>
-            <div className="small muted">Definitions: Bias/Market condition accuracy = post-session validations marked Yes or Partially. A/A+ rate = graded trades with setup grade A or A+.</div>
-          </section>
-
-          <section className="card stack">
-            <strong>Playbook Alignment</strong>
-            <div className="small muted">How closely current execution matched your playbook language (bias, setup quality, POI quality, and target room discipline).</div>
-            <div className="grid">
-              <article className="trade">
-                <div className="muted small">Bias accuracy</div>
-                {dashboardPlaybookAlignment.bias.sampleCount ? <div>{dashboardPlaybookAlignment.bias.accuracy.toFixed(0)}%</div> : <div className="small muted">Not enough post-session bias reviews yet.</div>}
-                <div className="muted small" style={{ marginTop: 6 }}>Market condition accuracy</div>
-                {dashboardPlaybookAlignment.marketCondition.sampleCount ? <div>{dashboardPlaybookAlignment.marketCondition.accuracy.toFixed(0)}%</div> : <div className="small muted">Not enough market-condition reviews yet.</div>}
-              </article>
-              <article className="trade">
-                <div className="muted small">A/A+ setup rate</div>
-                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.aaRate.toFixed(0)}%</div> : <div className="small muted">No graded trades in this scope yet.</div>}
-                <div className="small muted">{dashboardPlaybookAlignment.setup.gradedCount} graded trade{dashboardPlaybookAlignment.setup.gradedCount === 1 ? '' : 's'}</div>
-                <div className="muted small" style={{ marginTop: 6 }}>POI quality rate</div>
-                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.poiQualityRate.toFixed(0)}%</div> : <div className="small muted">Need graded trades for POI quality signal.</div>}
-                <div className="muted small" style={{ marginTop: 6 }}>Target room discipline</div>
-                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.targetRoomRate.toFixed(0)}%</div> : <div className="small muted">Need graded trades for target-room signal.</div>}
-              </article>
-              <article className="trade">
-                <div className="muted small">Most common rule drift</div>
-                <div>{dashboardPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</div>
-                <div className="small muted" style={{ marginTop: 6 }}>{dashboardPlaybookAlignment.setup.topRuleDriftCount ? `${dashboardPlaybookAlignment.setup.topRuleDriftCount} signal${dashboardPlaybookAlignment.setup.topRuleDriftCount === 1 ? '' : 's'} in this scope` : 'Early signal — log more graded trades for stronger drift confidence.'}</div>
-              </article>
-            </div>
-            <div className="small muted">Definitions: Bias/Market condition accuracy = post-session validations marked Yes or Partially (N/A excluded). A/A+ rate = graded trades with setup grade A/A+. POI quality rate = Strong confluence POI or Clean POI only. Target room discipline = 2R+ or 1.5R–2R.</div>
+            <div className="small muted">Definitions preserved: Bias/Market condition accuracy = post-session validations marked Yes or Partially (N/A excluded). A/A+ setup rate = graded trades with setup grade A/A+. POI quality rate = Strong confluence POI or Clean POI only. Target room discipline = 2R+ or 1.5R–2R.</div>
           </section>
 
           <section className="card stack control-card">
