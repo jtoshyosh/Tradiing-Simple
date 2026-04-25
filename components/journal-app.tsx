@@ -586,11 +586,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [reviewReferenceDetail, setReviewReferenceDetail] = useState<DetailState>(null);
   const [playbookRows, setPlaybookRows] = useState<PlaybookSectionRow[]>([]);
   const [playbookSearch, setPlaybookSearch] = useState('');
-  const [playbookOpen, setPlaybookOpen] = useState<Record<string, boolean>>(() => Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((section) => [section.key, true])));
+  const [playbookOpen, setPlaybookOpen] = useState<Record<string, boolean>>(() => Object.fromEntries(
+    PLAYBOOK_SECTIONS_DEFAULTS.map((section, idx) => [section.key, idx === 0])
+  ));
   const [playbookEditing, setPlaybookEditing] = useState<Record<string, boolean>>({});
   const [playbookDrafts, setPlaybookDrafts] = useState<Record<string, string>>({});
   const [playbookQuickReminderDraft, setPlaybookQuickReminderDraft] = useState('');
   const [playbookQuickReminderEditing, setPlaybookQuickReminderEditing] = useState(false);
+  const [playbookJumpOpen, setPlaybookJumpOpen] = useState(false);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -3502,8 +3505,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       )}
 
       {tab === 'playbook' && (
-        <section className="stack">
-          <section className="card stack control-card">
+        <section className="stack playbook-page">
+          <section className="card stack control-card playbook-quick-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Quick Reminders</strong>
               <span className="small muted">Last edited: {formatPlaybookUpdatedAt(playbookQuickReminderRow?.updated_at)}</span>
@@ -3547,13 +3550,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </>
             ) : (
               <>
-                <RichTextContent value={playbookQuickReminderRow?.content || PLAYBOOK_QUICK_REMINDERS_DEFAULT} emptyLabel="—" />
+                <div className="playbook-quick-content">
+                  <RichTextContent value={playbookQuickReminderRow?.content || PLAYBOOK_QUICK_REMINDERS_DEFAULT} emptyLabel="—" />
+                </div>
                 <button className="inline" type="button" onClick={() => setPlaybookQuickReminderEditing(true)}>Edit</button>
               </>
             )}
           </section>
 
-          <section className="card stack control-card">
+          <section className="card stack control-card playbook-sections-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Playbook Sections</strong>
               <input
@@ -3563,19 +3568,29 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 placeholder="Search sections"
               />
             </div>
-            <div className="small muted">Quick jump</div>
-            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
-              {PLAYBOOK_SECTIONS_DEFAULTS.map((section) => (
-                <button
-                  key={`jump-${section.key}`}
-                  className="inline"
-                  type="button"
-                  onClick={() => detailAnchors.current[`playbook-${section.key}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                >
-                  {section.title}
-                </button>
-              ))}
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div className="small muted">Quick jump</div>
+              <button className="inline playbook-jump-toggle" type="button" onClick={() => setPlaybookJumpOpen((open) => !open)}>
+                {playbookJumpOpen ? 'Hide' : 'Show'}
+              </button>
             </div>
+            {playbookJumpOpen ? (
+              <div className="playbook-jump-chips">
+                {PLAYBOOK_SECTIONS_DEFAULTS.map((section) => (
+                  <button
+                    key={`jump-${section.key}`}
+                    className="inline playbook-jump-chip"
+                    type="button"
+                    onClick={() => {
+                      setPlaybookOpen(Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((entry) => [entry.key, entry.key === section.key])));
+                      detailAnchors.current[`playbook-${section.key}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                  >
+                    {section.title}
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {!filteredPlaybookSections.length ? <div className="small muted">No sections match your search.</div> : null}
             {filteredPlaybookSections.map((section) => {
               const isOpen = Boolean(playbookOpen[section.key]);
@@ -3584,14 +3599,26 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               return (
                 <article
                   key={section.key}
-                  className="trade stack"
+                  className="trade stack playbook-section-item"
                   ref={(node) => { detailAnchors.current[`playbook-${section.key}`] = node; }}
                 >
                   <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                     <strong>{section.title}</strong>
                     <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
                       <span className="small muted">Last edited: {formatPlaybookUpdatedAt(section.updated_at)}</span>
-                      <button className="inline" type="button" onClick={() => setPlaybookOpen((prev) => ({ ...prev, [section.key]: !isOpen }))}>{isOpen ? 'Collapse' : 'Expand'}</button>
+                      <button
+                        className="inline"
+                        type="button"
+                        onClick={() => setPlaybookOpen((prev) => {
+                          const next: Record<string, boolean> = {};
+                          for (const entry of PLAYBOOK_SECTIONS_DEFAULTS) next[entry.key] = false;
+                          next[section.key] = !isOpen;
+                          if (!isOpen) return next;
+                          return { ...prev, ...next };
+                        })}
+                      >
+                        {isOpen ? 'Collapse' : 'Expand'}
+                      </button>
                     </div>
                   </div>
                   {isOpen ? (

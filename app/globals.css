@@ -77,13 +77,26 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   background:rgba(10,15,24,.9); border-top:1px solid var(--line);
   padding:10px 10px calc(10px + env(safe-area-inset-bottom));
 }
-.nav { max-width:620px; margin:0 auto; display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; }
+.nav { max-width:620px; margin:0 auto; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; }
 .nav button.active { background:#1b2f5d; }
 .nav button {
   min-height: 42px;
   font-size: 13px;
   text-align: center;
+  padding: 8px 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
+.playbook-page { gap: 8px; }
+.playbook-quick-card { gap: 8px; padding: 10px; }
+.playbook-quick-content { font-size: 12px; line-height: 1.35; }
+.playbook-quick-content p { margin: 0 0 4px; }
+.playbook-sections-card { gap: 8px; padding: 10px; }
+.playbook-jump-toggle { min-height: 30px; padding: 5px 9px; font-size: 11px; }
+.playbook-jump-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.playbook-jump-chip { min-height: 28px; padding: 4px 8px; font-size: 11px; border-radius: 999px; }
+.playbook-section-item { padding: 10px; gap: 8px; }
 .chip { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:6px 10px; font-size:12px; }
 .version { background:#17386f; color:#d8e6ff; border-color:#4568ad; font-weight:700; }
 .small { font-size:13px; }
@@ -335,12 +348,26 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
     font-size: 13px;
   }
   .nav {
-    gap: 6px;
+    gap: 4px;
   }
   .nav button {
-    min-height: 40px;
-    font-size: 12px;
-    padding: 8px 4px;
+    min-height: 38px;
+    font-size: 11px;
+    padding: 7px 2px;
+  }
+  .playbook-quick-card,
+  .playbook-sections-card,
+  .playbook-section-item {
+    padding: 9px;
+    gap: 7px;
+  }
+  .playbook-jump-chips {
+    gap: 3px;
+  }
+  .playbook-jump-chip {
+    min-height: 26px;
+    padding: 3px 7px;
+    font-size: 10.5px;
   }
 }
 @media(min-width:768px){ .grid{ grid-template-columns:repeat(4,minmax(0,1fr)); } }
