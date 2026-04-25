@@ -906,6 +906,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const periodExpectancyPnl = periodTrades.length ? periodNetPnl / periodTrades.length : 0;
   const periodExpectancyR = periodTrades.length ? periodNetR / periodTrades.length : 0;
   const dashboardProcessSummary = useMemo(() => computeProcessAnalytics(periodTrades, periodSessions), [periodTrades, periodSessions]);
+  const dashboardPlaybookAlignment = useMemo(() => computePlaybookAlignment(periodTrades, periodSessions), [periodTrades, periodSessions]);
   const allTimeStreaks = computeStreaks(dashboardTrades);
   const periodStreaks = computeStreaks(periodTrades);
   const mistakeImpact = computeMistakeImpact(periodTrades);
@@ -1041,6 +1042,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
   const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
   const weeklyProcessSummary = useMemo(() => computeProcessAnalytics(weekTradesForReview, weekSessions), [weekTradesForReview, weekSessions]);
+  const weeklyPlaybookAlignment = useMemo(() => computePlaybookAlignment(weekTradesForReview, weekSessions), [weekTradesForReview, weekSessions]);
   const weekTradeById = useMemo(() => new Map(weekTradesForReview.map((trade) => [trade.id, trade])), [weekTradesForReview]);
   const weekNoTradeById = useMemo(() => new Map(weekNoTrades.map((day) => [day.id, day])), [weekNoTrades]);
   const weekSessionById = useMemo(() => new Map(weekSessions.map((session) => [session.id, session])), [weekSessions]);
@@ -2388,6 +2390,34 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small muted">Definitions: Bias/Market condition accuracy = post-session validations marked Yes or Partially. A/A+ rate = graded trades with setup grade A or A+.</div>
           </section>
 
+          <section className="card stack">
+            <strong>Playbook Alignment</strong>
+            <div className="small muted">How closely current execution matched your playbook language (bias, setup quality, POI quality, and target room discipline).</div>
+            <div className="grid">
+              <article className="trade">
+                <div className="muted small">Bias accuracy</div>
+                {dashboardPlaybookAlignment.bias.sampleCount ? <div>{dashboardPlaybookAlignment.bias.accuracy.toFixed(0)}%</div> : <div className="small muted">Not enough post-session bias reviews yet.</div>}
+                <div className="muted small" style={{ marginTop: 6 }}>Market condition accuracy</div>
+                {dashboardPlaybookAlignment.marketCondition.sampleCount ? <div>{dashboardPlaybookAlignment.marketCondition.accuracy.toFixed(0)}%</div> : <div className="small muted">Not enough market-condition reviews yet.</div>}
+              </article>
+              <article className="trade">
+                <div className="muted small">A/A+ setup rate</div>
+                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.aaRate.toFixed(0)}%</div> : <div className="small muted">No graded trades in this scope yet.</div>}
+                <div className="small muted">{dashboardPlaybookAlignment.setup.gradedCount} graded trade{dashboardPlaybookAlignment.setup.gradedCount === 1 ? '' : 's'}</div>
+                <div className="muted small" style={{ marginTop: 6 }}>POI quality rate</div>
+                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.poiQualityRate.toFixed(0)}%</div> : <div className="small muted">Need graded trades for POI quality signal.</div>}
+                <div className="muted small" style={{ marginTop: 6 }}>Target room discipline</div>
+                {dashboardPlaybookAlignment.setup.gradedCount ? <div>{dashboardPlaybookAlignment.setup.targetRoomRate.toFixed(0)}%</div> : <div className="small muted">Need graded trades for target-room signal.</div>}
+              </article>
+              <article className="trade">
+                <div className="muted small">Most common rule drift</div>
+                <div>{dashboardPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</div>
+                <div className="small muted" style={{ marginTop: 6 }}>{dashboardPlaybookAlignment.setup.topRuleDriftCount ? `${dashboardPlaybookAlignment.setup.topRuleDriftCount} signal${dashboardPlaybookAlignment.setup.topRuleDriftCount === 1 ? '' : 's'} in this scope` : 'Early signal — log more graded trades for stronger drift confidence.'}</div>
+              </article>
+            </div>
+            <div className="small muted">Definitions: Bias/Market condition accuracy = post-session validations marked Yes or Partially (N/A excluded). A/A+ rate = graded trades with setup grade A/A+. POI quality rate = Strong confluence POI or Clean POI only. Target room discipline = 2R+ or 1.5R–2R.</div>
+          </section>
+
           <section className="card stack control-card">
             <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
               <strong>Performance chart</strong>
@@ -3597,6 +3627,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small">A/A+ setup rate: {weeklyProcessSummary.setup.gradedCount ? `${weeklyProcessSummary.setup.aaRate.toFixed(0)}%` : 'No graded trades this week.'}</div>
             <div className="small">Top weakness: {weeklyProcessSummary.setup.topWeaknessLabel || 'Not enough graded setup diagnostics yet.'}</div>
             <div className="small muted">Uses selected review week only (Sunday–Saturday).</div>
+          </section>
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week&apos;s playbook alignment</strong>
+              <span className="small muted">{selectedReviewRangeLabel}</span>
+            </div>
+            <div className="small">Bias accuracy: {weeklyPlaybookAlignment.bias.sampleCount ? `${weeklyPlaybookAlignment.bias.accuracy.toFixed(0)}%` : 'Not enough post-session bias reviews yet.'}</div>
+            <div className="small">Market condition accuracy: {weeklyPlaybookAlignment.marketCondition.sampleCount ? `${weeklyPlaybookAlignment.marketCondition.accuracy.toFixed(0)}%` : 'Not enough market-condition reviews yet.'}</div>
+            <div className="small">A/A+ setup rate: {weeklyPlaybookAlignment.setup.gradedCount ? `${weeklyPlaybookAlignment.setup.aaRate.toFixed(0)}%` : 'No graded trades this week.'}</div>
+            <div className="small">Top rule drift: {weeklyPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</div>
+            <div className="small muted">Uses selected review week + review trade filter only (Sunday–Saturday).</div>
           </section>
           {renderPlaybookReferenceCards(reviewPlaybookSections, 'Review')}
           <RichTextEditor
@@ -5777,6 +5818,87 @@ function computeProcessAnalytics(trades: TradeRow[], sessions: SessionRow[]) {
       wonDespiteWeak,
       strongAvgR: strongTrades.length ? strongTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / strongTrades.length : null,
       weakAvgR: weakTrades.length ? weakTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / weakTrades.length : null
+    }
+  };
+}
+
+function computePlaybookAlignment(trades: TradeRow[], sessions: SessionRow[]) {
+  const postSessionReviews = sessions
+    .filter((session) => session.session_type === 'post_session_review' || session.session_type === 'journal')
+    .map((session) => parseSessionNotes(session.notes).meta)
+    .filter((meta): meta is PostSessionMeta & { kind: 'post_session_review' } => Boolean(meta && meta.kind === 'post_session_review'));
+  const biasSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.bias_correctness))
+    .filter((value) => value !== 'N/A');
+  const biasAccurate = biasSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const marketSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.expected_condition_correctness))
+    .filter((value) => value !== 'N/A');
+  const marketAccurate = marketSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const gradedTrades = trades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A' || grade === 'B' || grade === 'C' || grade === 'D';
+  });
+  const strongTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A';
+  });
+  const poiQualityPassCount = gradedTrades.filter((trade) => {
+    const poiQuality = String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || '');
+    return poiQuality === 'Strong confluence POI' || poiQuality === 'Clean POI only';
+  }).length;
+  const targetRoomPassCount = gradedTrades.filter((trade) => {
+    const targetRoom = String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || '');
+    return targetRoom === '2R+' || targetRoom === '1.5R–2R';
+  }).length;
+  const driftCounts: Record<string, number> = {};
+  const acceptedDriftTags = new Set([
+    'Mixed Context',
+    'Against Context',
+    'Weak Displacement',
+    'Choppy Price Action',
+    'Poor R:R',
+    'No Structure Confirmation',
+    'Minor Structure Only',
+    'Rule-Breaking Trade',
+    'Questionable POI',
+    'No Clear POI'
+  ]);
+  for (const trade of trades) {
+    const tags = resolveSetupTags(trade);
+    for (const tag of tags) {
+      if (acceptedDriftTags.has(tag)) driftCounts[tag] = (driftCounts[tag] || 0) + 1;
+    }
+    if (trade.classification === 'FOMO trade' || trade.classification === 'Forced trade') {
+      driftCounts['Rule-Breaking Trade'] = (driftCounts['Rule-Breaking Trade'] || 0) + 1;
+    }
+    if (resolveEntryEmotion(trade) === 'FOMO / Impatient' || resolveEntryEmotion(trade) === 'Revengeful / Tilted') {
+      driftCounts['Emotional Entry Drift'] = (driftCounts['Emotional Entry Drift'] || 0) + 1;
+    }
+    if (normalizeMistakeTags(trade.mistake_tags).length) {
+      driftCounts['Mistake-tagged execution drift'] = (driftCounts['Mistake-tagged execution drift'] || 0) + 1;
+    }
+  }
+  const topRuleDriftCount = Object.values(driftCounts).length ? Math.max(...Object.values(driftCounts)) : 0;
+  const topRuleDrift = topRuleDriftCount
+    ? Object.entries(driftCounts).filter(([, count]) => count === topRuleDriftCount).map(([tag]) => tag)
+    : [];
+  return {
+    bias: {
+      sampleCount: biasSamples.length,
+      accuracy: biasSamples.length ? (biasAccurate / biasSamples.length) * 100 : 0
+    },
+    marketCondition: {
+      sampleCount: marketSamples.length,
+      accuracy: marketSamples.length ? (marketAccurate / marketSamples.length) * 100 : 0
+    },
+    setup: {
+      gradedCount: gradedTrades.length,
+      aaRate: gradedTrades.length ? (strongTrades.length / gradedTrades.length) * 100 : 0,
+      poiQualityRate: gradedTrades.length ? (poiQualityPassCount / gradedTrades.length) * 100 : 0,
+      targetRoomRate: gradedTrades.length ? (targetRoomPassCount / gradedTrades.length) * 100 : 0,
+      topRuleDriftLabel: topRuleDrift.join(' / '),
+      topRuleDriftCount
     }
   };
 }
