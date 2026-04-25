@@ -2,10 +2,10 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
-import type { AttachmentRow, NoTradeDayRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
+import type { AttachmentRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
 const APP_VERSION = 'v1.0';
-const tabs = ['dashboard', 'history', 'log', 'review'] as const;
+const tabs = ['dashboard', 'history', 'log', 'review', 'playbook'] as const;
 type Tab = (typeof tabs)[number];
 type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
@@ -184,6 +184,229 @@ const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
 const helpNote =
   'FOMO / Forced / No valid setup trades do not need to be forced into Bounce / Reject / Break. Use N/A / No valid setup + N/A / None when appropriate.';
 
+const PLAYBOOK_QUICK_REMINDERS_DEFAULT = `- Trade the setup, not the urge
+- Area, not line
+- Structure first, fib second
+- Wait for real displacement
+- If bias is unclear, do less`;
+
+const PLAYBOOK_SECTIONS_DEFAULTS = [
+  { key: 'strategy_overview', title: 'Strategy Overview', content: `I trade MES and focus primarily on intraday continuation or reversal setups using 5-minute structure and Fair Value Gaps, with 2-minute refinement when needed.
+
+My goal is not to trade often. My goal is to trade well.
+
+My core model is:
+
+* Determine bias from higher timeframe structure, liquidity, and VWAP context
+* Wait for meaningful displacement
+* Identify a valid 5m FVG or POI
+* Use fib as a supporting confluence, not as a standalone reason to enter
+* Refine on the 2m only if needed
+* Enter only when risk, structure, and target make sense
+
+I do not want to chase price or take mediocre setups.` },
+  { key: 'market_bias_framework', title: 'Market Bias Framework', content: `Before looking for an entry, define market bias.
+
+Questions to answer:
+
+* What is the higher timeframe trend?
+* Is price above or below VWAP?
+* Where is price relative to key session highs/lows?
+* Has liquidity already been taken on one side?
+* Is price expanding or compressing?
+* Is there strong directional intent or is the market unclear?
+
+Bullish bias factors:
+
+* Price above VWAP
+* Higher timeframe structure is bullish
+* Sell-side liquidity has been taken
+* Bullish displacement is present
+* Pullbacks are being respected
+
+Bearish bias factors:
+
+* Price below VWAP
+* Higher timeframe structure is bearish
+* Buy-side liquidity has been taken
+* Bearish displacement is present
+* Bounces are being sold
+
+If bias is mixed or unclear, reduce aggression or do not trade.` },
+  { key: 'a_plus_setup_definition', title: 'A+ Setup Definition', content: `An A+ setup is a trade that aligns with my bias and includes clear confluence.
+
+My A+ setup usually includes:
+
+* Clear directional bias
+* Meaningful displacement
+* A valid 5m FVG or strong point of interest
+* Overlap with structure or liquidity
+* Fib retracement overlap as supporting confluence
+* Logical stop loss placement
+* Clear take profit target
+* Acceptable risk-to-reward
+* Entry taken within my trading session and not late in the move
+
+A setup is not A+ just because I want to trade.` },
+  { key: 'entry_model', title: 'Entry Model', content: `My entries should come from structure and confluence, not from urgency.
+
+Entry model:
+
+* Identify directional bias
+* Wait for meaningful displacement
+* Mark the 5m FVG or main POI
+* Draw fib on the impulse leg that created the setup
+* Look for overlap between fib retracement and POI
+* Refine on the 2m only if needed
+* Enter only if invalidation and target are clear
+
+I should think in terms of areas, not exact lines.
+
+Do not take a trade only because price touched one fib level.` },
+  { key: 'fib_rules', title: 'Fib Rules', content: `Fib is a supporting tool, not the main reason for entry.
+
+Fib anchor rule:
+
+* Draw from the last meaningful pullback to the end of the impulse that created the setup
+
+For longs:
+
+* Start at the last clear pullback low before expansion
+* End at the impulse high
+
+For shorts:
+
+* Start at the last clear pullback high before expansion
+* End at the impulse low
+
+How I use fib:
+
+* Use the larger move for context if needed
+* Use the most relevant impulse leg for execution
+* Treat fib as a zone tool, not an exact-price tool
+* Focus on overlap between fib and POI
+
+Main retracement area:
+
+* 0.5 to 0.705 is the main working zone
+* 0.786 can be valid if structure still holds
+
+Do not skip valid setups just because price did not tap the exact 0.618.` },
+  { key: 'confluences', title: 'Confluences', content: `My best trades come from multiple factors lining up.
+
+Main confluences:
+
+* Higher timeframe bias
+* VWAP alignment
+* 5m FVG
+* Fib overlap
+* Liquidity sweep
+* BOS or CHOCH
+* Prior session high/low
+* Daily or intraday key levels
+* 2m confirmation if needed
+
+The more quality confluence I have, the better the setup.
+
+But I should not overcomplicate the trade by demanding perfection.` },
+  { key: 'stop_loss_rules', title: 'Stop Loss Rules', content: `My stop loss should be based on structural invalidation.
+
+Preferred stop locations:
+
+* Beyond the FVG extreme
+* Beyond the invalidation swing
+* Beyond the liquidity level that should hold
+
+My stop should not be based only on a fib number.
+
+If the stop is too large relative to the setup quality or target, I should pass on the trade.
+
+A setup with no logical stop is not a valid trade.` },
+  { key: 'take_profit_rules', title: 'Take Profit Rules', content: `My take profit should be logical, not random.
+
+Preferred TP locations:
+
+* Prior high or prior low
+* Opposing liquidity
+* Session highs or lows
+* Key structural level
+* Major intraday reaction area
+
+Before entering, I should know:
+
+* Where price is likely to go
+* Whether that target gives enough reward for the risk
+* Whether I am entering too late in the move
+
+If my target is unclear, the trade is probably not good enough.` },
+  { key: 'no_trade_conditions', title: 'No-Trade Conditions', content: `A no-trade day is a valid outcome.
+
+No-trade conditions may include:
+
+* No clear higher timeframe bias
+* Weak or messy displacement
+* Price stuck in chop
+* Poor confluence
+* Setup appears too late in the move
+* Risk-to-reward is poor
+* Major news makes the session too unstable
+* I missed the optimal entry and would now be chasing
+* I am emotionally off, impatient, or forcing something
+
+Passing is part of the strategy.` },
+  { key: 'pre_session_process', title: 'Pre-Session Process', content: `Before the session begins, I want to be prepared and calm.
+
+Pre-session questions:
+
+* What is the higher timeframe bias?
+* What did overnight / premarket do?
+* Where is VWAP likely to matter?
+* What key highs, lows, and liquidity levels matter today?
+* Is there major economic or political news?
+* What would confirm bullish conditions today?
+* What would confirm bearish conditions today?
+* What would make today a no-trade day?
+* What is my ideal setup today?
+* What will I avoid?
+
+The goal is to enter the session with a plan, not to figure it out emotionally in real time.` },
+  { key: 'post_session_review_reminders', title: 'Post-Session Review Reminders', content: `After the session, I want to evaluate execution honestly.
+
+Questions for review:
+
+* Did I follow my bias framework?
+* Did I wait for real displacement?
+* Did I enter at a quality POI?
+* Did I use fib as a confluence instead of forcing precision?
+* Was my stop based on structure?
+* Was my target logical?
+* Did I miss a valid trade?
+* Did I avoid a bad trade?
+* Was I too early, too late, or just right?
+* Was I disciplined?
+
+The goal of review is improvement, not self-criticism.` },
+  { key: 'common_mistakes_personal_reminders', title: 'Common Mistakes / Personal Reminders', content: `My common mistakes:
+
+* Being too exact with fib
+* Waiting for perfect conditions and missing valid setups
+* Confusing “late emotionally” with “late structurally”
+* Overthinking when the setup is already clear
+* Wanting confirmation from too many signals
+* Letting missed opportunities affect the next decision
+* Trying to force a trade on slow or messy days
+
+Personal reminders:
+
+* Area, not line
+* Structure first, fib second
+* Clear bias before entry
+* No chase entries
+* Missing a trade is better than forcing a trade
+* My job is to execute well, not to catch every move` }
+] as const;
+const PLAYBOOK_QUICK_REMINDERS_KEY = 'quick_reminders';
+
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
 type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
 type SessionSubtypeView = 'pre_session_plan' | 'chart_session' | 'post_session_review';
@@ -361,6 +584,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
   const [reviewEntriesOpen, setReviewEntriesOpen] = useState(true);
   const [reviewReferenceDetail, setReviewReferenceDetail] = useState<DetailState>(null);
+  const [playbookRows, setPlaybookRows] = useState<PlaybookSectionRow[]>([]);
+  const [playbookSearch, setPlaybookSearch] = useState('');
+  const [playbookOpen, setPlaybookOpen] = useState<Record<string, boolean>>(() => Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((section) => [section.key, true])));
+  const [playbookEditing, setPlaybookEditing] = useState<Record<string, boolean>>({});
+  const [playbookDrafts, setPlaybookDrafts] = useState<Record<string, string>>({});
+  const [playbookQuickReminderDraft, setPlaybookQuickReminderDraft] = useState('');
+  const [playbookQuickReminderEditing, setPlaybookQuickReminderEditing] = useState(false);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -387,15 +617,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }, []);
 
   async function loadAll() {
-    const [t, n, sessionResult, r, s, a] = await Promise.all([
+    const [t, n, sessionResult, r, s, a, p] = await Promise.all([
       supabase.from('trades').select('*').order('trade_date', { ascending: false }),
       supabase.from('no_trade_days').select('*').order('day_date', { ascending: false }),
       supabase.from('sessions').select('*').order('session_date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('weekly_reviews').select('*').order('week_key', { ascending: false }),
       supabase.from('user_settings').select('*').maybeSingle(),
-      supabase.from('attachments').select('*').order('created_at', { ascending: false })
+      supabase.from('attachments').select('*').order('created_at', { ascending: false }),
+      supabase.from('playbook_sections').select('*').order('updated_at', { ascending: false })
     ]);
-    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error].filter(Boolean);
+    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error].filter(Boolean);
     const blocking = errors.find((entry) => !isRecoverableSchemaError(entry?.message || ''));
     if (blocking) {
       setError(normalizeSupabaseError(blocking.message));
@@ -466,6 +697,78 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       mistake_catalog_hidden: cachedCatalog?.hidden || resolvedCatalog.hidden
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
+    setPlaybookRows(((p.data || []) as PlaybookSectionRow[]) || []);
+  }
+
+  const playbookQuickReminderRow = useMemo(
+    () => playbookRows.find((row) => row.section_key === PLAYBOOK_QUICK_REMINDERS_KEY) || null,
+    [playbookRows]
+  );
+  const mergedPlaybookSections = useMemo(() => {
+    const byKey = new Map(playbookRows.map((row) => [row.section_key, row]));
+    return PLAYBOOK_SECTIONS_DEFAULTS.map((section) => {
+      const saved = byKey.get(section.key);
+      return {
+        key: section.key,
+        title: saved?.title || section.title,
+        content: saved?.content ?? section.content,
+        updated_at: saved?.updated_at
+      };
+    });
+  }, [playbookRows]);
+  const filteredPlaybookSections = useMemo(() => {
+    const needle = playbookSearch.trim().toLowerCase();
+    if (!needle) return mergedPlaybookSections;
+    return mergedPlaybookSections.filter((section) =>
+      `${section.title}\n${section.content}`.toLowerCase().includes(needle)
+    );
+  }, [mergedPlaybookSections, playbookSearch]);
+
+  useEffect(() => {
+    setPlaybookQuickReminderDraft(playbookQuickReminderRow?.content ?? PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+  }, [playbookQuickReminderRow?.content]);
+
+  useEffect(() => {
+    setPlaybookDrafts((prev) => {
+      const next = { ...prev };
+      for (const section of mergedPlaybookSections) {
+        if (!playbookEditing[section.key]) next[section.key] = section.content;
+      }
+      return next;
+    });
+  }, [mergedPlaybookSections, playbookEditing]);
+
+  function formatPlaybookUpdatedAt(value?: string) {
+    if (!value) return 'Default';
+    const stamp = new Date(value);
+    if (Number.isNaN(stamp.getTime())) return 'Default';
+    return stamp.toLocaleString();
+  }
+
+  async function savePlaybookSection(sectionKey: string, title: string, content: string) {
+    const payload: PlaybookSectionRow = { user_id: userId, section_key: sectionKey, title, content };
+    const { data, error } = await supabase
+      .from('playbook_sections')
+      .upsert(payload, { onConflict: 'user_id,section_key' })
+      .select('*')
+      .single();
+    if (error) {
+      setError(normalizeSupabaseError(error.message));
+      return false;
+    }
+    setPlaybookRows((prev) => {
+      const next = prev.filter((row) => row.section_key !== sectionKey);
+      next.push(data as PlaybookSectionRow);
+      return next;
+    });
+    return true;
+  }
+
+  async function resetPlaybookSection(sectionKey: string) {
+    const defaultSection = PLAYBOOK_SECTIONS_DEFAULTS.find((section) => section.key === sectionKey);
+    if (!defaultSection) return;
+    const ok = await savePlaybookSection(defaultSection.key, defaultSection.title, defaultSection.content);
+    if (ok) setPlaybookEditing((prev) => ({ ...prev, [sectionKey]: false }));
   }
 
   const periodRange = dashboardPeriod === 'lifetime'
@@ -3195,6 +3498,134 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(180deg, rgba(11,18,32,0), rgba(11,18,32,0.92) 35%, rgba(11,18,32,1) 100%)', paddingTop: 14, marginTop: 4 }}>
             <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
           </div>
+        </section>
+      )}
+
+      {tab === 'playbook' && (
+        <section className="stack">
+          <section className="card stack control-card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>Quick Reminders</strong>
+              <span className="small muted">Last edited: {formatPlaybookUpdatedAt(playbookQuickReminderRow?.updated_at)}</span>
+            </div>
+            {playbookQuickReminderEditing ? (
+              <>
+                <textarea
+                  value={playbookQuickReminderDraft}
+                  onChange={(e) => setPlaybookQuickReminderDraft(e.target.value)}
+                  rows={6}
+                  placeholder="Add short reminders, one line per bullet."
+                />
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      void savePlaybookSection(
+                        PLAYBOOK_QUICK_REMINDERS_KEY,
+                        'Quick Reminders',
+                        playbookQuickReminderDraft || PLAYBOOK_QUICK_REMINDERS_DEFAULT
+                      );
+                      setPlaybookQuickReminderEditing(false);
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      setPlaybookQuickReminderDraft(PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+                      void savePlaybookSection(PLAYBOOK_QUICK_REMINDERS_KEY, 'Quick Reminders', PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+                      setPlaybookQuickReminderEditing(false);
+                    }}
+                  >
+                    Reset to default
+                  </button>
+                  <button className="inline" type="button" onClick={() => setPlaybookQuickReminderEditing(false)}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <RichTextContent value={playbookQuickReminderRow?.content || PLAYBOOK_QUICK_REMINDERS_DEFAULT} emptyLabel="—" />
+                <button className="inline" type="button" onClick={() => setPlaybookQuickReminderEditing(true)}>Edit</button>
+              </>
+            )}
+          </section>
+
+          <section className="card stack control-card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>Playbook Sections</strong>
+              <input
+                style={{ maxWidth: 260 }}
+                value={playbookSearch}
+                onChange={(e) => setPlaybookSearch(e.target.value)}
+                placeholder="Search sections"
+              />
+            </div>
+            <div className="small muted">Quick jump</div>
+            <div className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              {PLAYBOOK_SECTIONS_DEFAULTS.map((section) => (
+                <button
+                  key={`jump-${section.key}`}
+                  className="inline"
+                  type="button"
+                  onClick={() => detailAnchors.current[`playbook-${section.key}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                >
+                  {section.title}
+                </button>
+              ))}
+            </div>
+            {!filteredPlaybookSections.length ? <div className="small muted">No sections match your search.</div> : null}
+            {filteredPlaybookSections.map((section) => {
+              const isOpen = Boolean(playbookOpen[section.key]);
+              const isEditing = Boolean(playbookEditing[section.key]);
+              const draft = playbookDrafts[section.key] ?? section.content;
+              return (
+                <article
+                  key={section.key}
+                  className="trade stack"
+                  ref={(node) => { detailAnchors.current[`playbook-${section.key}`] = node; }}
+                >
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <strong>{section.title}</strong>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <span className="small muted">Last edited: {formatPlaybookUpdatedAt(section.updated_at)}</span>
+                      <button className="inline" type="button" onClick={() => setPlaybookOpen((prev) => ({ ...prev, [section.key]: !isOpen }))}>{isOpen ? 'Collapse' : 'Expand'}</button>
+                    </div>
+                  </div>
+                  {isOpen ? (
+                    <>
+                      {isEditing ? (
+                        <>
+                          <textarea value={draft} rows={10} onChange={(e) => setPlaybookDrafts((prev) => ({ ...prev, [section.key]: e.target.value }))} />
+                          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                              className="inline"
+                              type="button"
+                              onClick={() => {
+                                void savePlaybookSection(section.key, section.title, draft);
+                                setPlaybookEditing((prev) => ({ ...prev, [section.key]: false }));
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button className="inline" type="button" onClick={() => void resetPlaybookSection(section.key)}>Reset to default</button>
+                            <button className="inline" type="button" onClick={() => setPlaybookEditing((prev) => ({ ...prev, [section.key]: false }))}>Cancel</button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <RichTextContent value={section.content} emptyLabel="—" />
+                          <button className="inline" type="button" onClick={() => setPlaybookEditing((prev) => ({ ...prev, [section.key]: true }))}>Edit</button>
+                        </>
+                      )}
+                    </>
+                  ) : null}
+                </article>
+              );
+            })}
+          </section>
         </section>
       )}
 

@@ -93,3 +93,11 @@ export type AttachmentRow = {
   mime_type: string;
   byte_size: number;
 };
+
+export type PlaybookSectionRow = {
+  user_id: string;
+  section_key: string;
+  title: string;
+  content: string;
+  updated_at?: string;
+};

@@ -207,6 +207,15 @@ alter table public.attachments
   add constraint attachments_check
   check (((trade_id is not null)::int + (no_trade_day_id is not null)::int + (session_id is not null)::int) = 1);
 
+create table if not exists public.playbook_sections (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  section_key text not null,
+  title text not null,
+  content text not null default '',
+  updated_at timestamptz not null default now(),
+  primary key (user_id, section_key)
+);
+
 alter table public.users enable row level security;
 alter table public.trades enable row level security;
 alter table public.no_trade_days enable row level security;
@@ -214,6 +223,7 @@ alter table public.weekly_reviews enable row level security;
 alter table public.sessions enable row level security;
 alter table public.user_settings enable row level security;
 alter table public.attachments enable row level security;
+alter table public.playbook_sections enable row level security;
 
 create policy if not exists "own users" on public.users
 for all using (auth.uid() = id) with check (auth.uid() = id);
@@ -234,6 +244,9 @@ create policy if not exists "own user_settings" on public.user_settings
 for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 create policy if not exists "own attachments" on public.attachments
+for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create policy if not exists "own playbook_sections" on public.playbook_sections
 for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- Storage bucket for attachment uploads
