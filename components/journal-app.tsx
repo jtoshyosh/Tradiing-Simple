@@ -2,10 +2,10 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
-import type { AttachmentRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
+import type { AttachmentRow, DecisionCheckRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
 const APP_VERSION = 'v1.0';
-const tabs = ['dashboard', 'history', 'log', 'review', 'playbook'] as const;
+const tabs = ['dashboard', 'history', 'log', 'review', 'playbook', 'decide'] as const;
 type Tab = (typeof tabs)[number];
 type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
@@ -442,6 +442,8 @@ type ReviewReferenceItem = {
   summary: string;
   attachmentCount: number;
 };
+type DecideFibAnswer = 'yes' | 'no' | 'na';
+type DecideResult = 'GO' | 'WAIT' | 'NO_GO';
 type TradeDraft = {
   trade_date: string;
   ticker: string;
@@ -588,6 +590,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [reviewEntriesOpen, setReviewEntriesOpen] = useState(true);
   const [reviewReferenceDetail, setReviewReferenceDetail] = useState<DetailState>(null);
   const [playbookRows, setPlaybookRows] = useState<PlaybookSectionRow[]>([]);
+  const [decisionChecks, setDecisionChecks] = useState<DecisionCheckRow[]>([]);
   const [playbookSearch, setPlaybookSearch] = useState('');
   const [playbookOpen, setPlaybookOpen] = useState<Record<string, boolean>>(() => Object.fromEntries(
     PLAYBOOK_SECTIONS_DEFAULTS.map((section, idx) => [section.key, idx === 0])
@@ -598,6 +601,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [playbookQuickReminderEditing, setPlaybookQuickReminderEditing] = useState(false);
   const [playbookJumpOpen, setPlaybookJumpOpen] = useState(false);
   const [playbookReferenceOpen, setPlaybookReferenceOpen] = useState<Record<string, boolean>>({});
+  const [decisionDraft, setDecisionDraft] = useState({
+    trade_intent_mode: 'live' as 'live' | 'paper',
+    decision_timestamp: new Date().toISOString().slice(0, 16),
+    displacement_confirmed: false,
+    valid_poi_created: false,
+    pulling_back_not_chasing: false,
+    fib_support_quality: 'yes' as DecideFibAnswer,
+    liquidity_target_clear: false,
+    stop_location_clear: false,
+    inside_session_window: false,
+    hesitation_note: ''
+  });
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -624,16 +639,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }, []);
 
   async function loadAll() {
-    const [t, n, sessionResult, r, s, a, p] = await Promise.all([
+    const [t, n, sessionResult, r, s, a, p, d] = await Promise.all([
       supabase.from('trades').select('*').order('trade_date', { ascending: false }),
       supabase.from('no_trade_days').select('*').order('day_date', { ascending: false }),
       supabase.from('sessions').select('*').order('session_date', { ascending: false }).order('created_at', { ascending: false }),
       supabase.from('weekly_reviews').select('*').order('week_key', { ascending: false }),
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('attachments').select('*').order('created_at', { ascending: false }),
-      supabase.from('playbook_sections').select('*').order('updated_at', { ascending: false })
+      supabase.from('playbook_sections').select('*').order('updated_at', { ascending: false }),
+      supabase.from('decision_checks').select('*').order('decision_timestamp', { ascending: false })
     ]);
-    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error].filter(Boolean);
+    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error, d.error].filter(Boolean);
     const blocking = errors.find((entry) => !isRecoverableSchemaError(entry?.message || ''));
     if (blocking) {
       setError(normalizeSupabaseError(blocking.message));
@@ -705,6 +721,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
     setPlaybookRows(((p.data || []) as PlaybookSectionRow[]) || []);
+    setDecisionChecks(((d.data || []) as DecisionCheckRow[]) || []);
   }
 
   const playbookQuickReminderRow = useMemo(
@@ -833,6 +850,100 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (!truncated) return excerpt;
     if (!excerpt) return '…';
     return `${excerpt}\n…`;
+  }
+
+  const decisionComputed = useMemo(() => {
+    const fibApplicable = decisionDraft.fib_support_quality !== 'na';
+    const checks = [
+      decisionDraft.displacement_confirmed,
+      decisionDraft.valid_poi_created,
+      decisionDraft.pulling_back_not_chasing,
+      fibApplicable ? decisionDraft.fib_support_quality === 'yes' : null,
+      decisionDraft.liquidity_target_clear,
+      decisionDraft.stop_location_clear,
+      decisionDraft.inside_session_window
+    ];
+    const applicableChecks = checks.filter((value) => value !== null) as boolean[];
+    const yesCount = applicableChecks.filter(Boolean).length;
+    const applicableCount = applicableChecks.length;
+    let result: DecideResult = 'NO_GO';
+    if (applicableCount >= 7) {
+      if (yesCount >= 6) result = 'GO';
+      else if (yesCount >= 4) result = 'WAIT';
+    } else {
+      if (yesCount >= 5) result = 'GO';
+      else if (yesCount >= 4) result = 'WAIT';
+    }
+    const ratio = applicableCount ? yesCount / applicableCount : 0;
+    let readinessGrade = 'D / Forced trade';
+    if (applicableCount === 7) {
+      if (yesCount === 7) readinessGrade = 'A+';
+      else if (yesCount === 6) readinessGrade = 'A';
+      else if (yesCount === 5) readinessGrade = 'B';
+      else if (yesCount === 4) readinessGrade = 'C';
+    } else {
+      if (ratio >= 0.92) readinessGrade = 'A+';
+      else if (ratio >= 0.8) readinessGrade = 'A';
+      else if (ratio >= 0.66) readinessGrade = 'B';
+      else if (ratio >= 0.55) readinessGrade = 'C';
+    }
+    const tags: string[] = [];
+    if (!decisionDraft.pulling_back_not_chasing) tags.push('Chased after move');
+    if (!decisionDraft.liquidity_target_clear) tags.push('No clear liquidity target');
+    if (!decisionDraft.inside_session_window) tags.push('Outside session');
+    return { yesCount, applicableCount, result, readinessGrade, tags };
+  }, [decisionDraft]);
+
+  async function saveDecisionCheck(skippedSetup: boolean, convertedTradeId: string | null = null) {
+    const payload = {
+      user_id: userId,
+      trade_intent_mode: decisionDraft.trade_intent_mode,
+      decision_timestamp: new Date(decisionDraft.decision_timestamp).toISOString(),
+      displacement_confirmed: decisionDraft.displacement_confirmed,
+      valid_poi_created: decisionDraft.valid_poi_created,
+      pulling_back_not_chasing: decisionDraft.pulling_back_not_chasing,
+      fib_support_quality: decisionDraft.fib_support_quality,
+      liquidity_target_clear: decisionDraft.liquidity_target_clear,
+      stop_location_clear: decisionDraft.stop_location_clear,
+      inside_session_window: decisionDraft.inside_session_window,
+      go_no_go_result: decisionComputed.result,
+      readiness_yes_count: decisionComputed.yesCount,
+      readiness_applicable_count: decisionComputed.applicableCount,
+      readiness_grade: decisionComputed.readinessGrade,
+      execution_auto_tags: [
+        ...decisionComputed.tags,
+        ...(skippedSetup && decisionComputed.result === 'GO' ? ['A+ setup skipped'] : [])
+      ],
+      hesitation_note: decisionDraft.hesitation_note || null,
+      converted_trade_id: convertedTradeId,
+      skipped_setup: skippedSetup
+    };
+    const { data, error } = await supabase.from('decision_checks').insert(payload).select('*').single();
+    if (error) {
+      setError(normalizeSupabaseError(error.message));
+      return null;
+    }
+    setDecisionChecks((prev) => [data as DecisionCheckRow, ...prev]);
+    return data as DecisionCheckRow;
+  }
+
+  async function startTradeFromDecision(mode: 'live' | 'paper') {
+    if (decisionComputed.result === 'NO_GO') return;
+    const saved = await saveDecisionCheck(false);
+    if (!saved) return;
+    const decisionStamp = new Date(saved.decision_timestamp || new Date().toISOString());
+    const dateKey = decisionStamp.toISOString().slice(0, 10);
+    setTab('log');
+    setLogMode('trade');
+    setTradeLogSubtype(mode === 'paper' ? 'paper_trade' : 'live_trade');
+    setTradeDraft((prev) => ({
+      ...prev,
+      trade_date: dateKey,
+      is_paper_trade: mode === 'paper',
+      classification: decisionComputed.result === 'GO' ? 'Valid setup' : prev.classification,
+      notes: `${prev.notes ? `${prev.notes}\n\n` : ''}GO/NO GO Check (${decisionComputed.result})\nReadiness: ${decisionComputed.yesCount}/${decisionComputed.applicableCount} (${decisionComputed.readinessGrade})\nAuto tags: ${decisionComputed.tags.join(', ') || 'None'}\nHesitation: ${decisionDraft.hesitation_note || '—'}`,
+      mistake_tags: normalizeUniqueTags([...(prev.mistake_tags || []), ...decisionComputed.tags])
+    }));
   }
 
   const periodRange = dashboardPeriod === 'lifetime'
@@ -968,7 +1079,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
     ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade })),
-    ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session }))
+    ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session })),
+    ...decisionChecks.map((decision) => ({ type: 'decision' as const, date: String(decision.decision_timestamp || '').slice(0, 10), id: decision.id, decision }))
   ].sort((a, b) => {
     const byDate = b.date.localeCompare(a.date);
     if (byDate !== 0) return byDate;
@@ -986,7 +1098,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       return true;
     }
 
-    if (historyEntryTypeFilter === 'trade_all') return item.type === 'trade' || item.type === 'no_trade';
+    if (historyEntryTypeFilter === 'trade_all') return item.type === 'trade' || item.type === 'no_trade' || item.type === 'decision';
     if (historyEntryTypeFilter === 'session_all') return item.type === 'session';
     if (historyEntryTypeFilter === 'live_trade') return item.type === 'trade' && !isPaperTrade(item.trade);
     if (historyEntryTypeFilter === 'paper_trade') return item.type === 'trade' && isPaperTrade(item.trade);
@@ -2200,11 +2312,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 <option value="selected_period">Selected dashboard period</option>
               </select>
             </div>
-            {exportScope === 'selected_period' ? (
-              <div className="small muted">Selected period: {formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
-            ) : (
-              <div className="small muted">All-time export includes all rows visible to this signed-in user.</div>
-            )}
+            {exportScope === 'selected_period'
+              ? <div className="small muted">Selected period: {formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
+              : <div className="small muted">All-time export includes all rows visible to this signed-in user.</div>}
             <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
               <button className="inline" type="button" onClick={() => downloadExportCsv(exportScope)}>Export CSV</button>
               <button className="inline" type="button" onClick={() => downloadExportJson(exportScope)}>Export JSON</button>
@@ -2488,6 +2598,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   );
                 })}
               </div>
+            ) : item.type === 'decision' ? (
+              <Fragment>
+                <article className="trade">
+                  <div className="row"><strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'}</strong><span>{String(item.decision.decision_timestamp || '').slice(0, 16).replace('T', ' ')}</span></div>
+                  <div className="small muted"><span className="badge">Decide</span> <span className="badge">{item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</span></div>
+                  <div className="small">{item.decision.go_no_go_result.replace('_', ' ')} · Readiness {item.decision.readiness_grade} ({item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count})</div>
+                  <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.decision.id}-${tag}`}>{tag}</span>)}</div>
+                </article>
+              </Fragment>
             ) : (
               <div className="stack">
                 {calendarWeekRows.map((week) => {
@@ -3851,6 +3970,63 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         </section>
       )}
 
+      {tab === 'decide' && (
+        <section className="card stack control-card">
+          <div className="row">
+            <strong>GO / NO GO execution check</strong>
+            <span className="badge">{decisionComputed.readinessGrade}</span>
+          </div>
+          <div className="small muted">Fast pre-entry decision tool. Use this before committing to a trade.</div>
+          <label className="small muted">Trade mode</label>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+            <button className="inline" type="button" style={decisionDraft.trade_intent_mode === 'live' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, trade_intent_mode: 'live' }))}>Live trade</button>
+            <button className="inline" type="button" style={decisionDraft.trade_intent_mode === 'paper' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, trade_intent_mode: 'paper' }))}>Paper trade</button>
+          </div>
+          <label className="small muted" htmlFor="decision-timestamp">Timestamp</label>
+          <input id="decision-timestamp" type="datetime-local" value={decisionDraft.decision_timestamp} onChange={(e) => setDecisionDraft((prev) => ({ ...prev, decision_timestamp: e.target.value }))} />
+          <article className="trade stack">
+            <strong>Checklist</strong>
+            <div className="small">1) Displacement present in intended direction?</div>
+            <YesNoButtons value={decisionDraft.displacement_confirmed} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, displacement_confirmed: next }))} />
+            <div className="small">2) Valid 5m FVG or POI created?</div>
+            <YesNoButtons value={decisionDraft.valid_poi_created} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, valid_poi_created: next }))} />
+            <div className="small">3) Price is pulling back into the POI, not chasing?</div>
+            <YesNoButtons value={decisionDraft.pulling_back_not_chasing} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, pulling_back_not_chasing: next }))} />
+            <div className="small">4) Fib supports the entry zone?</div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+              {(['yes', 'no', 'na'] as DecideFibAnswer[]).map((option) => (
+                <button key={option} className="inline" type="button" style={decisionDraft.fib_support_quality === option ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, fib_support_quality: option }))}>{option.toUpperCase()}</button>
+              ))}
+            </div>
+            <div className="small">5) Clear liquidity target identified before opposing structure?</div>
+            <YesNoButtons value={decisionDraft.liquidity_target_clear} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, liquidity_target_clear: next }))} />
+            <div className="small">6) Logical stop location is clear and structure-based?</div>
+            <YesNoButtons value={decisionDraft.stop_location_clear} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, stop_location_clear: next }))} />
+            <div className="small">7) Within allowed trading session / time window?</div>
+            <YesNoButtons value={decisionDraft.inside_session_window} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, inside_session_window: next }))} />
+          </article>
+          <label className="small muted" htmlFor="decision-hesitation">Why am I hesitating? (optional)</label>
+          <textarea id="decision-hesitation" value={decisionDraft.hesitation_note} onChange={(e) => setDecisionDraft((prev) => ({ ...prev, hesitation_note: e.target.value }))} placeholder="Optional quick note..." rows={3} />
+          <article className="trade">
+            <div className="small"><strong>Result:</strong> {decisionComputed.result.replace('_', ' ')}</div>
+            <div className="small muted">Readiness: {decisionComputed.yesCount}/{decisionComputed.applicableCount} · {decisionComputed.readinessGrade}</div>
+            <div className="small" style={{ marginTop: 6 }}>
+              {decisionComputed.result === 'GO'
+                ? 'A/A+ setup. Execute according to plan. Do not invent extra confirmation.'
+                : decisionComputed.result === 'WAIT'
+                  ? 'Setup is forming but incomplete. Wait for the missing condition or pass.'
+                  : 'No trade. Passing is the correct decision here.'}
+            </div>
+            <div style={{ marginTop: 6 }}>{decisionComputed.tags.map((tag) => <span key={tag} className="badge">{tag}</span>)}</div>
+          </article>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('live')}>Start Live Trade Log</button>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('paper')}>Start Paper Trade Log</button>
+            <button className="inline" type="button" onClick={() => void saveDecisionCheck(true)}>Save Skipped Setup</button>
+          </div>
+        </section>
+      )}
+
       {reviewReferenceDetail && (
         <>
           <button className="help-backdrop" aria-label="Close reference details" type="button" onClick={() => setReviewReferenceDetail(null)} />
@@ -4130,6 +4306,15 @@ function RichTextEditor({
         style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
       />
       <div className="small muted editor-footnote">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
+    </div>
+  );
+}
+
+function YesNoButtons({ value, onChange }: { value: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+      <button className="inline" type="button" style={value ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => onChange(true)}>Yes</button>
+      <button className="inline" type="button" style={!value ? { background: '#7a3f3f', borderColor: '#9b4e4e', color: '#ffe8e8' } : undefined} onClick={() => onChange(false)}>No</button>
     </div>
   );
 }
@@ -6217,12 +6402,14 @@ function streakCardStyle(currentWin: number, currentLoss: number) {
   return undefined;
 }
 
-function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow }) {
+function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow } | { type: 'decision'; decision: DecisionCheckRow }) {
   const raw = item.type === 'trade'
     ? (item.trade as TradeRow & { created_at?: string }).created_at
     : item.type === 'no_trade'
       ? (item.noTrade as NoTradeDayRow & { created_at?: string }).created_at
-      : (item.session as SessionRow & { created_at?: string }).created_at;
+      : item.type === 'session'
+        ? (item.session as SessionRow & { created_at?: string }).created_at
+        : (item.decision as DecisionCheckRow & { created_at?: string }).created_at || item.decision.decision_timestamp;
   if (!raw) return '0000-00-00T00:00:00.000Z';
   const timestamp = Date.parse(raw);
   return Number.isNaN(timestamp) ? '0000-00-00T00:00:00.000Z' : new Date(timestamp).toISOString();

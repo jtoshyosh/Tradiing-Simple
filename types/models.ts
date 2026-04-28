@@ -103,3 +103,27 @@ export type PlaybookSectionRow = {
   pin_review?: boolean;
   updated_at?: string;
 };
+
+export type DecisionCheckRow = {
+  id: string;
+  user_id: string;
+  trade_intent_mode: 'live' | 'paper';
+  decision_timestamp: string;
+  displacement_confirmed: boolean;
+  valid_poi_created: boolean;
+  pulling_back_not_chasing: boolean;
+  fib_support_quality: 'yes' | 'no' | 'na';
+  liquidity_target_clear: boolean;
+  stop_location_clear: boolean;
+  inside_session_window: boolean;
+  go_no_go_result: 'GO' | 'WAIT' | 'NO_GO';
+  readiness_yes_count: number;
+  readiness_applicable_count: number;
+  readiness_grade: string;
+  execution_auto_tags: string[];
+  hesitation_note: string | null;
+  converted_trade_id: string | null;
+  skipped_setup: boolean;
+  created_at?: string;
+  updated_at?: string;
+};
