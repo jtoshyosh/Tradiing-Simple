@@ -7,7 +7,7 @@ import type { AttachmentRow, DecisionCheckRow, NoTradeDayRow, PlaybookSectionRow
 const APP_VERSION = 'v1.0';
 const tabs = ['dashboard', 'history', 'log', 'review', 'playbook', 'decide'] as const;
 type Tab = (typeof tabs)[number];
-const bottomTabs: readonly Tab[] = ['dashboard', 'history', 'log', 'review', 'decide'] as const;
+const bottomTabs: readonly Tab[] = ['dashboard', 'history', 'decide', 'log', 'review'] as const;
 type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
