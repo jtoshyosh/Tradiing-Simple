@@ -77,7 +77,7 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   background:rgba(10,15,24,.9); border-top:1px solid var(--line);
   padding:10px 10px calc(10px + env(safe-area-inset-bottom));
 }
-.nav { max-width:720px; margin:0 auto; display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:6px; }
+.nav { max-width:620px; margin:0 auto; display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:6px; }
 .nav button.active { background:#1b2f5d; }
 .nav button {
   min-height: 42px;

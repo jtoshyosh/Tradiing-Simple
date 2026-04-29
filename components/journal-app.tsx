@@ -7,6 +7,7 @@ import type { AttachmentRow, DecisionCheckRow, NoTradeDayRow, PlaybookSectionRow
 const APP_VERSION = 'v1.0';
 const tabs = ['dashboard', 'history', 'log', 'review', 'playbook', 'decide'] as const;
 type Tab = (typeof tabs)[number];
+const bottomTabs: readonly Tab[] = ['dashboard', 'history', 'log', 'review', 'decide'] as const;
 type LogMode = 'trade' | 'no_trade' | 'session';
 type LogType = 'trade_log' | 'session';
 type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
@@ -407,11 +408,11 @@ Personal reminders:
 ] as const;
 const PLAYBOOK_QUICK_REMINDERS_KEY = 'quick_reminders';
 const PLAYBOOK_DEFAULT_PRE_SESSION_KEYS = ['market_bias_framework'] as const;
+const PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS = ['entry_model', 'fib_rules'] as const;
 const PLAYBOOK_DEFAULT_REVIEW_KEYS = ['post_session_review_reminders'] as const;
-const PLAYBOOK_TRADE_REFERENCE_KEYS = ['entry_model', 'fib_rules'] as const;
 
 type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
-type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | null;
+type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | { kind: 'decision'; id: string } | null;
 type SessionSubtypeView = 'pre_session_plan' | 'chart_session' | 'post_session_review';
 type SessionTypeValue = SessionRow['session_type'];
 type PreSessionMeta = {
@@ -494,6 +495,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [error, setError] = useState('');
   const [weekInput, setWeekInput] = useState(currentWeekInput());
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
+  const [reviewSaveMessage, setReviewSaveMessage] = useState('');
   const [detail, setDetail] = useState<DetailState>(null);
   const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
   const [addTradeFamily, setAddTradeFamily] = useState<string>('Bounce');
@@ -613,6 +615,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     inside_session_window: false,
     hesitation_note: ''
   });
+  const [editingDecisionId, setEditingDecisionId] = useState<string | null>(null);
+  const [pendingDecisionToConvertId, setPendingDecisionToConvertId] = useState<string | null>(null);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -733,12 +737,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     return PLAYBOOK_SECTIONS_DEFAULTS.map((section) => {
       const saved = byKey.get(section.key);
       const defaultPinnedPreSession = PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]);
+      const defaultPinnedTradeEntry = PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS)[number]);
       const defaultPinnedReview = PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number]);
       return {
         key: section.key,
         title: saved?.title || section.title,
         content: saved?.content ?? section.content,
         pin_pre_session: saved?.pin_pre_session ?? defaultPinnedPreSession,
+        pin_trade_entry: saved?.pin_trade_entry ?? defaultPinnedTradeEntry,
         pin_review: saved?.pin_review ?? defaultPinnedReview,
         updated_at: saved?.updated_at
       };
@@ -773,7 +779,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     return stamp.toLocaleString();
   }
 
-  async function savePlaybookSection(sectionKey: string, title: string, content: string, options?: { pin_pre_session?: boolean; pin_review?: boolean }) {
+  async function savePlaybookSection(sectionKey: string, title: string, content: string, options?: { pin_pre_session?: boolean; pin_trade_entry?: boolean; pin_review?: boolean }) {
     const existing = mergedPlaybookSections.find((section) => section.key === sectionKey);
     const payload: PlaybookSectionRow = {
       user_id: userId,
@@ -781,13 +787,31 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       title,
       content,
       pin_pre_session: options?.pin_pre_session ?? existing?.pin_pre_session ?? false,
+      pin_trade_entry: options?.pin_trade_entry ?? existing?.pin_trade_entry ?? false,
       pin_review: options?.pin_review ?? existing?.pin_review ?? false
     };
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('playbook_sections')
       .upsert(payload, { onConflict: 'user_id,section_key' })
       .select('*')
       .single();
+    if (error && isPlaybookTradeEntryPinSchemaMismatch(error.message)) {
+      const fallbackPayload = {
+        user_id: payload.user_id,
+        section_key: payload.section_key,
+        title: payload.title,
+        content: payload.content,
+        pin_pre_session: payload.pin_pre_session,
+        pin_review: payload.pin_review
+      };
+      const fallback = await supabase
+        .from('playbook_sections')
+        .upsert(fallbackPayload, { onConflict: 'user_id,section_key' })
+        .select('*')
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
     if (error) {
       setError(normalizeSupabaseError(error.message));
       return false;
@@ -805,6 +829,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (!defaultSection) return;
     const ok = await savePlaybookSection(defaultSection.key, defaultSection.title, defaultSection.content, {
       pin_pre_session: PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]),
+      pin_trade_entry: PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS)[number]),
       pin_review: PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number])
     });
     if (ok) setPlaybookEditing((prev) => ({ ...prev, [sectionKey]: false }));
@@ -827,8 +852,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       .filter((section): section is NonNullable<typeof section> => Boolean(section));
   }, [mergedPlaybookSections, playbookSectionMap]);
   const tradePlaybookSections = useMemo(
-    () => PLAYBOOK_TRADE_REFERENCE_KEYS.map((key) => playbookSectionMap.get(key)).filter((section): section is NonNullable<typeof section> => Boolean(section)),
-    [playbookSectionMap]
+    () => mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_trade_entry))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section)),
+    [mergedPlaybookSections, playbookSectionMap]
   );
 
   function playbookExcerpt(value: string, maxLines = 6, maxChars = 420) {
@@ -918,12 +946,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       converted_trade_id: convertedTradeId,
       skipped_setup: skippedSetup
     };
-    const { data, error } = await supabase.from('decision_checks').insert(payload).select('*').single();
+    const query = editingDecisionId
+      ? supabase.from('decision_checks').update(payload).eq('id', editingDecisionId)
+      : supabase.from('decision_checks').insert(payload);
+    const { data, error } = await query.select('*').single();
     if (error) {
       setError(normalizeSupabaseError(error.message));
       return null;
     }
-    setDecisionChecks((prev) => [data as DecisionCheckRow, ...prev]);
+    setDecisionChecks((prev) => {
+      const next = prev.filter((row) => row.id !== (data as DecisionCheckRow).id);
+      next.unshift(data as DecisionCheckRow);
+      return next;
+    });
+    setEditingDecisionId(null);
     return data as DecisionCheckRow;
   }
 
@@ -931,6 +967,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (decisionComputed.result === 'NO_GO') return;
     const saved = await saveDecisionCheck(false);
     if (!saved) return;
+    setPendingDecisionToConvertId(saved.id);
     const decisionStamp = new Date(saved.decision_timestamp || new Date().toISOString());
     const dateKey = decisionStamp.toISOString().slice(0, 10);
     setTab('log');
@@ -1076,11 +1113,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     ...activeMistakeCatalog,
     ...normalizeMistakeTags(tradeDraft.mistake_tags)
   ]);
+  const visibleDecisionChecks = decisionChecks.filter((decision) => decision.skipped_setup || !decision.converted_trade_id);
   const activityItems = [
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
     ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade })),
     ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session })),
-    ...decisionChecks.map((decision) => ({ type: 'decision' as const, date: String(decision.decision_timestamp || '').slice(0, 10), id: decision.id, decision }))
+    ...visibleDecisionChecks.map((decision) => ({ type: 'decision' as const, date: String(decision.decision_timestamp || '').slice(0, 10), id: decision.id, decision }))
   ].sort((a, b) => {
     const byDate = b.date.localeCompare(a.date);
     if (byDate !== 0) return byDate;
@@ -1207,6 +1245,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
   useEffect(() => {
     setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
+    setReviewSaveMessage('');
   }, [reviewRow?.id, selectedWeekKey]);
 
   useEffect(() => {
@@ -1277,6 +1316,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (upsertError) {
       setError(normalizeSupabaseError(upsertError.message));
       return;
+    }
+    if (!editingTradeId && pendingDecisionToConvertId) {
+      const { error: convertError } = await supabase
+        .from('decision_checks')
+        .update({ converted_trade_id: data.id })
+        .eq('id', pendingDecisionToConvertId);
+      if (convertError) {
+        setError(normalizeSupabaseError(convertError.message));
+      } else {
+        setDecisionChecks((prev) => prev.map((row) => (row.id === pendingDecisionToConvertId ? { ...row, converted_trade_id: data.id } : row)));
+      }
+      setPendingDecisionToConvertId(null);
     }
 
     if (settings) {
@@ -1443,16 +1494,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }
 
   async function saveReview() {
+    setReviewSaveMessage('');
     const payload = { user_id: userId, week_key: selectedWeekKey, ...reviewAnswers };
     const { error: upsertError } = await supabase
       .from('weekly_reviews')
       .upsert(payload, { onConflict: 'user_id,week_key' });
     if (!upsertError) {
       await loadAll();
+      setReviewSaveMessage('Review saved');
       return;
     }
     if (!isWeeklyReviewPaperSchemaMismatch(upsertError.message)) {
       setError(normalizeSupabaseError(upsertError.message));
+      setReviewSaveMessage('Review save failed');
       return;
     }
     const fallbackPayload = { user_id: userId, week_key: selectedWeekKey, q1: reviewAnswers.q1, q2: reviewAnswers.q2, q3: reviewAnswers.q3 };
@@ -1461,9 +1515,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       .upsert(fallbackPayload, { onConflict: 'user_id,week_key' });
     if (fallbackError) {
       setError(normalizeSupabaseError(fallbackError.message));
+      setReviewSaveMessage('Review save failed');
       return;
     }
     await loadAll();
+    setReviewSaveMessage('Review saved');
   }
 
   async function saveSettings(next: SettingsRow) {
@@ -1505,6 +1561,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
   function resetTradeDraft() {
     setEditingTradeId(null);
+    setPendingDecisionToConvertId(null);
     setAddTradeClassification('Valid setup');
     setAddTradeFamily('Bounce');
     setAddTradeModel(familyModels.Bounce[0]);
@@ -1578,6 +1635,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setLogMode('no_trade');
   }
 
+  function startEditDecision(decision: DecisionCheckRow) {
+    setEditingDecisionId(decision.id);
+    setDecisionDraft({
+      trade_intent_mode: decision.trade_intent_mode,
+      decision_timestamp: new Date(decision.decision_timestamp).toISOString().slice(0, 16),
+      displacement_confirmed: Boolean(decision.displacement_confirmed),
+      valid_poi_created: Boolean(decision.valid_poi_created),
+      pulling_back_not_chasing: Boolean(decision.pulling_back_not_chasing),
+      fib_support_quality: decision.fib_support_quality,
+      liquidity_target_clear: Boolean(decision.liquidity_target_clear),
+      stop_location_clear: Boolean(decision.stop_location_clear),
+      inside_session_window: Boolean(decision.inside_session_window),
+      hesitation_note: decision.hesitation_note || ''
+    });
+    setTab('decide');
+  }
+
   async function deleteTrade(tradeId: string) {
     if (!window.confirm('Delete this trade? This cannot be undone.')) return;
     const linked = attachments.filter((a) => a.trade_id === tradeId);
@@ -1628,6 +1702,18 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     await loadAll();
   }
 
+  async function deleteDecision(decisionId: string) {
+    if (!window.confirm('Delete this decision entry?')) return;
+    const { error: deleteError } = await supabase.from('decision_checks').delete().eq('id', decisionId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'decision' && detail.id === decisionId) setDetail(null);
+    if (editingDecisionId === decisionId) setEditingDecisionId(null);
+    setDecisionChecks((prev) => prev.filter((row) => row.id !== decisionId));
+  }
+
   async function removeSessionAttachment(attachmentId: string) {
     const target = attachments.find((a) => a.id === attachmentId);
     if (!target) return;
@@ -1657,7 +1743,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
         ? attachments.filter((a) => a.trade_id === nextDetail.id)
         : nextDetail.kind === 'no_trade'
           ? attachments.filter((a) => a.no_trade_day_id === nextDetail.id)
-          : attachments.filter((a) => a.session_id === nextDetail.id);
+          : nextDetail.kind === 'session'
+            ? attachments.filter((a) => a.session_id === nextDetail.id)
+            : [];
 
     if (!linkedAttachments.length) {
       setSignedUrls({});
@@ -2046,6 +2134,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const initials = buildInitials(accountFirstName, accountLastName, email);
   const logType: LogType = logMode === 'session' ? 'session' : 'trade_log';
   const showTradePlaybookReferences = logMode === 'trade' && (tradeLogSubtype === 'live_trade' || tradeLogSubtype === 'paper_trade');
+  const decisionByConvertedTradeId = useMemo(() => {
+    const mapped = new Map<string, DecisionCheckRow>();
+    for (const decision of decisionChecks) {
+      if (decision.converted_trade_id) mapped.set(decision.converted_trade_id, decision);
+    }
+    return mapped;
+  }, [decisionChecks]);
 
   function openPlaybookSection(sectionKey: string) {
     setTab('playbook');
@@ -2123,6 +2218,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div className="small muted">Profile name: {[accountFirstName, accountLastName].join(' ').trim() || 'Not set'}</div>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
             <button className="inline" type="button" onClick={() => { setShowAccountSettings(true); setAccountOpen(false); }}>Settings</button>
+            <button className="inline" type="button" onClick={() => { setTab('playbook'); setAccountOpen(false); }}>Playbook</button>
             <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
           </div>
         </section>
@@ -2890,6 +2986,17 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                           </div>
                         ) : null}
                       </section>
+                      {decisionByConvertedTradeId.get(item.trade.id) ? (
+                        <section className="trade stack" style={{ padding: '8px 10px' }}>
+                          <strong>Pre-entry Decision</strong>
+                          <div className="small">Result: {decisionByConvertedTradeId.get(item.trade.id)?.go_no_go_result.replace('_', ' ')} · {decisionByConvertedTradeId.get(item.trade.id)?.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
+                          <div className="small muted">Readiness: {decisionByConvertedTradeId.get(item.trade.id)?.readiness_yes_count}/{decisionByConvertedTradeId.get(item.trade.id)?.readiness_applicable_count} ({decisionByConvertedTradeId.get(item.trade.id)?.readiness_grade})</div>
+                          {(decisionByConvertedTradeId.get(item.trade.id)?.execution_auto_tags || []).length ? (
+                            <div>{(decisionByConvertedTradeId.get(item.trade.id)?.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.trade.id}-${tag}`}>{tag}</span>)}</div>
+                          ) : null}
+                          {decisionByConvertedTradeId.get(item.trade.id)?.hesitation_note ? <div className="small muted">Hesitation: {decisionByConvertedTradeId.get(item.trade.id)?.hesitation_note}</div> : null}
+                        </section>
+                      ) : null}
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
                       <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
@@ -2931,12 +3038,32 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               </Fragment>
             ) : item.type === 'decision' ? (
               <Fragment>
-                <article className="trade">
+                <article className="trade" ref={(node) => { detailAnchors.current[`decision:${item.decision.id}`] = node; }}>
                   <div className="row"><strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'}</strong><span>{String(item.decision.decision_timestamp || '').slice(0, 16).replace('T', ' ')}</span></div>
                   <div className="small muted"><span className="badge">Decide</span> <span className="badge">{item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</span></div>
                   <div className="small">{item.decision.go_no_go_result.replace('_', ' ')} · Readiness {item.decision.readiness_grade} ({item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count})</div>
                   <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.decision.id}-${tag}`}>{tag}</span>)}</div>
+                  <div className="row">
+                    <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'decision', id: item.decision.id })}>View</button>
+                    <button className="inline" type="button" onClick={() => startEditDecision(item.decision)}>Edit</button>
+                    <button className="inline" type="button" onClick={() => void deleteDecision(item.decision.id)}>Delete</button>
+                  </div>
                 </article>
+                {detail?.kind === 'decision' && detail.id === item.decision.id ? (
+                  <article className="trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'} detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{String(item.decision.decision_timestamp || '').slice(0, 16).replace('T', ' ')} · {item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
+                      <div className="small">Result: {item.decision.go_no_go_result.replace('_', ' ')}</div>
+                      <div className="small">Readiness: {item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count} ({item.decision.readiness_grade})</div>
+                      <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`detail-${item.decision.id}-${tag}`}>{tag}</span>)}</div>
+                      {item.decision.hesitation_note ? <div className="small muted">Hesitation: {item.decision.hesitation_note}</div> : <div className="small muted">Hesitation: —</div>}
+                    </div>
+                  </article>
+                ) : null}
               </Fragment>
             ) : (
               <Fragment>
@@ -3698,6 +3825,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             </select>
           </div>
           <div className="chip">{reviewStatus}</div>
+          {reviewSaveMessage ? <div className={`small ${reviewSaveMessage === 'Review saved' ? 'muted' : ''}`}>{reviewSaveMessage}</div> : null}
           <div style={{ maxWidth: 220 }}>
             <label className="small muted" htmlFor="review-trade-filter">Trade type</label>
             <select id="review-trade-filter" value={reviewTradeFilter} onChange={(e) => setReviewTradeFilter(e.target.value as TradeTypeFilter)}>
@@ -3922,15 +4050,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <input
                         type="checkbox"
                         checked={Boolean(section.pin_pre_session)}
-                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: e.target.checked, pin_review: Boolean(section.pin_review) })}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: e.target.checked, pin_trade_entry: Boolean(section.pin_trade_entry), pin_review: Boolean(section.pin_review) })}
                       />
                       <span className="small muted">Pin to Pre-Session</span>
                     </label>
                     <label className="playbook-pin-option">
                       <input
                         type="checkbox"
+                        checked={Boolean(section.pin_trade_entry)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_trade_entry: e.target.checked, pin_review: Boolean(section.pin_review) })}
+                      />
+                      <span className="small muted">Pin to Trade Entry</span>
+                    </label>
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
                         checked={Boolean(section.pin_review)}
-                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_review: e.target.checked })}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_trade_entry: Boolean(section.pin_trade_entry), pin_review: e.target.checked })}
                       />
                       <span className="small muted">Pin to Review</span>
                     </label>
@@ -3976,6 +4112,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <strong>GO / NO GO execution check</strong>
             <span className="badge">{decisionComputed.readinessGrade}</span>
           </div>
+          {editingDecisionId ? <div className="small muted">Editing existing decision entry.</div> : null}
           <div className="small muted">Fast pre-entry decision tool. Use this before committing to a trade.</div>
           <label className="small muted">Trade mode</label>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -4022,7 +4159,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
             <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('live')}>Start Live Trade Log</button>
             <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('paper')}>Start Paper Trade Log</button>
-            <button className="inline" type="button" onClick={() => void saveDecisionCheck(true)}>Save Skipped Setup</button>
+            <button className="inline" type="button" onClick={() => void saveDecisionCheck(true)}>{editingDecisionId ? 'Update Skipped Setup' : 'Save Skipped Setup'}</button>
+            {editingDecisionId ? <button className="inline" type="button" onClick={() => setEditingDecisionId(null)}>Cancel Edit</button> : null}
           </div>
         </section>
       )}
@@ -4149,7 +4287,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
 
       <nav className="bottom">
         <div className="nav">
-          {tabs.map((t) => (
+          {bottomTabs.map((t) => (
             <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{titleCase(t)}</button>
           ))}
         </div>
@@ -6672,10 +6810,17 @@ function isWeeklyReviewPaperSchemaMismatch(message: string) {
     || /column .*?(q_paper).*? does not exist/i.test(text);
 }
 
+function isPlaybookTradeEntryPinSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(pin_trade_entry).*?schema cache/i.test(text)
+    || /column .*?(pin_trade_entry).*? does not exist/i.test(text);
+}
+
 function isRecoverableSchemaError(message: string) {
   const text = String(message || '');
   return isSettingsCatalogSchemaMismatch(text)
     || isWeeklyReviewPaperSchemaMismatch(text)
+    || isPlaybookTradeEntryPinSchemaMismatch(text)
     || /schema cache/i.test(text)
     || /column .* does not exist/i.test(text)
     || /relation .* does not exist/i.test(text)
