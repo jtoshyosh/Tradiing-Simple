@@ -33,7 +33,7 @@ const familyModels: Record<string, string[]> = {
   'N/A / No valid setup': ['N/A / None']
 };
 
-const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session'];
+const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session', 'Missed opportunity / hesitation'];
 const SESSION_DEFAULT_TIMES = {
   chart: { start: '06:30', end: '09:00' },
   journal: { start: '20:00', end: '21:00' }
@@ -3044,9 +3044,12 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <div className="small">{item.decision.go_no_go_result.replace('_', ' ')} · Readiness {item.decision.readiness_grade} ({item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count})</div>
                   <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.decision.id}-${tag}`}>{tag}</span>)}</div>
                   <div className="row">
-                    <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'decision', id: item.decision.id })}>View</button>
-                    <button className="inline" type="button" onClick={() => startEditDecision(item.decision)}>Edit</button>
-                    <button className="inline" type="button" onClick={() => void deleteDecision(item.decision.id)}>Delete</button>
+                    <div className="small muted">Decision entry</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'decision', id: item.decision.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditDecision(item.decision)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteDecision(item.decision.id)}>Delete</button>
+                    </div>
                   </div>
                 </article>
                 {detail?.kind === 'decision' && detail.id === item.decision.id ? (
@@ -3542,7 +3545,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               label="No-trade notes"
               value={noTradeDraft.notes}
               onChange={(next) => setNoTradeDraft((p) => ({ ...p, notes: next }))}
-              placeholder="Describe why you stayed flat and what confirmed discipline."
+              placeholder={noTradeDraft.reason === 'Missed opportunity / hesitation'
+                ? 'Optional: what setup was missed, and what hesitation showed up?'
+                : 'Describe why you stayed flat and what confirmed discipline.'}
               minRows={4}
             />
             <input
