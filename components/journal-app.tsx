@@ -482,6 +482,15 @@ type OcrDebugState = {
 };
 type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'minutes_in_trade'>> & { r_multiple?: string; hints?: string[]; detectedText?: string } & OcrDebugState;
 type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
+type ImportMode = 'merge' | 'replace_activity';
+type ImportPayload = {
+  trades?: unknown[];
+  no_trade_days?: unknown[];
+  sessions?: unknown[];
+  weekly_reviews?: unknown[];
+  attachments?: unknown[];
+  settings?: unknown;
+};
 
 export default function JournalApp({ userId, email, onSignOut }: Props) {
   const supabase = useMemo(() => createSupabaseBrowserClient(), []);
@@ -621,6 +630,14 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
   const [exportScope, setExportScope] = useState<'all_time' | 'selected_period'>('all_time');
+  const [importMode, setImportMode] = useState<ImportMode>('merge');
+  const [importPreview, setImportPreview] = useState<{
+    payload: ImportPayload;
+    counts: { trades: number; no_trade_days: number; sessions: number; weekly_reviews: number; attachments: number };
+    warnings: string[];
+  } | null>(null);
+  const [importReplaceConfirmText, setImportReplaceConfirmText] = useState('');
+  const [importStatus, setImportStatus] = useState('');
 
   useEffect(() => {
     const [first, last] = splitDisplayName(settings?.display_name || '', email);
@@ -1778,16 +1795,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
   }
 
-  async function resetActivityData() {
-    const requiredText = 'RESET';
-    if (resetConfirmText.trim().toUpperCase() !== requiredText) {
-      setError(`Type ${requiredText} to confirm activity reset.`);
-      return;
-    }
-    const approved = window.confirm(
-      `Reset activity data for current user only?\n\nUser: ${email || userId}\n\nThis will permanently delete trades, no-trade days, sessions, weekly reviews, and attachment records/files for this account.`
-    );
-    if (!approved) return;
+  async function clearCurrentUserActivityData() {
     setError('');
     setResetStorageNotice('');
     const attachmentPaths = attachments
@@ -1845,6 +1853,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     }
   }
 
+  async function resetActivityData() {
+    const requiredText = 'RESET';
+    if (resetConfirmText.trim().toUpperCase() !== requiredText) {
+      setError(`Type ${requiredText} to confirm activity reset.`);
+      return;
+    }
+    const approved = window.confirm(
+      `Reset activity data for current user only?\n\nUser: ${email || userId}\n\nThis will permanently delete trades, no-trade days, sessions, weekly reviews, and attachment records/files for this account.`
+    );
+    if (!approved) return;
+    await clearCurrentUserActivityData();
+  }
+
   function getExportCollections(scope: 'all_time' | 'selected_period') {
     if (scope === 'all_time') {
       return {
@@ -1870,6 +1891,112 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       || (file.session_id && sessionIds.has(file.session_id))
     ));
     return { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments };
+  }
+
+  function onSelectImportFile(file: File | null) {
+    setImportStatus('');
+    setImportPreview(null);
+    if (!file) return;
+    if (!/\.json$/i.test(file.name)) {
+      setImportStatus('Import supports JSON exports from this app only.');
+      return;
+    }
+    void file.text().then((raw) => {
+      try {
+        const parsed = JSON.parse(raw) as ImportPayload;
+        if (!parsed || typeof parsed !== 'object') {
+          setImportStatus('Invalid JSON structure.');
+          return;
+        }
+        const tradesCount = Array.isArray(parsed.trades) ? parsed.trades.length : 0;
+        const noTradesCount = Array.isArray(parsed.no_trade_days) ? parsed.no_trade_days.length : 0;
+        const sessionsCount = Array.isArray(parsed.sessions) ? parsed.sessions.length : 0;
+        const reviewsCount = Array.isArray(parsed.weekly_reviews) ? parsed.weekly_reviews.length : 0;
+        const attachmentsCount = Array.isArray(parsed.attachments) ? parsed.attachments.length : 0;
+        if (!('trades' in parsed) && !('no_trade_days' in parsed) && !('sessions' in parsed) && !('weekly_reviews' in parsed)) {
+          setImportStatus('File does not look like a supported journal export.');
+          return;
+        }
+        const warnings: string[] = [];
+        if (attachmentsCount) warnings.push('Attachment metadata can be imported for reference, but file binaries are not restored automatically.');
+        if ('settings' in parsed) warnings.push('Settings/catalog restore is not applied in this phase for safety.');
+        warnings.push('Merge mode uses ID + stable key checks where possible, but review data before importing.');
+        setImportPreview({
+          payload: parsed,
+          counts: { trades: tradesCount, no_trade_days: noTradesCount, sessions: sessionsCount, weekly_reviews: reviewsCount, attachments: attachmentsCount },
+          warnings
+        });
+      } catch {
+        setImportStatus('Could not parse JSON file.');
+      }
+    }).catch(() => setImportStatus('Failed to read selected file.'));
+  }
+
+  async function runImportRestore() {
+    if (!importPreview) return;
+    if (importMode === 'replace_activity' && importReplaceConfirmText.trim().toUpperCase() !== 'REPLACE') {
+      setImportStatus('Type REPLACE to confirm replace mode.');
+      return;
+    }
+    setImportStatus('');
+    const payload = importPreview.payload;
+    if (importMode === 'replace_activity') {
+      const confirmed = window.confirm(`Replace activity data for current signed-in user (${email || userId}) before import?`);
+      if (!confirmed) return;
+      await clearCurrentUserActivityData();
+    }
+
+    const existingTradeIds = new Set(trades.map((row) => row.id));
+    const existingTradeKeys = new Set(trades.map((row) => `${row.trade_date}|${row.ticker}|${Number(row.pnl || 0)}|${Number(row.r_multiple || 0)}|${row.family}|${row.model}`));
+    const incomingTrades = (Array.isArray(payload.trades) ? payload.trades : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const tradeRows = incomingTrades.filter((row) => {
+      const id = String(row.id || '');
+      const stable = `${String(row.trade_date || '')}|${String(row.ticker || '')}|${Number(row.pnl || 0)}|${Number(row.r_multiple || 0)}|${String(row.family || '')}|${String(row.model || '')}`;
+      return !existingTradeIds.has(id) && !existingTradeKeys.has(stable);
+    }).map((row) => ({ ...row, user_id: userId }));
+
+    const existingNoTradeIds = new Set(noTrades.map((row) => row.id));
+    const existingNoTradeKeys = new Set(noTrades.map((row) => `${row.day_date}|${row.reason}|${resolveNoTradeMindset(row)}`));
+    const incomingNoTrades = (Array.isArray(payload.no_trade_days) ? payload.no_trade_days : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const noTradeRows = incomingNoTrades.filter((row) => !existingNoTradeIds.has(String(row.id || '')) && !existingNoTradeKeys.has(`${String(row.day_date || '')}|${String(row.reason || '')}|${String(row.no_trade_mindset || '')}`)).map((row) => ({ ...row, user_id: userId }));
+
+    const existingSessionIds = new Set(sessions.map((row) => row.id));
+    const existingSessionKeys = new Set(sessions.map((row) => `${row.session_date}|${row.session_type}|${row.start_time}|${row.end_time}|${Number(row.duration_minutes || 0)}`));
+    const incomingSessions = (Array.isArray(payload.sessions) ? payload.sessions : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const sessionRows = incomingSessions.filter((row) => !existingSessionIds.has(String(row.id || '')) && !existingSessionKeys.has(`${String(row.session_date || '')}|${String(row.session_type || '')}|${String(row.start_time || '')}|${String(row.end_time || '')}|${Number(row.duration_minutes || 0)}`)).map((row) => ({ ...row, user_id: userId }));
+
+    const existingReviewIds = new Set(reviews.map((row) => row.id));
+    const existingReviewKeys = new Set(reviews.map((row) => row.week_key));
+    const incomingReviews = (Array.isArray(payload.weekly_reviews) ? payload.weekly_reviews : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const reviewRows = incomingReviews.filter((row) => !existingReviewIds.has(String(row.id || '')) && !existingReviewKeys.has(String(row.week_key || ''))).map((row) => ({ ...row, user_id: userId }));
+
+    const results: string[] = [];
+    if (tradeRows.length) {
+      const { error } = await supabase.from('trades').insert(tradeRows);
+      results.push(error ? `Trades failed: ${normalizeSupabaseError(error.message)}` : `Trades imported: ${tradeRows.length}`);
+    }
+    if (noTradeRows.length) {
+      const { error } = await supabase.from('no_trade_days').insert(noTradeRows);
+      results.push(error ? `No-trade days failed: ${normalizeSupabaseError(error.message)}` : `No-trade days imported: ${noTradeRows.length}`);
+    }
+    if (sessionRows.length) {
+      const { error } = await supabase.from('sessions').insert(sessionRows);
+      results.push(error ? `Sessions failed: ${normalizeSupabaseError(error.message)}` : `Sessions imported: ${sessionRows.length}`);
+    }
+    if (reviewRows.length) {
+      const { error } = await supabase.from('weekly_reviews').insert(reviewRows);
+      results.push(error ? `Weekly reviews failed: ${normalizeSupabaseError(error.message)}` : `Weekly reviews imported: ${reviewRows.length}`);
+    }
+    if (!tradeRows.length && !noTradeRows.length && !sessionRows.length && !reviewRows.length) {
+      results.push('No new activity rows were imported (duplicate/safety checks skipped all rows).');
+    }
+    if (Array.isArray(payload.attachments) && payload.attachments.length) {
+      results.push(`Attachment metadata in file: ${payload.attachments.length}. Binary files are not restored automatically in this phase.`);
+    }
+    results.push('Settings/catalog restore is not applied in this phase.');
+    await loadAll();
+    setImportStatus(results.join(' | '));
+    setImportReplaceConfirmText('');
   }
 
   function downloadExportJson(scope: 'all_time' | 'selected_period') {
@@ -2421,6 +2548,45 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div className="small muted">
               Attachments: file binaries are not bundled in CSV/JSON. Export includes file metadata + storage paths only; private attachment access behavior is unchanged.
             </div>
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Import / restore</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">Use this to safely restore from JSON backups exported by this app. Import is always manual and deliberate.</div>
+            <label className="small muted" htmlFor="import-file">Select JSON export file</label>
+            <input id="import-file" type="file" accept="application/json,.json" onChange={(e) => onSelectImportFile(e.target.files?.[0] || null)} />
+            <label className="small muted">Import mode</label>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" style={importMode === 'merge' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setImportMode('merge')}>Merge import</button>
+              <button className="inline" type="button" style={importMode === 'replace_activity' ? { background: '#74461f', borderColor: '#915a32', color: '#fff2ea' } : undefined} onClick={() => setImportMode('replace_activity')}>Replace activity data</button>
+            </div>
+            <div className="small muted">
+              Merge = adds rows with duplicate safety checks. Replace = clears current user activity first, then imports backup activity rows.
+            </div>
+            {importMode === 'replace_activity' ? (
+              <div className="stack">
+                <label className="small muted" htmlFor="replace-import-confirm">Type <strong>REPLACE</strong> to enable replace mode import.</label>
+                <input id="replace-import-confirm" placeholder="Type REPLACE" value={importReplaceConfirmText} onChange={(e) => setImportReplaceConfirmText(e.target.value)} />
+              </div>
+            ) : null}
+            {importPreview ? (
+              <section className="trade stack" style={{ padding: '10px 12px' }}>
+                <strong>Import preview</strong>
+                <div className="small">Trades: {importPreview.counts.trades}</div>
+                <div className="small">No-trade days: {importPreview.counts.no_trade_days}</div>
+                <div className="small">Sessions: {importPreview.counts.sessions}</div>
+                <div className="small">Weekly reviews: {importPreview.counts.weekly_reviews}</div>
+                <div className="small">Attachment metadata rows: {importPreview.counts.attachments}</div>
+                {importPreview.warnings.map((warning) => <div key={warning} className="small muted">• {warning}</div>)}
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => void runImportRestore()}>Confirm import</button>
+                  <button className="inline" type="button" onClick={() => { setImportPreview(null); setImportStatus('Import canceled.'); }}>Cancel</button>
+                </div>
+              </section>
+            ) : null}
+            {importStatus ? <div className="small muted">{importStatus}</div> : null}
           </article>
         </section>
       )}
