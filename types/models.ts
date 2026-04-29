@@ -100,6 +100,7 @@ export type PlaybookSectionRow = {
   title: string;
   content: string;
   pin_pre_session?: boolean;
+  pin_trade_entry?: boolean;
   pin_review?: boolean;
   updated_at?: string;
 };
