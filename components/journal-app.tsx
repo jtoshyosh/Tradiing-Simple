@@ -614,7 +614,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [playbookReferenceOpen, setPlaybookReferenceOpen] = useState<Record<string, boolean>>({});
   const [decisionDraft, setDecisionDraft] = useState({
     trade_intent_mode: 'live' as 'live' | 'paper',
-    decision_timestamp: new Date().toISOString().slice(0, 16),
+    decision_timestamp: toLocalDateTimeInputValue(new Date()),
     displacement_confirmed: false,
     valid_poi_created: false,
     pulling_back_not_chasing: false,
@@ -943,7 +943,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const payload = {
       user_id: userId,
       trade_intent_mode: decisionDraft.trade_intent_mode,
-      decision_timestamp: new Date(decisionDraft.decision_timestamp).toISOString(),
+      decision_timestamp: new Date(decisionDraft.decision_timestamp || toLocalDateTimeInputValue(new Date())).toISOString(),
       displacement_confirmed: decisionDraft.displacement_confirmed,
       valid_poi_created: decisionDraft.valid_poi_created,
       pulling_back_not_chasing: decisionDraft.pulling_back_not_chasing,
@@ -986,7 +986,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (!saved) return;
     setPendingDecisionToConvertId(saved.id);
     const decisionStamp = new Date(saved.decision_timestamp || new Date().toISOString());
-    const dateKey = decisionStamp.toISOString().slice(0, 10);
+    const dateKey = toLocalDateKey(decisionStamp);
     setTab('log');
     setLogMode('trade');
     setTradeLogSubtype(mode === 'paper' ? 'paper_trade' : 'live_trade');
@@ -1656,7 +1656,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setEditingDecisionId(decision.id);
     setDecisionDraft({
       trade_intent_mode: decision.trade_intent_mode,
-      decision_timestamp: new Date(decision.decision_timestamp).toISOString().slice(0, 16),
+      decision_timestamp: toLocalDateTimeInputValue(new Date(decision.decision_timestamp)),
       displacement_confirmed: Boolean(decision.displacement_confirmed),
       valid_poi_created: Boolean(decision.valid_poi_created),
       pulling_back_not_chasing: Boolean(decision.pulling_back_not_chasing),
@@ -3205,7 +3205,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             ) : item.type === 'decision' ? (
               <Fragment>
                 <article className="trade" ref={(node) => { detailAnchors.current[`decision:${item.decision.id}`] = node; }}>
-                  <div className="row"><strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'}</strong><span>{String(item.decision.decision_timestamp || '').slice(0, 16).replace('T', ' ')}</span></div>
+                  <div className="row"><strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'}</strong><span>{formatDecisionTimestampLocal(item.decision.decision_timestamp)}</span></div>
                   <div className="small muted"><span className="badge">Decide</span> <span className="badge">{item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</span></div>
                   <div className="small">{item.decision.go_no_go_result.replace('_', ' ')} · Readiness {item.decision.readiness_grade} ({item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count})</div>
                   <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.decision.id}-${tag}`}>{tag}</span>)}</div>
@@ -3225,7 +3225,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
                     </div>
                     <div className="stack">
-                      <div className="small muted">{String(item.decision.decision_timestamp || '').slice(0, 16).replace('T', ' ')} · {item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
+                      <div className="small muted">{formatDecisionTimestampLocal(item.decision.decision_timestamp)} · {item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
                       <div className="small">Result: {item.decision.go_no_go_result.replace('_', ' ')}</div>
                       <div className="small">Readiness: {item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count} ({item.decision.readiness_grade})</div>
                       <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`detail-${item.decision.id}-${tag}`}>{tag}</span>)}</div>
@@ -5874,6 +5874,28 @@ function inDateRange(dateStr: string, start: string, end: string) {
 
 function toDateInput(value: string) {
   return value.slice(0, 10);
+}
+
+function toLocalDateTimeInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hh}:${mm}`;
+}
+
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDecisionTimestampLocal(value: string) {
+  const stamp = new Date(value);
+  if (Number.isNaN(stamp.getTime())) return String(value || '').slice(0, 16).replace('T', ' ');
+  return toLocalDateTimeInputValue(stamp).replace('T', ' ');
 }
 
 function normalizeTimeInput(value: unknown) {
