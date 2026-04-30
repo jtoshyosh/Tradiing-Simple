@@ -948,7 +948,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const payload = {
       user_id: userId,
       trade_intent_mode: decisionDraft.trade_intent_mode,
-      decision_timestamp: new Date(decisionDraft.decision_timestamp || toLocalDateTimeInputValue(new Date())).toISOString(),
+      decision_timestamp: parseLocalDateTimeInput(decisionDraft.decision_timestamp || toLocalDateTimeInputValue(new Date())).toISOString(),
       displacement_confirmed: decisionDraft.displacement_confirmed,
       valid_poi_created: decisionDraft.valid_poi_created,
       pulling_back_not_chasing: decisionDraft.pulling_back_not_chasing,
@@ -1181,7 +1181,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
     ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade })),
     ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session })),
-    ...visibleDecisionChecks.map((decision) => ({ type: 'decision' as const, date: String(decision.decision_timestamp || '').slice(0, 10), id: decision.id, decision }))
+    ...visibleDecisionChecks.map((decision) => ({ type: 'decision' as const, date: toLocalDateKey(parseStoredDateTime(decision.decision_timestamp)), id: decision.id, decision }))
   ].sort((a, b) => {
     const byDate = b.date.localeCompare(a.date);
     if (byDate !== 0) return byDate;
@@ -1702,7 +1702,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setEditingDecisionId(decision.id);
     setDecisionDraft({
       trade_intent_mode: decision.trade_intent_mode,
-      decision_timestamp: toLocalDateTimeInputValue(new Date(decision.decision_timestamp)),
+      decision_timestamp: toLocalDateTimeInputValue(parseStoredDateTime(decision.decision_timestamp)),
       displacement_confirmed: Boolean(decision.displacement_confirmed),
       valid_poi_created: Boolean(decision.valid_poi_created),
       pulling_back_not_chasing: Boolean(decision.pulling_back_not_chasing),
@@ -5946,6 +5946,21 @@ function toLocalDateTimeInputValue(date: Date) {
   return `${year}-${month}-${day}T${hh}:${mm}`;
 }
 
+function parseStoredDateTime(value: string | null | undefined) {
+  const parsed = new Date(value || '');
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return new Date();
+}
+
+function parseLocalDateTimeInput(value: string) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (match) {
+    const [, year, month, day, hh, mm] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hh), Number(mm), 0, 0);
+  }
+  return parseStoredDateTime(value);
+}
+
 function toLocalDateKey(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -5954,7 +5969,7 @@ function toLocalDateKey(date: Date) {
 }
 
 function formatDecisionTimestampLocal(value: string) {
-  const stamp = new Date(value);
+  const stamp = parseStoredDateTime(value);
   if (Number.isNaN(stamp.getTime())) return String(value || '').slice(0, 16).replace('T', ' ');
   return toLocalDateTimeInputValue(stamp).replace('T', ' ');
 }
