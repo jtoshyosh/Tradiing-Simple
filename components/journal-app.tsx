@@ -626,6 +626,10 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   });
   const [editingDecisionId, setEditingDecisionId] = useState<string | null>(null);
   const [pendingDecisionToConvertId, setPendingDecisionToConvertId] = useState<string | null>(null);
+  const [decisionSaving, setDecisionSaving] = useState(false);
+  const [decisionStatusMessage, setDecisionStatusMessage] = useState('');
+  const [lastDecisionSubmitSignature, setLastDecisionSubmitSignature] = useState('');
+  const [lastDecisionSubmitAt, setLastDecisionSubmitAt] = useState(0);
   const [resetActivityOpen, setResetActivityOpen] = useState(false);
   const [resetConfirmText, setResetConfirmText] = useState('');
   const [resetStorageNotice, setResetStorageNotice] = useState('');
@@ -940,6 +944,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }, [decisionDraft]);
 
   async function saveDecisionCheck(skippedSetup: boolean, convertedTradeId: string | null = null) {
+    if (decisionSaving) return null;
     const payload = {
       user_id: userId,
       trade_intent_mode: decisionDraft.trade_intent_mode,
@@ -963,12 +968,20 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       converted_trade_id: convertedTradeId,
       skipped_setup: skippedSetup
     };
+    const signature = JSON.stringify(payload);
+    if (!editingDecisionId && signature === lastDecisionSubmitSignature && Date.now() - lastDecisionSubmitAt < 5000) {
+      setDecisionStatusMessage('Duplicate decision save prevented.');
+      return null;
+    }
+    setDecisionSaving(true);
     const query = editingDecisionId
       ? supabase.from('decision_checks').update(payload).eq('id', editingDecisionId)
       : supabase.from('decision_checks').insert(payload);
     const { data, error } = await query.select('*').single();
     if (error) {
       setError(normalizeSupabaseError(error.message));
+      setDecisionStatusMessage('Decision save failed.');
+      setDecisionSaving(false);
       return null;
     }
     setDecisionChecks((prev) => {
@@ -977,6 +990,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       return next;
     });
     setEditingDecisionId(null);
+    setLastDecisionSubmitSignature(signature);
+    setLastDecisionSubmitAt(Date.now());
+    setDecisionSaving(false);
     return data as DecisionCheckRow;
   }
 
@@ -984,6 +1000,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     if (decisionComputed.result === 'NO_GO') return;
     const saved = await saveDecisionCheck(false);
     if (!saved) return;
+    setDecisionStatusMessage(mode === 'paper' ? 'Paper trade draft created.' : 'Live trade draft created.');
     setPendingDecisionToConvertId(saved.id);
     const decisionStamp = new Date(saved.decision_timestamp || new Date().toISOString());
     const dateKey = toLocalDateKey(decisionStamp);
@@ -998,6 +1015,35 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       notes: `${prev.notes ? `${prev.notes}\n\n` : ''}GO/NO GO Check (${decisionComputed.result})\nReadiness: ${decisionComputed.yesCount}/${decisionComputed.applicableCount} (${decisionComputed.readinessGrade})\nAuto tags: ${decisionComputed.tags.join(', ') || 'None'}\nHesitation: ${decisionDraft.hesitation_note || '—'}`,
       mistake_tags: normalizeUniqueTags([...(prev.mistake_tags || []), ...decisionComputed.tags])
     }));
+  }
+
+  function convertSkippedDecisionToTrade(decision: DecisionCheckRow, mode: 'live' | 'paper') {
+    setDecisionStatusMessage(mode === 'paper' ? 'Paper trade draft created from skipped setup.' : 'Live trade draft created from skipped setup.');
+    setPendingDecisionToConvertId(decision.id);
+    setTab('log');
+    setLogMode('trade');
+    setTradeLogSubtype(mode === 'paper' ? 'paper_trade' : 'live_trade');
+    setTradeDraft((prev) => ({
+      ...prev,
+      trade_date: toLocalDateKey(new Date(decision.decision_timestamp || new Date().toISOString())),
+      is_paper_trade: mode === 'paper',
+      classification: decision.go_no_go_result === 'GO' ? 'Valid setup' : prev.classification,
+      notes: `${prev.notes ? `${prev.notes}\n\n` : ''}Converted from skipped setup (${decision.go_no_go_result})\nReadiness: ${decision.readiness_yes_count}/${decision.readiness_applicable_count} (${decision.readiness_grade})\nAuto tags: ${(decision.execution_auto_tags || []).join(', ') || 'None'}\nHesitation: ${decision.hesitation_note || '—'}`,
+      mistake_tags: normalizeUniqueTags([...(prev.mistake_tags || []), ...(decision.execution_auto_tags || [])])
+    }));
+  }
+
+  function convertSkippedDecisionToNoTrade(decision: DecisionCheckRow) {
+    setDecisionStatusMessage('No-trade draft created from skipped setup.');
+    setTradeLogSubtype('no_trade');
+    setLogMode('no_trade');
+    setTab('log');
+    setNoTradeDraft({
+      day_date: toLocalDateKey(new Date(decision.decision_timestamp || new Date().toISOString())),
+      reason: 'Missed opportunity / hesitation',
+      no_trade_mindset: noTradeMindsetOptions[0].value,
+      notes: `Converted from skipped setup (${decision.go_no_go_result})\nReadiness: ${decision.readiness_yes_count}/${decision.readiness_applicable_count} (${decision.readiness_grade})\nAuto tags: ${(decision.execution_auto_tags || []).join(', ') || 'None'}\nHesitation: ${decision.hesitation_note || '—'}`
+    });
   }
 
   const periodRange = dashboardPeriod === 'lifetime'
@@ -3217,6 +3263,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <button className="inline" type="button" onClick={() => void deleteDecision(item.decision.id)}>Delete</button>
                     </div>
                   </div>
+                  {item.decision.skipped_setup ? (
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'live')}>Convert to Live trade</button>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'paper')}>Convert to Paper trade</button>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToNoTrade(item.decision)}>Convert to No-trade day</button>
+                    </div>
+                  ) : null}
                 </article>
                 {detail?.kind === 'decision' && detail.id === item.decision.id ? (
                   <article className="trade" style={{ marginTop: -4 }}>
@@ -3230,6 +3283,13 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">Readiness: {item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count} ({item.decision.readiness_grade})</div>
                       <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`detail-${item.decision.id}-${tag}`}>{tag}</span>)}</div>
                       {item.decision.hesitation_note ? <div className="small muted">Hesitation: {item.decision.hesitation_note}</div> : <div className="small muted">Hesitation: —</div>}
+                      {item.decision.skipped_setup ? (
+                        <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'live')}>Convert to Live trade</button>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'paper')}>Convert to Paper trade</button>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToNoTrade(item.decision)}>Convert to No-trade day</button>
+                        </div>
+                      ) : null}
                     </div>
                   </article>
                 ) : null}
@@ -4284,6 +4344,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <span className="badge">{decisionComputed.readinessGrade}</span>
           </div>
           {editingDecisionId ? <div className="small muted">Editing existing decision entry.</div> : null}
+          {decisionStatusMessage ? <div className="small muted">{decisionStatusMessage}</div> : null}
           <div className="small muted">Fast pre-entry decision tool. Use this before committing to a trade.</div>
           <label className="small muted">Trade mode</label>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
@@ -4328,9 +4389,9 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
             <div style={{ marginTop: 6 }}>{decisionComputed.tags.map((tag) => <span key={tag} className="badge">{tag}</span>)}</div>
           </article>
           <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
-            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('live')}>Start Live Trade Log</button>
-            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO'} onClick={() => void startTradeFromDecision('paper')}>Start Paper Trade Log</button>
-            <button className="inline" type="button" onClick={() => void saveDecisionCheck(true)}>{editingDecisionId ? 'Update Skipped Setup' : 'Save Skipped Setup'}</button>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO' || decisionSaving} onClick={() => void startTradeFromDecision('live')}>Start Live Trade Log</button>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO' || decisionSaving} onClick={() => void startTradeFromDecision('paper')}>Start Paper Trade Log</button>
+            <button className="inline" type="button" disabled={decisionSaving} onClick={() => void saveDecisionCheck(true).then((saved) => { if (saved) setDecisionStatusMessage('Skipped setup saved.'); })}>{editingDecisionId ? 'Update Skipped Setup' : 'Save Skipped Setup'}</button>
             {editingDecisionId ? <button className="inline" type="button" onClick={() => setEditingDecisionId(null)}>Cancel Edit</button> : null}
           </div>
         </section>
