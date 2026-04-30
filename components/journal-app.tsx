@@ -422,8 +422,8 @@ type PreSessionMeta = {
   bias_confidence: string;
   expected_market_condition: string;
   primary_setup_focus: string;
-  sit_out_condition: string;
-  main_objective: string;
+  sit_out_condition?: string;
+  main_objective?: string;
   starting_emotional_state: string;
 };
 type PostSessionMeta = {
