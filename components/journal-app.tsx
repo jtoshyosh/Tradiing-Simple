@@ -422,8 +422,8 @@ type PreSessionMeta = {
   bias_confidence: string;
   expected_market_condition: string;
   primary_setup_focus: string;
-  sit_out_condition: string;
-  main_objective: string;
+  sit_out_condition?: string;
+  main_objective?: string;
   starting_emotional_state: string;
 };
 type PostSessionMeta = {
@@ -1497,7 +1497,16 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       : calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
     const parsedNotes = parseSessionNotes(sessionDraft.notes || '');
     const meta = subtype === 'pre_session_plan'
-      ? { kind: 'pre_session_plan' as const, ...preSessionDraft }
+      ? {
+        kind: 'pre_session_plan' as const,
+        minutes_spent: preSessionDraft.minutes_spent,
+        higher_timeframe_context: preSessionDraft.higher_timeframe_context,
+        session_bias: preSessionDraft.session_bias,
+        bias_confidence: preSessionDraft.bias_confidence,
+        expected_market_condition: preSessionDraft.expected_market_condition,
+        primary_setup_focus: preSessionDraft.primary_setup_focus,
+        starting_emotional_state: preSessionDraft.starting_emotional_state
+      }
       : subtype === 'post_session_review'
         ? { kind: 'post_session_review' as const, ...postSessionDraft }
         : null;
@@ -3957,14 +3966,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <label className="small muted">Primary setup focus</label>
                   <select value={preSessionDraft.primary_setup_focus} onChange={(e) => setPreSessionDraft((p) => ({ ...p, primary_setup_focus: e.target.value }))}>
                     {primarySetupFocusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Sit-out condition</label>
-                  <select value={preSessionDraft.sit_out_condition} onChange={(e) => setPreSessionDraft((p) => ({ ...p, sit_out_condition: e.target.value }))}>
-                    {sitOutConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-                  </select>
-                  <label className="small muted">Main objective</label>
-                  <select value={preSessionDraft.main_objective} onChange={(e) => setPreSessionDraft((p) => ({ ...p, main_objective: e.target.value }))}>
-                    {sessionObjectiveOptions.map((option) => <option key={option} value={option}>{option}</option>)}
                   </select>
                   <label className="small muted">Starting emotional state</label>
                   <select value={preSessionDraft.starting_emotional_state} onChange={(e) => setPreSessionDraft((p) => ({ ...p, starting_emotional_state: e.target.value }))}>
