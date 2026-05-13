@@ -2696,14 +2696,19 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
           </section>
           <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Snapshot</div>
           <section className="card stack">
-            <strong>Lifetime snapshot (by trade type)</strong>
-            <div className="small muted">Scope: trade type filter only.</div>
-            <div className="grid">
-              <article className="trade"><div className="muted small">Trades</div><div>{lifetimeTrades.length}</div></article>
-              <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
-              <article className="trade"><div className="muted small">Win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
-              <article className="trade"><div className="muted small">No-trade days</div><div>{lifetimeNoTrades.length}</div></article>
-            </div>
+            <details>
+              <summary className="row" style={{ cursor: 'pointer', listStyle: 'none' }}>
+                <strong>Lifetime snapshot (by trade type)</strong>
+                <span className="small muted">{lifetimeTrades.length} trades · {lifetimeNetPnl >= 0 ? '+' : ''}{lifetimeNetPnl.toFixed(0)} · {lifetimeWinRate.toFixed(0)}%</span>
+              </summary>
+              <div className="small muted" style={{ marginTop: 8 }}>Scope: trade type filter only.</div>
+              <div className="grid" style={{ marginTop: 8 }}>
+                <article className="trade"><div className="muted small">Trades</div><div>{lifetimeTrades.length}</div></article>
+                <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
+                <article className="trade"><div className="muted small">Win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
+                <article className="trade"><div className="muted small">No-trade days</div><div>{lifetimeNoTrades.length}</div></article>
+              </div>
+            </details>
           </section>
 
           <section className="card stack">
