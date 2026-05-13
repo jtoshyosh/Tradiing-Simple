@@ -3321,7 +3321,6 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     {isPreSessionPlan(item.session) ? `Duration-first entry · ${formatMinutesLabel(item.session.duration_minutes)}` : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
                   </div>
                   {isPreSessionPlan(item.session) && getPreSessionMeta(item.session) ? <div className="small muted">Bias: {getPreSessionMeta(item.session)?.session_bias} · Condition: {getPreSessionMeta(item.session)?.expected_market_condition}</div> : null}
-                  {readableSessionNotes(item.session.notes) ? <div className="small">Notes: {readableSessionNotes(item.session.notes)}</div> : null}
                   <div className="row">
                     <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
                     <div className="row">
