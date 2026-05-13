@@ -1052,6 +1052,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
   const lifetimeTrades = dashboardTrades;
   const lifetimeNoTrades = noTrades;
+  const periodAllTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
   const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
   const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
@@ -1149,7 +1150,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       ? `Focus next: prioritize ${strongestFamilyCallout.key} setups and avoid forcing low-quality variants.`
       : 'Focus next: keep logging quality data so coaching signals can stabilize.';
   const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
-  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodNoTrades);
+  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodAllTrades, periodNoTrades, dashboardTradeFilter);
   const calendarWeekRows = chunkCalendarWeeks(calendarCells);
   const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, periodSessions, dashboardPeriod);
   const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
@@ -2885,7 +2886,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                 </div>
               </div>
             </div>
-            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day.</div>
+            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day{dashboardTradeFilter === 'live' ? ' · PT = paper-only activity' : dashboardTradeFilter === 'paper' ? ' · LT = live-only activity' : ''}.</div>
             <div className="small muted">
               {dashboardPeriod === 'monthly'
                 ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
@@ -2904,12 +2905,15 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                         ? 'calendar-cell-negative'
                         : cell.noTrade
                           ? 'calendar-cell-no-trade'
-                          : 'calendar-cell-blank';
+                          : cell.oppositeModeOnly
+                            ? 'calendar-cell-opposite-mode'
+                            : 'calendar-cell-blank';
                   return (
                     <article key={cell.date} className={`trade calendar-cell ${calendarCellTone}`}>
                       <div className="small muted calendar-day-label">{cell.day}</div>
                       {cell.tradeCount > 0 ? <div className="small calendar-main-metric">{calendarMetric === 'pnl' ? `$${cell.pnl.toFixed(0)}` : `${cell.rTotal.toFixed(1)}R`}</div> : null}
                       {cell.tradeCount > 0 ? <div className="small muted">T{cell.tradeCount}</div> : null}
+                      {cell.oppositeModeOnly ? <div className="small muted">{cell.oppositeModeOnly}</div> : null}
                       {cell.noTrade ? <div className="small muted">NT</div> : null}
                     </article>
                   );
@@ -6217,7 +6221,7 @@ function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
   return 'Journal-session vs non-journal weeks are currently similar in outcome.';
 }
 
-function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTradeDayRow[]) {
+function buildCalendarCells(monthStart: Date, trades: TradeRow[], allTrades: TradeRow[], noTrades: NoTradeDayRow[], tradeFilter: TradeTypeFilter) {
   const start = new Date(monthStart);
   const offset = start.getUTCDay();
   start.setUTCDate(start.getUTCDate() - offset);
@@ -6230,15 +6234,24 @@ function buildCalendarCells(monthStart: Date, trades: TradeRow[], noTrades: NoTr
     dt.setUTCDate(start.getUTCDate() + idx);
     const date = dt.toISOString().slice(0, 10);
     const dayTrades = trades.filter((t) => t.trade_date === date);
+    const dayAllTrades = allTrades.filter((t) => t.trade_date === date);
     const pnl = dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
     const rTotal = dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
     const noTrade = noTrades.some((n) => n.day_date === date);
+    const hasPaperOnly = dayTrades.length === 0 && dayAllTrades.some((t) => isPaperTrade(t));
+    const hasLiveOnly = dayTrades.length === 0 && dayAllTrades.some((t) => !isPaperTrade(t));
+    const oppositeModeOnly = tradeFilter === 'live'
+      ? (hasPaperOnly ? 'PT' : '')
+      : tradeFilter === 'paper'
+        ? (hasLiveOnly ? 'LT' : '')
+        : '';
     return {
       date,
       day: dt.getUTCDate(),
       pnl,
       rTotal,
       tradeCount: dayTrades.length,
+      oppositeModeOnly,
       noTrade,
       isOutside: dt.getUTCMonth() !== monthStart.getUTCMonth()
     };

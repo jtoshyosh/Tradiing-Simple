@@ -229,6 +229,10 @@ button.inline { width:auto; padding:7px 10px; font-size:12px; min-height: 32px; 
   background: rgba(148, 163, 184, 0.2);
   border-color: rgba(112, 127, 148, 0.75);
 }
+.calendar-cell-opposite-mode {
+  background: rgba(110, 128, 152, 0.14);
+  border-color: rgba(110, 128, 152, 0.48);
+}
 .calendar-cell-blank {
   background: #0f1622;
   border-color: #223045;
