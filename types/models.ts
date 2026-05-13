@@ -94,6 +94,30 @@ export type AttachmentRow = {
   byte_size: number;
 };
 
+
+export type DayAttachmentRow = {
+  id: string;
+  user_id: string;
+  attachment_date: string;
+  file_path: string;
+  file_name: string;
+  mime_type: string;
+  byte_size: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type EntryDayAttachmentLinkRow = {
+  id: string;
+  user_id: string;
+  day_attachment_id: string;
+  trade_id: string | null;
+  no_trade_day_id: string | null;
+  session_id: string | null;
+  decision_check_id: string | null;
+  created_at?: string;
+};
+
 export type PlaybookSectionRow = {
   user_id: string;
   section_key: string;
