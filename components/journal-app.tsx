@@ -1,0 +1,7356 @@
+'use client';
+
+import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
+import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
+import type { AttachmentRow, DayAttachmentRow, DecisionCheckRow, EntryDayAttachmentLinkRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
+
+const APP_VERSION = 'v1.0';
+const tabs = ['dashboard', 'history', 'log', 'review', 'playbook', 'decide'] as const;
+type Tab = (typeof tabs)[number];
+const bottomTabs: readonly Tab[] = ['dashboard', 'history', 'decide', 'log', 'review'] as const;
+type LogMode = 'trade' | 'no_trade' | 'session';
+type LogType = 'trade_log' | 'session';
+type DashboardPeriod = 'weekly' | 'monthly' | 'quarterly' | 'annual' | 'ytd' | 'lifetime';
+type TradeTypeFilter = 'all' | 'live' | 'paper';
+type HistoryEntryTypeFilter = 'all' | 'trade_all' | 'session_all' | 'live_trade' | 'paper_trade' | 'no_trade_day' | 'pre_session_plan' | 'chart_session' | 'post_session_review';
+type HistoryDateFilter = 'all_time' | 'this_month' | 'last_30_days' | 'custom';
+type HelpKey = 'classification' | 'family' | 'model' | 'entry_emotion' | 'in_trade_emotion' | 'no_trade_mindset' | 'session_bias';
+type HelpItem = readonly [string, string];
+
+const classifications: TradeClassification[] = [
+  'Valid setup',
+  'Valid setup, poor execution',
+  'FOMO trade',
+  'Forced trade',
+  'Experimental trade',
+  'No valid setup'
+];
+
+const familyModels: Record<string, string[]> = {
+  Bounce: ['5m FVG pullback', '2m inside 5m execution', 'VWAP continuation', 'HTF continuation pullback'],
+  Reject: ['Liquidity sweep rejection', 'VWAP rejection', 'Failed breakout reject', 'External high/low sweep reversal'],
+  Break: ['ORB break and retest', 'Session level break and retest', 'Displacement break continuation', 'Acceptance above/below key level'],
+  'N/A / No valid setup': ['N/A / None']
+};
+
+const noTradeReasons = ['No A+ setup', 'No clear displacement', 'News risk', 'Choppy session', 'Missed opportunity / hesitation'];
+const SESSION_DEFAULT_TIMES = {
+  chart: { start: '06:30', end: '09:00' },
+  journal: { start: '20:00', end: '21:00' }
+} as const;
+const entryEmotionOptions = [
+  { value: 'Calm', label: 'Calm (steady, neutral, disciplined)' },
+  { value: 'Confident', label: 'Confident (strong conviction in the setup)' },
+  { value: 'FOMO / Impatient', label: "FOMO / Impatient (rushed, didn't want to miss it)" },
+  { value: 'Revengeful / Tilted', label: 'Revengeful / Tilted (emotionally compensating)' },
+  { value: 'Greedy', label: 'Greedy (wanted more than plan justified)' }
+] as const;
+const inTradeEmotionOptions = [
+  { value: 'Calm', label: 'Calm (stuck to plan during management)' },
+  { value: 'Confident', label: 'Confident (trusted the trade plan)' },
+  { value: 'Surprised', label: 'Surprised (market reacted differently than expected)' },
+  { value: 'Greedy', label: 'Greedy (pushed for more than planned)' },
+  { value: 'Panicked', label: 'Panicked (interfered impulsively with TP/SL)' }
+] as const;
+const noTradeMindsetOptions = [
+  { value: 'Present but disappointed', label: 'Present but disappointed (I was engaged and waiting, but no valid setup came)' },
+  { value: 'Not fully present', label: 'Not fully present (I wasn\'t really locked in or actively tracking the session)' },
+  { value: 'Accepting / indifferent', label: 'Accepting / indifferent (if the setup came I\'d take it, if not I was okay with that)' }
+] as const;
+const preSessionMinutesOptions = Array.from({ length: 24 }, (_, idx) => (idx + 1) * 5);
+const higherTimeframeContextOptions = ['Bullish alignment', 'Bearish alignment', 'Mixed / conflicting', 'Neutral / range', 'Unsure'] as const;
+const sessionBiasOptions = ['Bullish', 'Bearish', 'Neutral / range', 'Unclear'] as const;
+const biasConfidenceOptions = ['Low', 'Medium', 'High'] as const;
+const expectedMarketConditionOptions = ['Trend day', 'Range / chop', 'Expansion after balance', 'Reversal day', 'News-driven / volatile', 'Unsure'] as const;
+const primarySetupFocusOptions = ['VWAP continuation', 'Liquidity sweep rejection', '5m FVG pullback', 'ORB break and retest', 'Session level break/retest', 'No specific setup / wait and see'] as const;
+const sitOutConditionOptions = ['No A+ setup', 'No displacement', 'News risk', 'Choppy session', 'Unclear bias', 'Outside session timing', 'Poor RR', 'Multiple of the above'] as const;
+const sessionObjectiveOptions = ['Trade only A+ setups', 'Follow my plan regardless of outcome', 'Avoid overtrading', 'Be patient for one clean setup', 'Review and observe, not force trades'] as const;
+const startingEmotionalStateOptions = ['Calm', 'Confident', 'Distracted', 'Impatient', 'Frustrated', 'Tired', 'Anxious'] as const;
+const postSessionEmotionOptions = ['Calm', 'Satisfied', 'Frustrated', 'Mentally drained'] as const;
+const validationYesPartialNoNaOptions = ['Yes', 'Partially', 'No', 'N/A'] as const;
+const setupFocusOutcomeOptions = ['It appeared and I followed it', 'It appeared but I did not take it', 'A different setup appeared instead', 'No valid setup appeared', 'N/A'] as const;
+const marketContextQualityOptions = ['Strongly aligned', 'Mostly aligned', 'Mixed / unclear', 'Against context'] as const;
+const liquidityStructureQualityOptions = ['Clear sweep + structure shift', 'Structure shift only', 'Liquidity sweep only', 'Minor structure only', 'No clear confirmation'] as const;
+const displacementQualityOptions = ['Strong displacement', 'Moderate displacement', 'Weak displacement', 'Choppy / overlapping'] as const;
+const poiQualityOptions = ['Strong confluence POI', 'Clean POI only', 'Fib / level confluence only', 'Questionable POI', 'No clear POI'] as const;
+const targetRoomQualityOptions = ['2R+', '1.5R–2R', '1R–1.5R', 'Less than 1R', 'Not checked'] as const;
+const setupQualityWeights = { market_context: 0.2, liquidity_structure: 0.25, displacement: 0.25, poi: 0.2, target_room: 0.1 } as const;
+const setupQualityScores = {
+  market_context: { 'Strongly aligned': 100, 'Mostly aligned': 75, 'Mixed / unclear': 45, 'Against context': 15 },
+  liquidity_structure: { 'Clear sweep + structure shift': 100, 'Structure shift only': 80, 'Liquidity sweep only': 65, 'Minor structure only': 40, 'No clear confirmation': 15 },
+  displacement: { 'Strong displacement': 100, 'Moderate displacement': 75, 'Weak displacement': 45, 'Choppy / overlapping': 15 },
+  poi: { 'Strong confluence POI': 100, 'Clean POI only': 80, 'Fib / level confluence only': 65, 'Questionable POI': 40, 'No clear POI': 10 },
+  target_room: { '2R+': 100, '1.5R–2R': 80, '1R–1.5R': 55, 'Less than 1R': 20 }
+} as const;
+type EntryEmotion = (typeof entryEmotionOptions)[number]['value'];
+type InTradeEmotion = (typeof inTradeEmotionOptions)[number]['value'];
+type NoTradeMindset = (typeof noTradeMindsetOptions)[number]['value'];
+const DEFAULT_MISTAKE_CATALOG = [
+  'FOMO entry',
+  'Early entry',
+  'Late entry',
+  'Chased move',
+  'Moved stop',
+  'Exited too early',
+  'Held too long',
+  'Revenge trade',
+  'Overtrading',
+  'Oversized position',
+  'Ignored stop loss',
+  'Misread bias',
+  'Traded into news',
+  'Traded in chop',
+  'Ignored session timing',
+  'Ignored higher timeframe context',
+  'Poor risk-reward',
+  'No displacement / weak setup',
+  'Emotional interference'
+] as const;
+const INACTIVE_MISTAKE_TAGS = new Set([
+  'huh?',
+  'huh',
+  'test',
+  'unfortunate',
+  'broke plan',
+  'forced trade',
+  'no a+ setup',
+  'mistake',
+  'tmp',
+  'todo',
+  'n/a'
+]);
+const SETTINGS_CACHE_PREFIX = 'jy-settings-cache:';
+const emotionalPressureScale: Array<{ value: number; label: string }> = [
+  { value: 1, label: '1 = Level-headed' },
+  { value: 2, label: '2 = Slight tension' },
+  { value: 3, label: '3 = Pressured / hesitant' },
+  { value: 4, label: '4 = Emotional management / urge to interfere' },
+  { value: 5, label: '5 = Revenge / panic / pressure to exit' }
+];
+const forcedInvalidClassifications: TradeClassification[] = ['FOMO trade', 'Forced trade', 'No valid setup'];
+const NA_FAMILY = 'N/A / No valid setup';
+const NA_MODEL = 'N/A / None';
+
+const helpDefinitions: Record<HelpKey, readonly HelpItem[]> = {
+  family: [
+    ['Bounce', 'Price reclaims a key level, then confirms continuation after pullback.'],
+    ['Reject', 'Price sweeps liquidity, fails to hold, then rotates back.'],
+    ['Break', 'Market breaks structure, retests, and continues in trend direction.'],
+    ['N/A / No valid setup', 'Use when there was no valid setup to classify.']
+  ],
+  model: [
+    ['5m FVG pullback', 'Entry on retrace into a 5-minute fair value gap with confirmation.'],
+    ['2m inside 5m execution', 'Use 2-minute entries aligned to 5-minute structure.'],
+    ['Liquidity sweep rejection', 'Fade a sweep through prior highs/lows once rejection confirms.'],
+    ['VWAP continuation', 'Join continuation after VWAP support/resistance confirms.'],
+    ['VWAP rejection', 'Counter move when VWAP rejection is clear.'],
+    ['ORB break and retest', 'Trade opening-range breakout after retest confirms acceptance.'],
+    ['HTF continuation pullback', 'Enter pullback aligned with higher timeframe trend.'],
+    ['N/A / None', 'Use when trade is intentionally marked with no valid setup.']
+  ],
+  entry_emotion: [
+    ['Calm', 'Steady before entry, aligned with checklist and risk plan.'],
+    ['Confident', 'You saw clear confluence and entered with measured conviction.'],
+    ['FOMO / Impatient', 'You felt urgency and entered early to avoid missing the move.'],
+    ['Revengeful / Tilted', 'Entry was emotionally driven by prior outcome, not clean signal.'],
+    ['Greedy', 'You entered with outcome focus and stretched beyond planned edge.']
+  ],
+  in_trade_emotion: [
+    ['Calm', 'Management stayed mechanical: follow planned stop/targets with discipline.'],
+    ['Confident', 'You trusted the plan and avoided unnecessary interference.'],
+    ['Surprised', 'Price behavior differed from expectation and increased decision pressure.'],
+    ['Greedy', 'You pushed for extra beyond plan and delayed planned exits.'],
+    ['Panicked', 'You reacted impulsively and interfered with TP/SL management.']
+  ],
+  no_trade_mindset: [
+    ['Present but disappointed', 'You were engaged and selective, but accepted no valid setup occurred.'],
+    ['Not fully present', 'Focus and session engagement were limited, reducing decision quality.'],
+    ['Accepting / indifferent', 'You stayed process-oriented and neutral about whether a setup appeared.']
+  ],
+  session_bias: [
+    ['Bullish', 'You expect higher-probability long-side opportunities for the session.'],
+    ['Bearish', 'You expect higher-probability short-side opportunities for the session.'],
+    ['Range / Neutral', 'You expect two-sided or choppy behavior and prioritize confirmation.']
+  ],
+  classification: [
+    ['Valid setup', 'Use this when the trade matched your actual rules and setup criteria.'],
+    ['Valid setup, poor execution', 'Use this when setup was valid but execution quality was poor.'],
+    ['FOMO trade', 'Use this when fear of missing out drove the trade.'],
+    ['Forced trade', 'Use this when trade quality was not there but you took it anyway.'],
+    ['Experimental trade', 'Use this for intentional tests outside your normal playbook.'],
+    ['No valid setup', 'Use this when there was no real setup by your rules.']
+  ]
+};
+
+const helpNote =
+  'FOMO / Forced / No valid setup trades do not need to be forced into Bounce / Reject / Break. Use N/A / No valid setup + N/A / None when appropriate.';
+
+const PLAYBOOK_QUICK_REMINDERS_DEFAULT = `- Trade the setup, not the urge
+- Area, not line
+- Structure first, fib second
+- Wait for real displacement
+- If bias is unclear, do less`;
+
+const PLAYBOOK_SECTIONS_DEFAULTS = [
+  { key: 'strategy_overview', title: 'Strategy Overview', content: `I trade MES and focus primarily on intraday continuation or reversal setups using 5-minute structure and Fair Value Gaps, with 2-minute refinement when needed.
+
+My goal is not to trade often. My goal is to trade well.
+
+My core model is:
+
+* Determine bias from higher timeframe structure, liquidity, and VWAP context
+* Wait for meaningful displacement
+* Identify a valid 5m FVG or POI
+* Use fib as a supporting confluence, not as a standalone reason to enter
+* Refine on the 2m only if needed
+* Enter only when risk, structure, and target make sense
+
+I do not want to chase price or take mediocre setups.` },
+  { key: 'market_bias_framework', title: 'Market Bias Framework', content: `Before looking for an entry, define market bias.
+
+Questions to answer:
+
+* What is the higher timeframe trend?
+* Is price above or below VWAP?
+* Where is price relative to key session highs/lows?
+* Has liquidity already been taken on one side?
+* Is price expanding or compressing?
+* Is there strong directional intent or is the market unclear?
+
+Bullish bias factors:
+
+* Price above VWAP
+* Higher timeframe structure is bullish
+* Sell-side liquidity has been taken
+* Bullish displacement is present
+* Pullbacks are being respected
+
+Bearish bias factors:
+
+* Price below VWAP
+* Higher timeframe structure is bearish
+* Buy-side liquidity has been taken
+* Bearish displacement is present
+* Bounces are being sold
+
+If bias is mixed or unclear, reduce aggression or do not trade.` },
+  { key: 'a_plus_setup_definition', title: 'A+ Setup Definition', content: `An A+ setup is a trade that aligns with my bias and includes clear confluence.
+
+My A+ setup usually includes:
+
+* Clear directional bias
+* Meaningful displacement
+* A valid 5m FVG or strong point of interest
+* Overlap with structure or liquidity
+* Fib retracement overlap as supporting confluence
+* Logical stop loss placement
+* Clear take profit target
+* Acceptable risk-to-reward
+* Entry taken within my trading session and not late in the move
+
+A setup is not A+ just because I want to trade.` },
+  { key: 'entry_model', title: 'Entry Model', content: `My entries should come from structure and confluence, not from urgency.
+
+Entry model:
+
+* Identify directional bias
+* Wait for meaningful displacement
+* Mark the 5m FVG or main POI
+* Draw fib on the impulse leg that created the setup
+* Look for overlap between fib retracement and POI
+* Refine on the 2m only if needed
+* Enter only if invalidation and target are clear
+
+I should think in terms of areas, not exact lines.
+
+Do not take a trade only because price touched one fib level.` },
+  { key: 'fib_rules', title: 'Fib Rules', content: `Fib is a supporting tool, not the main reason for entry.
+
+Fib anchor rule:
+
+* Draw from the last meaningful pullback to the end of the impulse that created the setup
+
+For longs:
+
+* Start at the last clear pullback low before expansion
+* End at the impulse high
+
+For shorts:
+
+* Start at the last clear pullback high before expansion
+* End at the impulse low
+
+How I use fib:
+
+* Use the larger move for context if needed
+* Use the most relevant impulse leg for execution
+* Treat fib as a zone tool, not an exact-price tool
+* Focus on overlap between fib and POI
+
+Main retracement area:
+
+* 0.5 to 0.705 is the main working zone
+* 0.786 can be valid if structure still holds
+
+Do not skip valid setups just because price did not tap the exact 0.618.` },
+  { key: 'confluences', title: 'Confluences', content: `My best trades come from multiple factors lining up.
+
+Main confluences:
+
+* Higher timeframe bias
+* VWAP alignment
+* 5m FVG
+* Fib overlap
+* Liquidity sweep
+* BOS or CHOCH
+* Prior session high/low
+* Daily or intraday key levels
+* 2m confirmation if needed
+
+The more quality confluence I have, the better the setup.
+
+But I should not overcomplicate the trade by demanding perfection.` },
+  { key: 'stop_loss_rules', title: 'Stop Loss Rules', content: `My stop loss should be based on structural invalidation.
+
+Preferred stop locations:
+
+* Beyond the FVG extreme
+* Beyond the invalidation swing
+* Beyond the liquidity level that should hold
+
+My stop should not be based only on a fib number.
+
+If the stop is too large relative to the setup quality or target, I should pass on the trade.
+
+A setup with no logical stop is not a valid trade.` },
+  { key: 'take_profit_rules', title: 'Take Profit Rules', content: `My take profit should be logical, not random.
+
+Preferred TP locations:
+
+* Prior high or prior low
+* Opposing liquidity
+* Session highs or lows
+* Key structural level
+* Major intraday reaction area
+
+Before entering, I should know:
+
+* Where price is likely to go
+* Whether that target gives enough reward for the risk
+* Whether I am entering too late in the move
+
+If my target is unclear, the trade is probably not good enough.` },
+  { key: 'no_trade_conditions', title: 'No-Trade Conditions', content: `A no-trade day is a valid outcome.
+
+No-trade conditions may include:
+
+* No clear higher timeframe bias
+* Weak or messy displacement
+* Price stuck in chop
+* Poor confluence
+* Setup appears too late in the move
+* Risk-to-reward is poor
+* Major news makes the session too unstable
+* I missed the optimal entry and would now be chasing
+* I am emotionally off, impatient, or forcing something
+
+Passing is part of the strategy.` },
+  { key: 'pre_session_process', title: 'Pre-Session Process', content: `Before the session begins, I want to be prepared and calm.
+
+Pre-session questions:
+
+* What is the higher timeframe bias?
+* What did overnight / premarket do?
+* Where is VWAP likely to matter?
+* What key highs, lows, and liquidity levels matter today?
+* Is there major economic or political news?
+* What would confirm bullish conditions today?
+* What would confirm bearish conditions today?
+* What would make today a no-trade day?
+* What is my ideal setup today?
+* What will I avoid?
+
+The goal is to enter the session with a plan, not to figure it out emotionally in real time.` },
+  { key: 'post_session_review_reminders', title: 'Post-Session Review Reminders', content: `After the session, I want to evaluate execution honestly.
+
+Questions for review:
+
+* Did I follow my bias framework?
+* Did I wait for real displacement?
+* Did I enter at a quality POI?
+* Did I use fib as a confluence instead of forcing precision?
+* Was my stop based on structure?
+* Was my target logical?
+* Did I miss a valid trade?
+* Did I avoid a bad trade?
+* Was I too early, too late, or just right?
+* Was I disciplined?
+
+The goal of review is improvement, not self-criticism.` },
+  { key: 'common_mistakes_personal_reminders', title: 'Common Mistakes / Personal Reminders', content: `My common mistakes:
+
+* Being too exact with fib
+* Waiting for perfect conditions and missing valid setups
+* Confusing “late emotionally” with “late structurally”
+* Overthinking when the setup is already clear
+* Wanting confirmation from too many signals
+* Letting missed opportunities affect the next decision
+* Trying to force a trade on slow or messy days
+
+Personal reminders:
+
+* Area, not line
+* Structure first, fib second
+* Clear bias before entry
+* No chase entries
+* Missing a trade is better than forcing a trade
+* My job is to execute well, not to catch every move` }
+] as const;
+const PLAYBOOK_QUICK_REMINDERS_KEY = 'quick_reminders';
+const PLAYBOOK_DEFAULT_PRE_SESSION_KEYS = ['market_bias_framework'] as const;
+const PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS = ['entry_model', 'fib_rules'] as const;
+const PLAYBOOK_DEFAULT_REVIEW_KEYS = ['post_session_review_reminders'] as const;
+
+type Props = { userId: string; email?: string; onSignOut: () => Promise<void> };
+type DetailState = { kind: 'trade'; id: string } | { kind: 'no_trade'; id: string } | { kind: 'session'; id: string } | { kind: 'decision'; id: string } | null;
+type SessionSubtypeView = 'pre_session_plan' | 'chart_session' | 'post_session_review';
+type SessionTypeValue = SessionRow['session_type'];
+type PreSessionMeta = {
+  minutes_spent: number;
+  higher_timeframe_context: string;
+  session_bias: string;
+  bias_confidence: string;
+  expected_market_condition: string;
+  primary_setup_focus: string;
+  sit_out_condition?: string;
+  main_objective?: string;
+  starting_emotional_state: string;
+};
+type PostSessionMeta = {
+  post_session_emotion: string;
+  validation: {
+    bias_correctness: string;
+    expected_condition_correctness: string;
+    setup_focus_correctness: string;
+  };
+};
+type ReviewReferenceItem = {
+  id: string;
+  kind: 'trade' | 'no_trade' | 'session';
+  dateKey: string;
+  timeLabel: string;
+  title: string;
+  summary: string;
+  attachmentCount: number;
+};
+type DecideFibAnswer = 'yes' | 'no' | 'na';
+type DecideResult = 'GO' | 'WAIT' | 'NO_GO';
+type TradeDraft = {
+  trade_date: string;
+  ticker: string;
+  classification: TradeClassification;
+  family: string;
+  model: string;
+  pnl: string;
+  r_multiple_whole: string;
+  r_multiple_decimal: string;
+  minutes_in_trade: string;
+  emotional_pressure: string;
+  market_context_quality: string;
+  liquidity_structure_quality: string;
+  displacement_quality: string;
+  poi_quality: string;
+  target_room_quality: string;
+  entry_emotion: EntryEmotion;
+  in_trade_emotion: InTradeEmotion;
+  is_paper_trade: boolean;
+  mistake_tags: string[];
+  notes: string;
+};
+type OcrDebugState = {
+  ocrStatus?: 'idle' | 'image_loaded' | 'running' | 'succeeded' | 'no_text' | 'failed' | 'no_images';
+  ocrCharCount?: number;
+  ocrError?: string;
+  ocrSteps?: string[];
+  parsedHeaderLine?: string;
+  tickerRejectReason?: string;
+  headerOcrText?: string;
+  tickerSource?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
+  microResolutionRule?: string;
+  minutesRejectReason?: string;
+  timeframeRejected?: boolean;
+};
+type TradeExtractSuggestions = Partial<Pick<TradeDraft, 'trade_date' | 'ticker' | 'pnl' | 'minutes_in_trade'>> & { r_multiple?: string; hints?: string[]; detectedText?: string } & OcrDebugState;
+type NoTradeExtractSuggestions = Partial<Pick<NoTradeDayRow, 'day_date' | 'reason'>> & { hints?: string[]; detectedText?: string } & OcrDebugState;
+type ImportMode = 'merge' | 'replace_activity';
+type ImportPayload = {
+  trades?: unknown[];
+  no_trade_days?: unknown[];
+  sessions?: unknown[];
+  weekly_reviews?: unknown[];
+  attachments?: unknown[];
+  settings?: unknown;
+};
+
+export default function JournalApp({ userId, email, onSignOut }: Props) {
+  const supabase = useMemo(() => createSupabaseBrowserClient(), []);
+  const [tab, setTab] = useState<Tab>('dashboard');
+  const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [noTrades, setNoTrades] = useState<NoTradeDayRow[]>([]);
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [reviews, setReviews] = useState<WeeklyReviewRow[]>([]);
+  const [settings, setSettings] = useState<SettingsRow | null>(null);
+  const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [dayAttachments, setDayAttachments] = useState<DayAttachmentRow[]>([]);
+  const [entryDayAttachmentLinks, setEntryDayAttachmentLinks] = useState<EntryDayAttachmentLinkRow[]>([]);
+  const [error, setError] = useState('');
+  const [weekInput, setWeekInput] = useState(currentWeekInput());
+  const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
+  const [reviewSaveMessage, setReviewSaveMessage] = useState('');
+  const [detail, setDetail] = useState<DetailState>(null);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [addTradeFamily, setAddTradeFamily] = useState<string>('Bounce');
+  const [addTradeModel, setAddTradeModel] = useState<string>(familyModels.Bounce[0]);
+  const [addTradeClassification, setAddTradeClassification] = useState<TradeClassification>('Valid setup');
+  const [openHelp, setOpenHelp] = useState<HelpKey | null>(null);
+  const [editingTradeId, setEditingTradeId] = useState<string | null>(null);
+  const [editingNoTradeId, setEditingNoTradeId] = useState<string | null>(null);
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+  const [tradeExtract, setTradeExtract] = useState<TradeExtractSuggestions | null>(null);
+  const [noTradeExtract, setNoTradeExtract] = useState<NoTradeExtractSuggestions | null>(null);
+  const [noTradeDraft, setNoTradeDraft] = useState<{ day_date: string; reason: string; no_trade_mindset: NoTradeMindset; notes: string }>({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
+  const [dashboardPeriod, setDashboardPeriod] = useState<DashboardPeriod>('monthly');
+  const [dashboardAnchor, setDashboardAnchor] = useState<Date>(() => new Date());
+  const [dashboardTradeFilter, setDashboardTradeFilter] = useState<TradeTypeFilter>('live');
+  const [historyEntryTypeFilter, setHistoryEntryTypeFilter] = useState<HistoryEntryTypeFilter>('all');
+  const [historyDateFilter, setHistoryDateFilter] = useState<HistoryDateFilter>('all_time');
+  const [historyDateStart, setHistoryDateStart] = useState(() => toDateInput(addDaysKey(new Date().toISOString().slice(0, 10), -29)));
+  const [historyDateEnd, setHistoryDateEnd] = useState(() => toDateInput(new Date().toISOString().slice(0, 10)));
+  const [reviewTradeFilter, setReviewTradeFilter] = useState<TradeTypeFilter>('live');
+  const [tradeDraft, setTradeDraft] = useState<TradeDraft>(() => ({
+    trade_date: new Date().toISOString().slice(0, 10),
+    ticker: 'MES',
+    classification: 'Valid setup',
+    family: 'Bounce',
+    model: familyModels.Bounce[0],
+    pnl: '',
+    r_multiple_whole: '2',
+    r_multiple_decimal: '00',
+    minutes_in_trade: '',
+    emotional_pressure: '1',
+    market_context_quality: '',
+    liquidity_structure_quality: '',
+    displacement_quality: '',
+    poi_quality: '',
+    target_room_quality: '',
+    entry_emotion: entryEmotionOptions[0].value,
+    in_trade_emotion: inTradeEmotionOptions[0].value,
+    is_paper_trade: false,
+    mistake_tags: [],
+    notes: ''
+  }));
+  const [newInstrument, setNewInstrument] = useState('');
+  const [newMistakeTag, setNewMistakeTag] = useState('');
+  const [newCatalogMistakeTag, setNewCatalogMistakeTag] = useState('');
+  const [mistakePickerOpen, setMistakePickerOpen] = useState(false);
+  const [setupQualityOpen, setSetupQualityOpen] = useState(false);
+  const [logMode, setLogMode] = useState<LogMode>('trade');
+  const [tradeLogSubtype, setTradeLogSubtype] = useState<'live_trade' | 'paper_trade' | 'no_trade'>('live_trade');
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [showAccountSettings, setShowAccountSettings] = useState(false);
+  const [accountFirstName, setAccountFirstName] = useState('');
+  const [accountLastName, setAccountLastName] = useState('');
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [sessionDraft, setSessionDraft] = useState<{ session_type: SessionTypeValue; session_date: string; start_time: string; end_time: string; notes: string }>({
+    session_type: 'chart_session',
+    session_date: new Date().toISOString().slice(0, 10),
+    start_time: SESSION_DEFAULT_TIMES.chart.start,
+    end_time: SESSION_DEFAULT_TIMES.chart.end,
+    notes: ''
+  });
+  const [sessionSubtypeView, setSessionSubtypeView] = useState<SessionSubtypeView>('chart_session');
+  const [preSessionDraft, setPreSessionDraft] = useState<PreSessionMeta>({
+    minutes_spent: preSessionMinutesOptions[5],
+    higher_timeframe_context: higherTimeframeContextOptions[4],
+    session_bias: sessionBiasOptions[2],
+    bias_confidence: biasConfidenceOptions[1],
+    expected_market_condition: expectedMarketConditionOptions[2],
+    primary_setup_focus: primarySetupFocusOptions[0],
+    sit_out_condition: sitOutConditionOptions[0],
+    main_objective: sessionObjectiveOptions[0],
+    starting_emotional_state: startingEmotionalStateOptions[0]
+  });
+  const [postSessionDraft, setPostSessionDraft] = useState<PostSessionMeta>({
+    post_session_emotion: postSessionEmotionOptions[0],
+    validation: {
+      bias_correctness: validationYesPartialNoNaOptions[1],
+      expected_condition_correctness: validationYesPartialNoNaOptions[1],
+      setup_focus_correctness: setupFocusOutcomeOptions[4]
+    }
+  });
+  const [pending, startTransition] = useTransition();
+  const detailAnchors = useRef<Record<string, HTMLElement | null>>({});
+  const [calendarView, setCalendarView] = useState<'month' | 'weekly'>('month');
+  const [calendarMetric, setCalendarMetric] = useState<'pnl' | 'r'>('pnl');
+  const [chartView, setChartView] = useState<'daily' | 'cumulative'>('daily');
+  const [overlayR, setOverlayR] = useState(false);
+  const [overlayTradeCount, setOverlayTradeCount] = useState(true);
+  const [overlayChartTime, setOverlayChartTime] = useState(false);
+  const [overlayJournalTime, setOverlayJournalTime] = useState(false);
+  const [overlaySessionTime, setOverlaySessionTime] = useState(false);
+  const [chartRightAxisMode, setChartRightAxisMode] = useState<'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time'>('trade_count');
+  const [reviewSignedUrls, setReviewSignedUrls] = useState<Record<string, string>>({});
+  const [reviewEntriesOpen, setReviewEntriesOpen] = useState(true);
+  const [reviewReferenceDetail, setReviewReferenceDetail] = useState<DetailState>(null);
+  const [playbookRows, setPlaybookRows] = useState<PlaybookSectionRow[]>([]);
+  const [decisionChecks, setDecisionChecks] = useState<DecisionCheckRow[]>([]);
+  const [playbookSearch, setPlaybookSearch] = useState('');
+  const [playbookOpen, setPlaybookOpen] = useState<Record<string, boolean>>(() => Object.fromEntries(
+    PLAYBOOK_SECTIONS_DEFAULTS.map((section, idx) => [section.key, idx === 0])
+  ));
+  const [playbookEditing, setPlaybookEditing] = useState<Record<string, boolean>>({});
+  const [playbookDrafts, setPlaybookDrafts] = useState<Record<string, string>>({});
+  const [playbookQuickReminderDraft, setPlaybookQuickReminderDraft] = useState('');
+  const [playbookQuickReminderEditing, setPlaybookQuickReminderEditing] = useState(false);
+  const [playbookJumpOpen, setPlaybookJumpOpen] = useState(false);
+  const [playbookReferenceOpen, setPlaybookReferenceOpen] = useState<Record<string, boolean>>({});
+  const [decisionDraft, setDecisionDraft] = useState({
+    trade_intent_mode: 'live' as 'live' | 'paper',
+    decision_timestamp: toLocalDateTimeInputValue(new Date()),
+    displacement_confirmed: false,
+    valid_poi_created: false,
+    pulling_back_not_chasing: false,
+    fib_support_quality: 'yes' as DecideFibAnswer,
+    liquidity_target_clear: false,
+    stop_location_clear: false,
+    inside_session_window: false,
+    hesitation_note: ''
+  });
+  const [editingDecisionId, setEditingDecisionId] = useState<string | null>(null);
+  const [pendingDecisionToConvertId, setPendingDecisionToConvertId] = useState<string | null>(null);
+  const [decisionSaving, setDecisionSaving] = useState(false);
+  const [decisionStatusMessage, setDecisionStatusMessage] = useState('');
+  const [lastDecisionSubmitSignature, setLastDecisionSubmitSignature] = useState('');
+  const [lastDecisionSubmitAt, setLastDecisionSubmitAt] = useState(0);
+  const [resetActivityOpen, setResetActivityOpen] = useState(false);
+  const [resetConfirmText, setResetConfirmText] = useState('');
+  const [resetStorageNotice, setResetStorageNotice] = useState('');
+  const [exportScope, setExportScope] = useState<'all_time' | 'selected_period'>('all_time');
+  const [importMode, setImportMode] = useState<ImportMode>('merge');
+  const [importPreview, setImportPreview] = useState<{
+    payload: ImportPayload;
+    counts: { trades: number; no_trade_days: number; sessions: number; weekly_reviews: number; attachments: number };
+    warnings: string[];
+  } | null>(null);
+  const [importReplaceConfirmText, setImportReplaceConfirmText] = useState('');
+  const [importStatus, setImportStatus] = useState('');
+
+  useEffect(() => {
+    const [first, last] = splitDisplayName(settings?.display_name || '', email);
+    setAccountFirstName(first);
+    setAccountLastName(last);
+  }, [settings?.display_name, email]);
+
+  useEffect(() => {
+    if (logMode === 'trade') {
+      setTradeLogSubtype(tradeDraft.is_paper_trade ? 'paper_trade' : 'live_trade');
+      return;
+    }
+    if (logMode === 'no_trade') setTradeLogSubtype('no_trade');
+  }, [logMode, tradeDraft.is_paper_trade]);
+
+  useEffect(() => {
+    void loadAll();
+    // migration note for teams moving from local-only index.html:
+    // export old localStorage JSON blobs and transform into inserts for trades/no_trade_days/weekly_reviews/settings/attachments.
+  }, []);
+
+  async function loadAll() {
+    const [t, n, sessionResult, r, s, a, p, d, da, dl] = await Promise.all([
+      supabase.from('trades').select('*').order('trade_date', { ascending: false }),
+      supabase.from('no_trade_days').select('*').order('day_date', { ascending: false }),
+      supabase.from('sessions').select('*').order('session_date', { ascending: false }).order('created_at', { ascending: false }),
+      supabase.from('weekly_reviews').select('*').order('week_key', { ascending: false }),
+      supabase.from('user_settings').select('*').maybeSingle(),
+      supabase.from('attachments').select('*').order('created_at', { ascending: false }),
+      supabase.from('playbook_sections').select('*').order('updated_at', { ascending: false }),
+      supabase.from('decision_checks').select('*').order('decision_timestamp', { ascending: false }),
+      supabase.from('day_attachments').select('*').order('created_at', { ascending: false }),
+      supabase.from('entry_day_attachment_links').select('*').order('created_at', { ascending: false })
+    ]);
+    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error, d.error, da.error, dl.error].filter(Boolean);
+    const blocking = errors.find((entry) => !isRecoverableSchemaError(entry?.message || ''));
+    if (blocking) {
+      setError(normalizeSupabaseError(blocking.message));
+      return;
+    }
+    if (errors.length) {
+      console.warn('Recoverable Supabase load issue', errors);
+      setError(normalizeSupabaseError(errors[0]?.message || 'Some data is temporarily unavailable.'));
+    }
+    const normalizedTrades = ((((t.data || []) as TradeRow[]) || []).map((trade) => ({
+      ...trade,
+      entry_emotion: resolveEntryEmotion(trade as TradeRow),
+      in_trade_emotion: resolveInTradeEmotion(trade as TradeRow),
+      is_paper_trade: Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade),
+      mistake_tags: normalizeMistakeTags((trade as TradeRow & { mistake_tags?: unknown }).mistake_tags)
+    })));
+    setTrades(normalizedTrades);
+    const normalizedNoTrades = (((n.data || []) as NoTradeDayRow[]) || []).map((entry) => ({
+      ...entry,
+      no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow)
+    }));
+    setNoTrades(normalizedNoTrades);
+    setSessions(((sessionResult.data || []) as SessionRow[]) || []);
+    setReviews(((r.data || []) as WeeklyReviewRow[]) || []);
+    const baseSettings = ((s.data as SettingsRow | null) ?? {
+      user_id: userId,
+      daily_reminder: true,
+      weekly_reminder: true,
+      default_risk: 200,
+      chart_session_start_default: SESSION_DEFAULT_TIMES.chart.start,
+      chart_session_end_default: SESSION_DEFAULT_TIMES.chart.end,
+      journal_session_start_default: SESSION_DEFAULT_TIMES.journal.start,
+      journal_session_end_default: SESSION_DEFAULT_TIMES.journal.end,
+      display_name: 'JY',
+      instruments: ['MES'],
+      mistake_catalog: [...DEFAULT_MISTAKE_CATALOG],
+      mistake_catalog_hidden: []
+    });
+    const rawInstruments = (baseSettings as { instruments?: unknown }).instruments;
+    const normalizedInstruments = Array.isArray(rawInstruments)
+      ? rawInstruments.map((item) => String(item ?? ''))
+      : String(rawInstruments || '').split(',');
+    const resolvedCatalog = resolveMistakeCatalogState(
+      baseSettings.mistake_catalog,
+      (baseSettings as { mistake_catalog_hidden?: unknown }).mistake_catalog_hidden,
+      normalizedTrades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+    );
+    const cachedSettings = readSettingsCache(userId);
+    const cachedCatalog = cachedSettings
+      ? resolveMistakeCatalogState(
+        cachedSettings.mistake_catalog,
+        cachedSettings.mistake_catalog_hidden,
+        normalizedTrades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+      )
+      : null;
+    setSettings({
+      ...baseSettings,
+      display_name: normalizeTag(cachedSettings?.display_name || baseSettings.display_name),
+      default_risk: Number(cachedSettings?.default_risk ?? baseSettings.default_risk ?? 0),
+      chart_session_start_default: normalizeTimeInput(cachedSettings?.chart_session_start_default || baseSettings.chart_session_start_default || SESSION_DEFAULT_TIMES.chart.start),
+      chart_session_end_default: normalizeTimeInput(cachedSettings?.chart_session_end_default || baseSettings.chart_session_end_default || SESSION_DEFAULT_TIMES.chart.end),
+      journal_session_start_default: normalizeTimeInput(cachedSettings?.journal_session_start_default || baseSettings.journal_session_start_default || SESSION_DEFAULT_TIMES.journal.start),
+      journal_session_end_default: normalizeTimeInput(cachedSettings?.journal_session_end_default || baseSettings.journal_session_end_default || SESSION_DEFAULT_TIMES.journal.end),
+      daily_reminder: cachedSettings?.daily_reminder ?? baseSettings.daily_reminder,
+      weekly_reminder: cachedSettings?.weekly_reminder ?? baseSettings.weekly_reminder,
+      instruments: normalizeUniqueInstruments([...(cachedSettings?.instruments || []), ...normalizedInstruments]),
+      mistake_catalog: cachedCatalog?.active || resolvedCatalog.active,
+      mistake_catalog_hidden: cachedCatalog?.hidden || resolvedCatalog.hidden
+    });
+    setAttachments(((a.data || []) as AttachmentRow[]) || []);
+    setDayAttachments(((da.data || []) as DayAttachmentRow[]) || []);
+    setEntryDayAttachmentLinks(((dl.data || []) as EntryDayAttachmentLinkRow[]) || []);
+    setPlaybookRows(((p.data || []) as PlaybookSectionRow[]) || []);
+    setDecisionChecks(((d.data || []) as DecisionCheckRow[]) || []);
+
+    const backfilled = await backfillLegacyAttachmentsToDayModel(
+      ((a.data || []) as AttachmentRow[]) || [],
+      normalizedTrades,
+      normalizedNoTrades,
+      ((sessionResult.data || []) as SessionRow[]) || [],
+      ((da.data || []) as DayAttachmentRow[]) || [],
+      ((dl.data || []) as EntryDayAttachmentLinkRow[]) || []
+    );
+    if (backfilled) {
+      const [freshDay, freshLinks] = await Promise.all([
+        supabase.from('day_attachments').select('*').order('created_at', { ascending: false }),
+        supabase.from('entry_day_attachment_links').select('*').order('created_at', { ascending: false })
+      ]);
+      if (!freshDay.error) setDayAttachments(((freshDay.data || []) as DayAttachmentRow[]) || []);
+      if (!freshLinks.error) setEntryDayAttachmentLinks(((freshLinks.data || []) as EntryDayAttachmentLinkRow[]) || []);
+    }
+  }
+
+  async function backfillLegacyAttachmentsToDayModel(
+    legacyAttachments: AttachmentRow[],
+    tradeRows: TradeRow[],
+    noTradeRows: NoTradeDayRow[],
+    sessionRows: SessionRow[],
+    existingDayRows: DayAttachmentRow[],
+    existingLinks: EntryDayAttachmentLinkRow[]
+  ) {
+    const tradeDateById = new Map(tradeRows.map((row) => [row.id, row.trade_date]));
+    const noTradeDateById = new Map(noTradeRows.map((row) => [row.id, row.day_date]));
+    const sessionDateById = new Map(sessionRows.map((row) => [row.id, row.session_date]));
+    const dayByKey = new Map(existingDayRows.map((row) => [`${row.user_id}|${row.attachment_date}|${row.file_path}`, row]));
+    const linkKeySet = new Set(existingLinks.map((row) => `${row.day_attachment_id}|${row.trade_id || ''}|${row.no_trade_day_id || ''}|${row.session_id || ''}`));
+    let changed = false;
+
+    for (const file of legacyAttachments) {
+      const entryDate = file.trade_id
+        ? tradeDateById.get(file.trade_id)
+        : file.no_trade_day_id
+          ? noTradeDateById.get(file.no_trade_day_id)
+          : file.session_id
+            ? sessionDateById.get(file.session_id)
+            : null;
+      if (!entryDate) continue;
+      const dayKey = `${file.user_id}|${entryDate}|${file.file_path}`;
+      let dayRow = dayByKey.get(dayKey);
+      if (!dayRow) {
+        const { data: insertedDay, error: dayError } = await supabase
+          .from('day_attachments')
+          .insert({
+            user_id: file.user_id,
+            attachment_date: entryDate,
+            file_path: file.file_path,
+            file_name: file.file_name,
+            mime_type: file.mime_type,
+            byte_size: file.byte_size
+          })
+          .select('*')
+          .single();
+        if (dayError) continue;
+        dayRow = insertedDay as DayAttachmentRow;
+        dayByKey.set(dayKey, dayRow);
+        changed = true;
+      }
+      const linkKey = `${dayRow.id}|${file.trade_id || ''}|${file.no_trade_day_id || ''}|${file.session_id || ''}`;
+      if (linkKeySet.has(linkKey)) continue;
+      const { error: linkError } = await supabase.from('entry_day_attachment_links').insert({
+        user_id: file.user_id,
+        day_attachment_id: dayRow.id,
+        trade_id: file.trade_id,
+        no_trade_day_id: file.no_trade_day_id,
+        session_id: file.session_id,
+        decision_check_id: null
+      });
+      if (!linkError) {
+        linkKeySet.add(linkKey);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  const playbookQuickReminderRow = useMemo(
+    () => playbookRows.find((row) => row.section_key === PLAYBOOK_QUICK_REMINDERS_KEY) || null,
+    [playbookRows]
+  );
+  const mergedPlaybookSections = useMemo(() => {
+    const byKey = new Map(playbookRows.map((row) => [row.section_key, row]));
+    return PLAYBOOK_SECTIONS_DEFAULTS.map((section) => {
+      const saved = byKey.get(section.key);
+      const defaultPinnedPreSession = PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]);
+      const defaultPinnedTradeEntry = PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS)[number]);
+      const defaultPinnedReview = PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(section.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number]);
+      return {
+        key: section.key,
+        title: saved?.title || section.title,
+        content: saved?.content ?? section.content,
+        pin_pre_session: saved?.pin_pre_session ?? defaultPinnedPreSession,
+        pin_trade_entry: saved?.pin_trade_entry ?? defaultPinnedTradeEntry,
+        pin_review: saved?.pin_review ?? defaultPinnedReview,
+        updated_at: saved?.updated_at
+      };
+    });
+  }, [playbookRows]);
+  const filteredPlaybookSections = useMemo(() => {
+    const needle = playbookSearch.trim().toLowerCase();
+    if (!needle) return mergedPlaybookSections;
+    return mergedPlaybookSections.filter((section) =>
+      `${section.title}\n${section.content}`.toLowerCase().includes(needle)
+    );
+  }, [mergedPlaybookSections, playbookSearch]);
+
+  function linkedDayAttachmentsForEntry(kind: 'trade' | 'no_trade', id: string) {
+    const links = entryDayAttachmentLinks.filter((row) => (kind === 'trade' ? row.trade_id === id : row.no_trade_day_id === id));
+    const linkIds = new Set(links.map((row) => row.day_attachment_id));
+    return dayAttachments.filter((row) => linkIds.has(row.id));
+  }
+
+  function entryAttachments(kind: 'trade' | 'no_trade', id: string) {
+    const legacy = kind === 'trade'
+      ? attachments.filter((a) => a.trade_id === id)
+      : attachments.filter((a) => a.no_trade_day_id === id);
+    const linkedDay = linkedDayAttachmentsForEntry(kind, id).map((row) => ({
+      id: `day-${row.id}`,
+      user_id: row.user_id,
+      trade_id: kind === 'trade' ? id : null,
+      no_trade_day_id: kind === 'no_trade' ? id : null,
+      session_id: null,
+      file_path: row.file_path,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      byte_size: row.byte_size
+    } as AttachmentRow));
+    return [...legacy, ...linkedDay];
+  }
+
+  async function linkDayAttachmentToEntry(dayAttachmentId: string, kind: 'trade' | 'no_trade', entryId: string) {
+    const payload = {
+      user_id: userId,
+      day_attachment_id: dayAttachmentId,
+      trade_id: kind === 'trade' ? entryId : null,
+      no_trade_day_id: kind === 'no_trade' ? entryId : null,
+      session_id: null,
+      decision_check_id: null
+    };
+    const { error: linkError } = await supabase.from('entry_day_attachment_links').insert(payload);
+    if (linkError && !String(linkError.message || '').toLowerCase().includes('duplicate')) {
+      setError(normalizeSupabaseError(linkError.message));
+      return;
+    }
+    await loadAll();
+  }
+
+  useEffect(() => {
+    setPlaybookQuickReminderDraft(playbookQuickReminderRow?.content ?? PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+  }, [playbookQuickReminderRow?.content]);
+
+  useEffect(() => {
+    setPlaybookDrafts((prev) => {
+      const next = { ...prev };
+      for (const section of mergedPlaybookSections) {
+        if (!playbookEditing[section.key]) next[section.key] = section.content;
+      }
+      return next;
+    });
+  }, [mergedPlaybookSections, playbookEditing]);
+
+  function formatPlaybookUpdatedAt(value?: string) {
+    if (!value) return 'Default';
+    const stamp = new Date(value);
+    if (Number.isNaN(stamp.getTime())) return 'Default';
+    return stamp.toLocaleString();
+  }
+
+  async function savePlaybookSection(sectionKey: string, title: string, content: string, options?: { pin_pre_session?: boolean; pin_trade_entry?: boolean; pin_review?: boolean }) {
+    const existing = mergedPlaybookSections.find((section) => section.key === sectionKey);
+    const payload: PlaybookSectionRow = {
+      user_id: userId,
+      section_key: sectionKey,
+      title,
+      content,
+      pin_pre_session: options?.pin_pre_session ?? existing?.pin_pre_session ?? false,
+      pin_trade_entry: options?.pin_trade_entry ?? existing?.pin_trade_entry ?? false,
+      pin_review: options?.pin_review ?? existing?.pin_review ?? false
+    };
+    let { data, error } = await supabase
+      .from('playbook_sections')
+      .upsert(payload, { onConflict: 'user_id,section_key' })
+      .select('*')
+      .single();
+    if (error && isPlaybookTradeEntryPinSchemaMismatch(error.message)) {
+      const fallbackPayload = {
+        user_id: payload.user_id,
+        section_key: payload.section_key,
+        title: payload.title,
+        content: payload.content,
+        pin_pre_session: payload.pin_pre_session,
+        pin_review: payload.pin_review
+      };
+      const fallback = await supabase
+        .from('playbook_sections')
+        .upsert(fallbackPayload, { onConflict: 'user_id,section_key' })
+        .select('*')
+        .single();
+      data = fallback.data;
+      error = fallback.error;
+    }
+    if (error) {
+      setError(normalizeSupabaseError(error.message));
+      return false;
+    }
+    setPlaybookRows((prev) => {
+      const next = prev.filter((row) => row.section_key !== sectionKey);
+      next.push(data as PlaybookSectionRow);
+      return next;
+    });
+    return true;
+  }
+
+  async function resetPlaybookSection(sectionKey: string) {
+    const defaultSection = PLAYBOOK_SECTIONS_DEFAULTS.find((section) => section.key === sectionKey);
+    if (!defaultSection) return;
+    const ok = await savePlaybookSection(defaultSection.key, defaultSection.title, defaultSection.content, {
+      pin_pre_session: PLAYBOOK_DEFAULT_PRE_SESSION_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_PRE_SESSION_KEYS)[number]),
+      pin_trade_entry: PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_TRADE_ENTRY_KEYS)[number]),
+      pin_review: PLAYBOOK_DEFAULT_REVIEW_KEYS.includes(defaultSection.key as (typeof PLAYBOOK_DEFAULT_REVIEW_KEYS)[number])
+    });
+    if (ok) setPlaybookEditing((prev) => ({ ...prev, [sectionKey]: false }));
+  }
+
+  const playbookSectionMap = useMemo<Map<string, (typeof mergedPlaybookSections)[number]>>(
+    () => new Map(mergedPlaybookSections.map((section) => [section.key, section])),
+    [mergedPlaybookSections]
+  );
+  const preSessionPlaybookSections = useMemo(() => {
+    return mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_pre_session))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section));
+  }, [mergedPlaybookSections, playbookSectionMap]);
+  const reviewPlaybookSections = useMemo(() => {
+    return mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_review))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section));
+  }, [mergedPlaybookSections, playbookSectionMap]);
+  const tradePlaybookSections = useMemo(
+    () => mergedPlaybookSections
+      .filter((section) => Boolean(section.pin_trade_entry))
+      .map((section) => playbookSectionMap.get(section.key))
+      .filter((section): section is NonNullable<typeof section> => Boolean(section)),
+    [mergedPlaybookSections, playbookSectionMap]
+  );
+
+  function playbookExcerpt(value: string, maxLines = 6, maxChars = 420) {
+    const source = /<\/?[a-z][\s\S]*>/i.test(value || '') ? htmlToEditorText(String(value || '')) : String(value || '');
+    const lines = source.replace(/\r/g, '').split('\n');
+    const excerptLines: string[] = [];
+    let charCount = 0;
+    let truncated = false;
+    for (const line of lines) {
+      const nextCount = charCount + line.length + 1;
+      if (excerptLines.length >= maxLines || nextCount > maxChars) {
+        truncated = true;
+        break;
+      }
+      excerptLines.push(line);
+      charCount = nextCount;
+    }
+    const excerpt = excerptLines.join('\n').trimEnd();
+    if (!truncated) return excerpt;
+    if (!excerpt) return '…';
+    return `${excerpt}\n…`;
+  }
+
+  const decisionComputed = useMemo(() => {
+    const fibApplicable = decisionDraft.fib_support_quality !== 'na';
+    const checks = [
+      decisionDraft.displacement_confirmed,
+      decisionDraft.valid_poi_created,
+      decisionDraft.pulling_back_not_chasing,
+      fibApplicable ? decisionDraft.fib_support_quality === 'yes' : null,
+      decisionDraft.liquidity_target_clear,
+      decisionDraft.stop_location_clear,
+      decisionDraft.inside_session_window
+    ];
+    const applicableChecks = checks.filter((value) => value !== null) as boolean[];
+    const yesCount = applicableChecks.filter(Boolean).length;
+    const applicableCount = applicableChecks.length;
+    let result: DecideResult = 'NO_GO';
+    if (applicableCount >= 7) {
+      if (yesCount >= 6) result = 'GO';
+      else if (yesCount >= 4) result = 'WAIT';
+    } else {
+      if (yesCount >= 5) result = 'GO';
+      else if (yesCount >= 4) result = 'WAIT';
+    }
+    const ratio = applicableCount ? yesCount / applicableCount : 0;
+    let readinessGrade = 'D / Forced trade';
+    if (applicableCount === 7) {
+      if (yesCount === 7) readinessGrade = 'A+';
+      else if (yesCount === 6) readinessGrade = 'A';
+      else if (yesCount === 5) readinessGrade = 'B';
+      else if (yesCount === 4) readinessGrade = 'C';
+    } else {
+      if (ratio >= 0.92) readinessGrade = 'A+';
+      else if (ratio >= 0.8) readinessGrade = 'A';
+      else if (ratio >= 0.66) readinessGrade = 'B';
+      else if (ratio >= 0.55) readinessGrade = 'C';
+    }
+    const tags: string[] = [];
+    if (!decisionDraft.pulling_back_not_chasing) tags.push('Chased after move');
+    if (!decisionDraft.liquidity_target_clear) tags.push('No clear liquidity target');
+    if (!decisionDraft.inside_session_window) tags.push('Outside session');
+    return { yesCount, applicableCount, result, readinessGrade, tags };
+  }, [decisionDraft]);
+
+  async function saveDecisionCheck(skippedSetup: boolean, convertedTradeId: string | null = null) {
+    if (decisionSaving) return null;
+    const payload = {
+      user_id: userId,
+      trade_intent_mode: decisionDraft.trade_intent_mode,
+      decision_timestamp: parseLocalDateTimeInput(decisionDraft.decision_timestamp || toLocalDateTimeInputValue(new Date())).toISOString(),
+      displacement_confirmed: decisionDraft.displacement_confirmed,
+      valid_poi_created: decisionDraft.valid_poi_created,
+      pulling_back_not_chasing: decisionDraft.pulling_back_not_chasing,
+      fib_support_quality: decisionDraft.fib_support_quality,
+      liquidity_target_clear: decisionDraft.liquidity_target_clear,
+      stop_location_clear: decisionDraft.stop_location_clear,
+      inside_session_window: decisionDraft.inside_session_window,
+      go_no_go_result: decisionComputed.result,
+      readiness_yes_count: decisionComputed.yesCount,
+      readiness_applicable_count: decisionComputed.applicableCount,
+      readiness_grade: decisionComputed.readinessGrade,
+      execution_auto_tags: [
+        ...decisionComputed.tags,
+        ...(skippedSetup && decisionComputed.result === 'GO' ? ['A+ setup skipped'] : [])
+      ],
+      hesitation_note: decisionDraft.hesitation_note || null,
+      converted_trade_id: convertedTradeId,
+      skipped_setup: skippedSetup
+    };
+    const signature = JSON.stringify(payload);
+    if (!editingDecisionId && signature === lastDecisionSubmitSignature && Date.now() - lastDecisionSubmitAt < 5000) {
+      setDecisionStatusMessage('Duplicate decision save prevented.');
+      return null;
+    }
+    setDecisionSaving(true);
+    const query = editingDecisionId
+      ? supabase.from('decision_checks').update(payload).eq('id', editingDecisionId)
+      : supabase.from('decision_checks').insert(payload);
+    const { data, error } = await query.select('*').single();
+    if (error) {
+      setError(normalizeSupabaseError(error.message));
+      setDecisionStatusMessage('Decision save failed.');
+      setDecisionSaving(false);
+      return null;
+    }
+    setDecisionChecks((prev) => {
+      const next = prev.filter((row) => row.id !== (data as DecisionCheckRow).id);
+      next.unshift(data as DecisionCheckRow);
+      return next;
+    });
+    setEditingDecisionId(null);
+    setLastDecisionSubmitSignature(signature);
+    setLastDecisionSubmitAt(Date.now());
+    setDecisionSaving(false);
+    return data as DecisionCheckRow;
+  }
+
+  async function startTradeFromDecision(mode: 'live' | 'paper') {
+    if (decisionComputed.result === 'NO_GO') return;
+    const saved = await saveDecisionCheck(false);
+    if (!saved) return;
+    setDecisionStatusMessage(mode === 'paper' ? 'Paper trade draft created.' : 'Live trade draft created.');
+    setPendingDecisionToConvertId(saved.id);
+    const decisionStamp = new Date(saved.decision_timestamp || new Date().toISOString());
+    const dateKey = toLocalDateKey(decisionStamp);
+    setTab('log');
+    setLogMode('trade');
+    setTradeLogSubtype(mode === 'paper' ? 'paper_trade' : 'live_trade');
+    setTradeDraft((prev) => ({
+      ...prev,
+      trade_date: dateKey,
+      is_paper_trade: mode === 'paper',
+      classification: decisionComputed.result === 'GO' ? 'Valid setup' : prev.classification,
+      notes: `${prev.notes ? `${prev.notes}\n\n` : ''}GO/NO GO Check (${decisionComputed.result})\nReadiness: ${decisionComputed.yesCount}/${decisionComputed.applicableCount} (${decisionComputed.readinessGrade})\nAuto tags: ${decisionComputed.tags.join(', ') || 'None'}\nHesitation: ${decisionDraft.hesitation_note || '—'}`,
+      mistake_tags: normalizeUniqueTags([...(prev.mistake_tags || []), ...decisionComputed.tags])
+    }));
+  }
+
+  function convertSkippedDecisionToTrade(decision: DecisionCheckRow, mode: 'live' | 'paper') {
+    setDecisionStatusMessage(mode === 'paper' ? 'Paper trade draft created from skipped setup.' : 'Live trade draft created from skipped setup.');
+    setPendingDecisionToConvertId(decision.id);
+    setTab('log');
+    setLogMode('trade');
+    setTradeLogSubtype(mode === 'paper' ? 'paper_trade' : 'live_trade');
+    setTradeDraft((prev) => ({
+      ...prev,
+      trade_date: toLocalDateKey(new Date(decision.decision_timestamp || new Date().toISOString())),
+      is_paper_trade: mode === 'paper',
+      classification: decision.go_no_go_result === 'GO' ? 'Valid setup' : prev.classification,
+      notes: `${prev.notes ? `${prev.notes}\n\n` : ''}Converted from skipped setup (${decision.go_no_go_result})\nReadiness: ${decision.readiness_yes_count}/${decision.readiness_applicable_count} (${decision.readiness_grade})\nAuto tags: ${(decision.execution_auto_tags || []).join(', ') || 'None'}\nHesitation: ${decision.hesitation_note || '—'}`,
+      mistake_tags: normalizeUniqueTags([...(prev.mistake_tags || []), ...(decision.execution_auto_tags || [])])
+    }));
+  }
+
+  function convertSkippedDecisionToNoTrade(decision: DecisionCheckRow) {
+    setDecisionStatusMessage('No-trade draft created from skipped setup.');
+    setTradeLogSubtype('no_trade');
+    setLogMode('no_trade');
+    setTab('log');
+    setNoTradeDraft({
+      day_date: toLocalDateKey(new Date(decision.decision_timestamp || new Date().toISOString())),
+      reason: 'Missed opportunity / hesitation',
+      no_trade_mindset: noTradeMindsetOptions[0].value,
+      notes: `Converted from skipped setup (${decision.go_no_go_result})\nReadiness: ${decision.readiness_yes_count}/${decision.readiness_applicable_count} (${decision.readiness_grade})\nAuto tags: ${(decision.execution_auto_tags || []).join(', ') || 'None'}\nHesitation: ${decision.hesitation_note || '—'}`
+    });
+  }
+
+  const periodRange = dashboardPeriod === 'lifetime'
+    ? getLifetimeRange(trades, noTrades, sessions, reviews)
+    : getPeriodRange(dashboardPeriod, dashboardAnchor);
+  const dashboardTrades = filterTradesByType(trades, dashboardTradeFilter);
+  const lifetimeTrades = dashboardTrades;
+  const lifetimeNoTrades = noTrades;
+  const periodAllTrades = trades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
+  const periodTrades = dashboardTrades.filter((t) => inDateRange(t.trade_date, periodRange.start, periodRange.end));
+  const periodNoTrades = noTrades.filter((n) => inDateRange(n.day_date, periodRange.start, periodRange.end));
+  const periodSessions = sessions.filter((s) => inDateRange(s.session_date, periodRange.start, periodRange.end));
+  const periodSessionDays = new Set(periodSessions.map((session) => session.session_date)).size;
+  const periodChartSessions = periodSessions.filter((s) => isChartSessionType(s.session_type));
+  const periodJournalSessions = periodSessions.filter((s) => !isChartSessionType(s.session_type));
+  const periodChartMinutes = periodChartSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+  const periodJournalMinutes = periodJournalSessions.reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+  const lifetimeWins = lifetimeTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const lifetimeNetPnl = lifetimeTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const lifetimeWinRate = lifetimeTrades.length ? (lifetimeWins / lifetimeTrades.length) * 100 : 0;
+  const periodNetPnl = periodTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+  const periodNetR = periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
+  const periodWins = periodTrades.filter((t) => Number(t.pnl || 0) > 0).length;
+  const winningTrades = periodTrades.filter((t) => Number(t.pnl || 0) > 0);
+  const losingTrades = periodTrades.filter((t) => Number(t.pnl || 0) < 0);
+  const avgHoldWinners = winningTrades.length ? winningTrades.reduce((sum, t) => sum + Number(t.minutes_in_trade || 0), 0) / winningTrades.length : 0;
+  const avgHoldLosers = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.minutes_in_trade || 0), 0) / losingTrades.length : 0;
+  const avgWinnerResult = winningTrades.length ? winningTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / winningTrades.length : 0;
+  const avgLoserResult = losingTrades.length ? losingTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0) / losingTrades.length : 0;
+  const periodWinRate = periodTrades.length ? (periodWins / periodTrades.length) * 100 : 0;
+  const periodAvgR = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0) / periodTrades.length : 0;
+  const gradedTrades = periodTrades.filter((trade) => {
+    const score = Number((trade as TradeRow & { setup_score?: number | null }).setup_score ?? NaN);
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return Number.isFinite(score) && ['A+', 'A', 'B', 'C', 'D'].includes(grade);
+  });
+  const avgSetupScore = gradedTrades.length ? gradedTrades.reduce((sum, trade) => sum + Number((trade as TradeRow & { setup_score?: number | null }).setup_score || 0), 0) / gradedTrades.length : null;
+  const aPlusOrA = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'A+' || grade === 'A';
+  });
+  const aaRate = gradedTrades.length ? (aPlusOrA.length / gradedTrades.length) * 100 : null;
+  const strongQualityTrades = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'A+' || grade === 'A';
+  });
+  const weakQualityTrades = gradedTrades.filter((trade) => {
+    const grade = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+    return grade === 'C' || grade === 'D';
+  });
+  const strongQualityAvgR = strongQualityTrades.length ? strongQualityTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / strongQualityTrades.length : null;
+  const weakQualityAvgR = weakQualityTrades.length ? weakQualityTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / weakQualityTrades.length : null;
+  const periodAvgEmotion = periodTrades.length ? periodTrades.reduce((sum, t) => sum + Number(t.emotional_pressure || 0), 0) / periodTrades.length : 0;
+  const pressureBuckets = [1, 2, 3, 4, 5].map((level) => ({
+    level,
+    count: periodTrades.filter((t) => Number(t.emotional_pressure || 0) === level).length
+  }));
+  const highPressureTrades = periodTrades.filter((t) => Number(t.emotional_pressure || 0) >= 4);
+  const lowPressureTrades = periodTrades.filter((t) => Number(t.emotional_pressure || 0) <= 2);
+  const highPressureAvgPnl = highPressureTrades.length ? highPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / highPressureTrades.length : 0;
+  const lowPressureAvgPnl = lowPressureTrades.length ? lowPressureTrades.reduce((s, t) => s + Number(t.pnl || 0), 0) / lowPressureTrades.length : 0;
+  const mistakeTagCounts = countItems(periodTrades.flatMap((t) => normalizeMistakeTags(t.mistake_tags)));
+  const topMistakes = Object.entries(mistakeTagCounts).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  const familyStats = computeGroupStats(periodTrades, (t) => t.family);
+  const modelStats = computeGroupStats(periodTrades, (t) => t.model);
+  const bestFamily = familyStats.length ? familyStats[0] : null;
+  const worstFamily = familyStats.length ? familyStats[familyStats.length - 1] : null;
+  const bestModel = modelStats.length ? modelStats[0] : null;
+  const worstModel = modelStats.length ? modelStats[modelStats.length - 1] : null;
+  const topWinFamilies = [...familyStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+  const topWinModels = [...modelStats].sort((a, b) => b.winRate - a.winRate).slice(0, 3);
+  const periodExpectancyPnl = periodTrades.length ? periodNetPnl / periodTrades.length : 0;
+  const periodExpectancyR = periodTrades.length ? periodNetR / periodTrades.length : 0;
+  const dashboardProcessSummary = useMemo(() => computeProcessAnalytics(periodTrades, periodSessions), [periodTrades, periodSessions]);
+  const dashboardPlaybookAlignment = useMemo(() => computePlaybookAlignment(periodTrades, periodSessions), [periodTrades, periodSessions]);
+  const allTimeStreaks = computeStreaks(dashboardTrades);
+  const periodStreaks = computeStreaks(periodTrades);
+  const mistakeImpact = computeMistakeImpact(periodTrades);
+  const familyBreakdown = computePerformanceBreakdown(periodTrades, (trade) => trade.family);
+  const modelBreakdown = computePerformanceBreakdown(periodTrades, (trade) => trade.model);
+  const emotionBreakdown = computePerformanceBreakdown(
+    periodTrades.filter((trade) => Number(trade.emotional_pressure || 0) >= 1 && Number(trade.emotional_pressure || 0) <= 5),
+    (trade) => `Level ${Math.min(5, Math.max(1, Number(trade.emotional_pressure || 1)))}`
+  );
+  const emotionalInsight = getEmotionalInsight(periodTrades);
+  const topMistakeDrags = mistakeImpact
+    .filter((row) => row.trades >= 2)
+    .sort((a, b) => a.avgPnl - b.avgPnl || a.avgR - b.avgR || a.netPnl - b.netPnl)
+    .slice(0, 3);
+  const strongestFamilyCallout = pickStrongestSetupCallout(familyBreakdown, 3);
+  const strongestModelCallout = pickStrongestSetupCallout(modelBreakdown, 3);
+  const multiTradeDayInsight = getMultiTradeDayInsight(periodTrades);
+  const emotionCoachingNotes = getEmotionCoachingNotes(periodTrades);
+  const sessionCoachingNote = getSessionCoachingNote(periodTrades, periodSessions);
+  const coachingHelping = strongestFamilyCallout
+    ? `Best edge this period: ${strongestFamilyCallout.key} (${strongestFamilyCallout.trades} trade${strongestFamilyCallout.trades === 1 ? '' : 's'}, ${strongestFamilyCallout.winRate.toFixed(0)}% win rate, ${strongestFamilyCallout.avgR.toFixed(2)}R avg).${strongestFamilyCallout.limited ? ' Early signal (small sample).' : ''}`
+    : emotionCoachingNotes[0] || 'Not enough data to identify a stable edge yet.';
+  const coachingHurting = topMistakeDrags.length
+    ? `Largest drag: ${topMistakeDrags[0].key} (${topMistakeDrags[0].trades} tagged trade${topMistakeDrags[0].trades === 1 ? '' : 's'}, ${topMistakeDrags[0].avgPnl.toFixed(2)} avg P&L, ${topMistakeDrags[0].avgR.toFixed(2)}R avg).`
+    : (emotionCoachingNotes[1] || 'No repeat mistake drag signal yet.');
+  const coachingFocus = topMistakeDrags.length
+    ? `Focus next: reduce ${topMistakeDrags[0].key} first, then track whether avg R improves over the next 5 trades.`
+    : strongestFamilyCallout
+      ? `Focus next: prioritize ${strongestFamilyCallout.key} setups and avoid forcing low-quality variants.`
+      : 'Focus next: keep logging quality data so coaching signals can stabilize.';
+  const calendarMonth = new Date(Date.UTC(dashboardAnchor.getUTCFullYear(), dashboardAnchor.getUTCMonth(), 1));
+  const calendarCells = buildCalendarCells(calendarMonth, periodTrades, periodAllTrades, periodNoTrades, dashboardTradeFilter);
+  const calendarWeekRows = chunkCalendarWeeks(calendarCells);
+  const chartBuckets = buildChartBuckets(periodRange.start, periodRange.end, periodTrades, periodNoTrades, periodSessions, dashboardPeriod);
+  const periodHasActivity = periodTrades.length > 0 || periodNoTrades.length > 0 || periodSessions.length > 0;
+  const selectedPeriodTakeaway = !periodTrades.length
+    ? 'No trades in this selection. Use Jump to or Trade type to load a period with activity.'
+    : periodNetPnl >= 0
+      ? `Strongest setup edge: ${bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`
+      : `Biggest drag: ${worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'}.`;
+  const periodJumpOptions = buildPeriodJumpOptions(dashboardPeriod, dashboardAnchor);
+  const resolvedMistakeCatalog = resolveMistakeCatalogState(
+    settings?.mistake_catalog,
+    settings?.mistake_catalog_hidden,
+    trades.flatMap((trade) => normalizeMistakeTags(trade.mistake_tags))
+  );
+  const activeMistakeCatalog = resolvedMistakeCatalog.active;
+  const hiddenMistakeCatalog = resolvedMistakeCatalog.hidden;
+  const instrumentOptions = normalizeUniqueInstruments([
+    'MES',
+    tradeDraft.ticker,
+    ...(settings?.instruments || []),
+    ...trades.map((t) => String(t.ticker || '').toUpperCase()).filter(Boolean)
+  ]);
+  const mistakeTagOptions = normalizeUniqueTags([
+    ...activeMistakeCatalog,
+    ...normalizeMistakeTags(tradeDraft.mistake_tags)
+  ]);
+  const visibleDecisionChecks = decisionChecks.filter((decision) => decision.skipped_setup || !decision.converted_trade_id);
+  const activityItems = [
+    ...trades.map((trade) => ({ type: 'trade' as const, date: trade.trade_date, id: trade.id, trade })),
+    ...noTrades.map((noTrade) => ({ type: 'no_trade' as const, date: noTrade.day_date, id: noTrade.id, noTrade })),
+    ...sessions.map((session) => ({ type: 'session' as const, date: session.session_date, id: session.id, session })),
+    ...visibleDecisionChecks.map((decision) => ({ type: 'decision' as const, date: toLocalDateKey(parseStoredDateTime(decision.decision_timestamp)), id: decision.id, decision }))
+  ].sort((a, b) => {
+    const byDate = b.date.localeCompare(a.date);
+    if (byDate !== 0) return byDate;
+    const createdA = getTimelineCreatedAt(a);
+    const createdB = getTimelineCreatedAt(b);
+    if (createdA !== createdB) return createdB.localeCompare(createdA);
+    return a.id.localeCompare(b.id);
+  });
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const historyDateRange = getHistoryDateRange(historyDateFilter, todayKey, historyDateStart, historyDateEnd);
+  const filteredActivityItems = activityItems.filter((item) => {
+    if (!inDateRange(item.date, historyDateRange.start, historyDateRange.end)) return false;
+
+    if (historyEntryTypeFilter === 'all') {
+      return true;
+    }
+
+    if (historyEntryTypeFilter === 'trade_all') return item.type === 'trade' || item.type === 'no_trade' || item.type === 'decision';
+    if (historyEntryTypeFilter === 'session_all') return item.type === 'session';
+    if (historyEntryTypeFilter === 'live_trade') return item.type === 'trade' && !isPaperTrade(item.trade);
+    if (historyEntryTypeFilter === 'paper_trade') return item.type === 'trade' && isPaperTrade(item.trade);
+    if (historyEntryTypeFilter === 'no_trade_day') return item.type === 'no_trade';
+    if (historyEntryTypeFilter === 'pre_session_plan') return item.type === 'session' && isPreSessionPlan(item.session);
+    if (historyEntryTypeFilter === 'chart_session') return item.type === 'session' && (item.session.session_type === 'chart' || item.session.session_type === 'chart_session');
+    if (historyEntryTypeFilter === 'post_session_review') return item.type === 'session' && !isChartSessionType(item.session.session_type);
+    return false;
+  });
+  const historyDateScopeLabel = historyDateFilter === 'all_time'
+    ? 'All time'
+    : historyDateFilter === 'this_month'
+      ? 'This month'
+      : historyDateFilter === 'last_30_days'
+        ? 'Last 30 days'
+        : `Custom ${historyDateRange.start} → ${historyDateRange.end}`;
+
+  const historyEntryFilterLabel = historyEntryTypeFilter === 'all'
+    ? 'All entries'
+    : historyEntryTypeFilter === 'trade_all'
+      ? 'Trade (all)'
+      : historyEntryTypeFilter === 'session_all'
+        ? 'Session (all)'
+        : historyEntryTypeFilter === 'live_trade'
+          ? 'Live trade'
+          : historyEntryTypeFilter === 'paper_trade'
+            ? 'Paper trade'
+            : historyEntryTypeFilter === 'no_trade_day'
+              ? 'No-trade day'
+              : historyEntryTypeFilter === 'pre_session_plan'
+                ? 'Pre-session plan'
+                : historyEntryTypeFilter === 'chart_session'
+                  ? 'Chart session'
+                  : 'Post-session review';
+  const setupQualityPreview = useMemo(() => evaluateSetupQuality({
+    market_context_quality: tradeDraft.market_context_quality,
+    liquidity_structure_quality: tradeDraft.liquidity_structure_quality,
+    displacement_quality: tradeDraft.displacement_quality,
+    poi_quality: tradeDraft.poi_quality,
+    target_room_quality: tradeDraft.target_room_quality,
+    classification: tradeDraft.classification,
+    r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
+    mistake_tags: tradeDraft.mistake_tags
+  }), [tradeDraft.market_context_quality, tradeDraft.liquidity_structure_quality, tradeDraft.displacement_quality, tradeDraft.poi_quality, tradeDraft.target_room_quality, tradeDraft.classification, tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal, tradeDraft.mistake_tags]);
+
+  const selectedWeekKey = weekKeyFromInput(weekInput);
+  const weekTrades = trades.filter((t) => weekKeyFromDate(t.trade_date) === selectedWeekKey);
+  const weekLiveTrades = weekTrades.filter((t) => !isPaperTrade(t));
+  const weekPaperTrades = weekTrades.filter((t) => isPaperTrade(t));
+  const weekTradesForReview = filterTradesByType(weekTrades, reviewTradeFilter);
+  const selectedReviewEndKey = addDaysKey(selectedWeekKey, 6);
+  const selectedReviewRangeLabel = `${formatDateShort(selectedWeekKey)} – ${formatDateShort(selectedReviewEndKey)}`;
+  const weekNoTrades = noTrades.filter((n) => weekKeyFromDate(n.day_date) === selectedWeekKey);
+  const weekSessions = sessions.filter((s) => weekKeyFromDate(s.session_date) === selectedWeekKey);
+  const weeklyProcessSummary = useMemo(() => computeProcessAnalytics(weekTradesForReview, weekSessions), [weekTradesForReview, weekSessions]);
+  const weeklyPlaybookAlignment = useMemo(() => computePlaybookAlignment(weekTradesForReview, weekSessions), [weekTradesForReview, weekSessions]);
+  const weekTradeById = useMemo(() => new Map(weekTradesForReview.map((trade) => [trade.id, trade])), [weekTradesForReview]);
+  const weekNoTradeById = useMemo(() => new Map(weekNoTrades.map((day) => [day.id, day])), [weekNoTrades]);
+  const weekSessionById = useMemo(() => new Map(weekSessions.map((session) => [session.id, session])), [weekSessions]);
+  const reviewReferenceItems = useMemo<ReviewReferenceItem[]>(() => {
+    const tradeItems: ReviewReferenceItem[] = weekTradesForReview.map((trade) => ({
+      id: trade.id,
+      kind: 'trade',
+      dateKey: trade.trade_date,
+      timeLabel: `${trade.trade_date} · ${isPaperTrade(trade) ? 'Paper trade' : 'Live trade'}`,
+      title: `${trade.ticker} · ${trade.classification}`,
+      summary: `${trade.family} · ${trade.model} · ${Number(trade.r_multiple || 0).toFixed(2)}R · ${trade.minutes_in_trade}m`,
+      attachmentCount: entryAttachments('trade', trade.id).length
+    }));
+    const noTradeItems: ReviewReferenceItem[] = weekNoTrades.map((day) => ({
+      id: day.id,
+      kind: 'no_trade',
+      dateKey: day.day_date,
+      timeLabel: `${day.day_date} · No-trade day`,
+      title: day.reason,
+      summary: `Mindset: ${resolveNoTradeMindset(day)}`,
+      attachmentCount: entryAttachments('no_trade', day.id).length
+    }));
+    const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => ({
+      id: session.id,
+      kind: 'session',
+      dateKey: session.session_date,
+      timeLabel: `${session.session_date} · ${session.start_time.slice(0, 5)}-${session.end_time.slice(0, 5)}`,
+      title: sessionSubtypeLabel(session.session_type),
+      summary: `${sessionSubtypeTagLabel(session.session_type)} · ${formatMinutesLabel(session.duration_minutes)}`,
+      attachmentCount: attachments.filter((a) => a.session_id === session.id).length
+    }));
+    return [...tradeItems, ...noTradeItems, ...sessionItems].sort((a, b) => {
+      if (a.dateKey === b.dateKey) return a.timeLabel < b.timeLabel ? 1 : -1;
+      return a.dateKey < b.dateKey ? 1 : -1;
+    });
+  }, [weekTradesForReview, weekNoTrades, weekSessions, attachments]);
+  const reviewRow = reviews.find((r) => r.week_key === selectedWeekKey);
+  const latestChartSession = sessions.find((session) => session.session_type === 'chart' || session.session_type === 'chart_session');
+  const latestPostSessionReview = sessions.find((session) => session.session_type === 'journal' || session.session_type === 'post_session_review');
+  const referencedPreSessionPlan = useMemo(() => {
+    const targetDate = sessionDraft.session_date;
+    if (!targetDate) return null;
+    return sessions.find((session) => session.session_date === targetDate && isPreSessionPlan(session)) || null;
+  }, [sessions, sessionDraft.session_date]);
+  const referencedPreSessionMeta = useMemo(() => {
+    if (!referencedPreSessionPlan) return null;
+    const parsed = parseSessionNotes(referencedPreSessionPlan.notes || '');
+    return parsed.meta?.kind === 'pre_session_plan' ? parsed.meta : null;
+  }, [referencedPreSessionPlan]);
+
+  useEffect(() => {
+    setReviewAnswers({ q1: reviewRow?.q1 || '', q2: reviewRow?.q2 || '', q3: reviewRow?.q3 || '', q_paper: reviewRow?.q_paper || '' });
+    setReviewSaveMessage('');
+  }, [reviewRow?.id, selectedWeekKey]);
+
+  useEffect(() => {
+    setReviewReferenceDetail(null);
+  }, [selectedWeekKey, reviewTradeFilter]);
+
+  useEffect(() => {
+    if (tab !== 'review') return;
+    const paths = attachments
+      .filter((a) =>
+        weekTradesForReview.some((t) => t.id === a.trade_id)
+        || weekNoTrades.some((n) => n.id === a.no_trade_day_id)
+        || weekSessions.some((s) => s.id === a.session_id))
+      .map((a) => a.file_path);
+    if (!paths.length) {
+      setReviewSignedUrls({});
+      return;
+    }
+    void supabase.storage.from('attachments').createSignedUrls(paths, 60 * 60).then(({ data, error: signError }) => {
+      if (signError) {
+        console.warn('Review attachment sign error', signError);
+        setReviewSignedUrls({});
+        return;
+      }
+      const next: Record<string, string> = {};
+      (data || []).forEach((item, idx) => {
+        if (item?.signedUrl) next[paths[idx]] = item.signedUrl;
+      });
+      setReviewSignedUrls(next);
+    });
+  }, [tab, selectedWeekKey, attachments, weekTradesForReview, weekNoTrades, weekSessions, supabase]);
+
+  async function addTrade(formData: FormData) {
+    setError('');
+    const family = tradeDraft.family || 'Bounce';
+    const classification = tradeDraft.classification;
+    const isInvalid = forcedInvalidClassifications.includes(classification);
+    const payload = {
+      user_id: userId,
+      trade_date: tradeDraft.trade_date || new Date().toISOString().slice(0, 10),
+      ticker: String(tradeDraft.ticker || '').toUpperCase(),
+      family: isInvalid ? NA_FAMILY : family,
+      model: isInvalid ? NA_MODEL : String(tradeDraft.model || familyModels[family][0]),
+      classification,
+      pnl: Number(tradeDraft.pnl || 0),
+      r_multiple: buildRMultipleValue(tradeDraft.r_multiple_whole, tradeDraft.r_multiple_decimal),
+      minutes_in_trade: Number(tradeDraft.minutes_in_trade || 0),
+      emotional_pressure: Math.min(5, Math.max(1, Number(tradeDraft.emotional_pressure || 1))),
+      entry_emotion: normalizeEntryEmotion(tradeDraft.entry_emotion),
+      in_trade_emotion: normalizeInTradeEmotion(tradeDraft.in_trade_emotion),
+      is_paper_trade: Boolean(tradeDraft.is_paper_trade),
+      market_context_quality: tradeDraft.market_context_quality || null,
+      liquidity_structure_quality: tradeDraft.liquidity_structure_quality || null,
+      displacement_quality: tradeDraft.displacement_quality || null,
+      poi_quality: tradeDraft.poi_quality || null,
+      target_room_quality: tradeDraft.target_room_quality || null,
+      setup_score: setupQualityPreview.score,
+      setup_grade: setupQualityPreview.grade,
+      setup_auto_tags: setupQualityPreview.tags,
+      mistake_tags: normalizeMistakeTags(tradeDraft.mistake_tags),
+      notes: String(tradeDraft.notes || '')
+    };
+
+    const tradeResult = editingTradeId
+      ? await supabase.from('trades').update(payload).eq('id', editingTradeId).select('*').single()
+      : await supabase.from('trades').insert(payload).select('*').single();
+    const { data, error: upsertError } = tradeResult;
+    if (upsertError) {
+      setError(normalizeSupabaseError(upsertError.message));
+      return;
+    }
+    if (!editingTradeId && pendingDecisionToConvertId) {
+      const { error: convertError } = await supabase
+        .from('decision_checks')
+        .update({ converted_trade_id: data.id })
+        .eq('id', pendingDecisionToConvertId);
+      if (convertError) {
+        setError(normalizeSupabaseError(convertError.message));
+      } else {
+        setDecisionChecks((prev) => prev.map((row) => (row.id === pendingDecisionToConvertId ? { ...row, converted_trade_id: data.id } : row)));
+      }
+      setPendingDecisionToConvertId(null);
+    }
+
+    if (settings) {
+      await saveSettings({
+        ...settings,
+        instruments: normalizeUniqueInstruments([...(settings.instruments || []), payload.ticker]),
+        mistake_catalog: normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), ...payload.mistake_tags], settings.mistake_catalog_hidden),
+        mistake_catalog_hidden: settings.mistake_catalog_hidden || []
+      });
+    }
+
+    const files = formData.getAll('files') as File[];
+    for (const file of files) {
+      if (!file || file.size === 0) continue;
+      const filePath = `${userId}/${data.id}/${crypto.randomUUID()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
+      if (uploadError) {
+        setError(normalizeSupabaseError(uploadError.message));
+        continue;
+      }
+      await supabase.from('attachments').insert({
+        user_id: userId,
+        trade_id: data.id,
+        no_trade_day_id: null,
+        session_id: null,
+        file_path: filePath,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        byte_size: file.size
+      });
+    }
+
+    await loadAll();
+    resetTradeDraft();
+    setTab('history');
+  }
+
+  async function addNoTrade(formData: FormData) {
+    const payload = {
+      user_id: userId,
+      day_date: noTradeDraft.day_date || new Date().toISOString().slice(0, 10),
+      reason: noTradeDraft.reason || 'No A+ setup',
+      no_trade_mindset: normalizeNoTradeMindset(noTradeDraft.no_trade_mindset),
+      notes: String(noTradeDraft.notes || '')
+    };
+    const upsert = editingNoTradeId
+      ? await supabase.from('no_trade_days').update(payload).eq('id', editingNoTradeId).select('*').single()
+      : await supabase.from('no_trade_days').insert(payload).select('*').single();
+    const { data, error: insertError } = upsert;
+    if (insertError) {
+      setError(normalizeSupabaseError(insertError.message));
+      return;
+    }
+
+    const files = formData.getAll('no_trade_files') as File[];
+    for (const file of files) {
+      if (!file || file.size === 0) continue;
+      const filePath = `${userId}/no-trade/${data.id}/${crypto.randomUUID()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
+      if (uploadError) {
+        setError(normalizeSupabaseError(uploadError.message));
+        continue;
+      }
+      await supabase.from('attachments').insert({
+        user_id: userId,
+        trade_id: null,
+        no_trade_day_id: data.id,
+        session_id: null,
+        file_path: filePath,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        byte_size: file.size
+      });
+    }
+
+    await loadAll();
+    setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
+    setNoTradeExtract(null);
+    setEditingNoTradeId(null);
+    setTab('history');
+  }
+
+  function applySessionDefaults(type: SessionSubtypeView) {
+    const usesChartDefaults = type === 'chart_session' || type === 'pre_session_plan';
+    const start = normalizeTimeInput(usesChartDefaults ? settings?.chart_session_start_default : settings?.journal_session_start_default || '');
+    const end = normalizeTimeInput(usesChartDefaults ? settings?.chart_session_end_default : settings?.journal_session_end_default || '');
+    const mappedType: SessionTypeValue = type === 'pre_session_plan'
+      ? 'pre_session_plan'
+      : type === 'post_session_review'
+        ? 'post_session_review'
+        : 'chart_session';
+    setSessionDraft((prev) => ({
+      ...prev,
+      session_type: mappedType,
+      start_time: start || (usesChartDefaults ? SESSION_DEFAULT_TIMES.chart.start : SESSION_DEFAULT_TIMES.journal.start),
+      end_time: end || (usesChartDefaults ? SESSION_DEFAULT_TIMES.chart.end : SESSION_DEFAULT_TIMES.journal.end)
+    }));
+  }
+
+  async function addSession(formData: FormData) {
+    const subtype = sessionSubtypeView;
+    const duration = subtype === 'pre_session_plan'
+      ? Math.max(1, Number(preSessionDraft.minutes_spent || 0))
+      : calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time);
+    const parsedNotes = parseSessionNotes(sessionDraft.notes || '');
+    const meta = subtype === 'pre_session_plan'
+      ? {
+        kind: 'pre_session_plan' as const,
+        minutes_spent: preSessionDraft.minutes_spent,
+        higher_timeframe_context: preSessionDraft.higher_timeframe_context,
+        session_bias: preSessionDraft.session_bias,
+        bias_confidence: preSessionDraft.bias_confidence,
+        expected_market_condition: preSessionDraft.expected_market_condition,
+        primary_setup_focus: preSessionDraft.primary_setup_focus,
+        starting_emotional_state: preSessionDraft.starting_emotional_state
+      }
+      : subtype === 'post_session_review'
+        ? { kind: 'post_session_review' as const, ...postSessionDraft }
+        : null;
+    const storedNotes = withSessionMeta(parsedNotes.note, meta);
+    const startTime = subtype === 'pre_session_plan' ? '00:00:00' : `${sessionDraft.start_time}:00`;
+    const endTime = subtype === 'pre_session_plan' ? minutesToTimeValue(duration) : `${sessionDraft.end_time}:00`;
+    const nextSessionType: SessionTypeValue = subtype === 'pre_session_plan' ? 'pre_session_plan' : subtype === 'post_session_review' ? 'post_session_review' : 'chart_session';
+    const payload = {
+      user_id: userId,
+      session_type: nextSessionType,
+      session_date: sessionDraft.session_date || new Date().toISOString().slice(0, 10),
+      start_time: startTime,
+      end_time: endTime,
+      duration_minutes: duration,
+      notes: storedNotes
+    };
+    const response = editingSessionId
+      ? await supabase.from('sessions').update(payload).eq('id', editingSessionId).select('*').single()
+      : await supabase.from('sessions').insert(payload).select('*').single();
+    if (response.error) {
+      setError(normalizeSupabaseError(response.error.message));
+      return;
+    }
+
+    const sessionRow = response.data as SessionRow;
+    const files = formData.getAll('session_files') as File[];
+    for (const file of files) {
+      if (!file || file.size === 0) continue;
+      const filePath = `${userId}/session/${sessionRow.id}/${crypto.randomUUID()}_${file.name}`;
+      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
+      if (uploadError) {
+        setError(normalizeSupabaseError(uploadError.message));
+        continue;
+      }
+      await supabase.from('attachments').insert({
+        user_id: userId,
+        trade_id: null,
+        no_trade_day_id: null,
+        session_id: sessionRow.id,
+        file_path: filePath,
+        file_name: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        byte_size: file.size
+      });
+    }
+    setSessionDraft({
+      session_type: 'chart_session',
+      session_date: new Date().toISOString().slice(0, 10),
+      start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+      end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
+      notes: ''
+    });
+    setSessionSubtypeView('chart_session');
+    setEditingSessionId(null);
+    await loadAll();
+    setTab('history');
+  }
+
+  async function saveReview() {
+    setReviewSaveMessage('');
+    const payload = { user_id: userId, week_key: selectedWeekKey, ...reviewAnswers };
+    const { error: upsertError } = await supabase
+      .from('weekly_reviews')
+      .upsert(payload, { onConflict: 'user_id,week_key' });
+    if (!upsertError) {
+      await loadAll();
+      setReviewSaveMessage('Review saved');
+      return;
+    }
+    if (!isWeeklyReviewPaperSchemaMismatch(upsertError.message)) {
+      setError(normalizeSupabaseError(upsertError.message));
+      setReviewSaveMessage('Review save failed');
+      return;
+    }
+    const fallbackPayload = { user_id: userId, week_key: selectedWeekKey, q1: reviewAnswers.q1, q2: reviewAnswers.q2, q3: reviewAnswers.q3 };
+    const { error: fallbackError } = await supabase
+      .from('weekly_reviews')
+      .upsert(fallbackPayload, { onConflict: 'user_id,week_key' });
+    if (fallbackError) {
+      setError(normalizeSupabaseError(fallbackError.message));
+      setReviewSaveMessage('Review save failed');
+      return;
+    }
+    await loadAll();
+    setReviewSaveMessage('Review saved');
+  }
+
+  async function saveSettings(next: SettingsRow) {
+    const payload: SettingsRow = {
+      ...next,
+      chart_session_start_default: normalizeTimeInput(next.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start,
+      chart_session_end_default: normalizeTimeInput(next.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end,
+      journal_session_start_default: normalizeTimeInput(next.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start,
+      journal_session_end_default: normalizeTimeInput(next.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end,
+      instruments: normalizeUniqueInstruments(next.instruments || []),
+      mistake_catalog: normalizeActiveMistakeCatalog(next.mistake_catalog, next.mistake_catalog_hidden),
+      mistake_catalog_hidden: normalizeHiddenMistakeCatalog(next.mistake_catalog_hidden, next.mistake_catalog)
+    };
+    const { error: upsertError } = await supabase.from('user_settings').upsert(payload, { onConflict: 'user_id' });
+    if (!upsertError) {
+      setSettings(payload);
+      writeSettingsCache(payload);
+      return;
+    }
+    if (!isSettingsCatalogSchemaMismatch(upsertError.message)) {
+      setError(normalizeSupabaseError(upsertError.message));
+      return;
+    }
+    const fallbackPayload = {
+      user_id: payload.user_id,
+      daily_reminder: payload.daily_reminder,
+      weekly_reminder: payload.weekly_reminder,
+      default_risk: payload.default_risk,
+      display_name: payload.display_name
+    };
+    const { error: fallbackError } = await supabase.from('user_settings').upsert(fallbackPayload, { onConflict: 'user_id' });
+    if (fallbackError) {
+      setError(normalizeSupabaseError(fallbackError.message));
+      return;
+    }
+    setSettings(payload);
+    writeSettingsCache(payload);
+  }
+
+  function resetTradeDraft() {
+    setEditingTradeId(null);
+    setPendingDecisionToConvertId(null);
+    setAddTradeClassification('Valid setup');
+    setAddTradeFamily('Bounce');
+    setAddTradeModel(familyModels.Bounce[0]);
+    setTradeDraft({
+      trade_date: new Date().toISOString().slice(0, 10),
+      ticker: 'MES',
+      classification: 'Valid setup',
+      family: 'Bounce',
+      model: familyModels.Bounce[0],
+      pnl: '',
+      r_multiple_whole: '2',
+      r_multiple_decimal: '00',
+      minutes_in_trade: '',
+      emotional_pressure: '1',
+      market_context_quality: '',
+      liquidity_structure_quality: '',
+      displacement_quality: '',
+      poi_quality: '',
+      target_room_quality: '',
+      entry_emotion: entryEmotionOptions[0].value,
+      in_trade_emotion: inTradeEmotionOptions[0].value,
+      is_paper_trade: false,
+      mistake_tags: [],
+      notes: ''
+    });
+    setTradeExtract(null);
+    setMistakePickerOpen(false);
+    setSetupQualityOpen(false);
+    setTradeLogSubtype('live_trade');
+  }
+
+  function startEditTrade(trade: TradeRow) {
+    setEditingTradeId(trade.id);
+    setEditingNoTradeId(null);
+    setTab('log');
+    setLogMode('trade');
+    setAddTradeClassification(trade.classification);
+    setAddTradeFamily(trade.family);
+    setAddTradeModel(trade.model);
+    setTradeDraft({
+      trade_date: trade.trade_date,
+      ticker: trade.ticker,
+      classification: trade.classification,
+      family: trade.family,
+      model: trade.model,
+      pnl: String(trade.pnl ?? ''),
+      ...parseRMultipleToParts(trade.r_multiple),
+      minutes_in_trade: String(trade.minutes_in_trade ?? ''),
+      emotional_pressure: String(trade.emotional_pressure ?? 1),
+      market_context_quality: String((trade as TradeRow & { market_context_quality?: string | null }).market_context_quality || ''),
+      liquidity_structure_quality: String((trade as TradeRow & { liquidity_structure_quality?: string | null }).liquidity_structure_quality || ''),
+      displacement_quality: String((trade as TradeRow & { displacement_quality?: string | null }).displacement_quality || ''),
+      poi_quality: String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || ''),
+      target_room_quality: String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || ''),
+      entry_emotion: resolveEntryEmotion(trade as TradeRow),
+      in_trade_emotion: resolveInTradeEmotion(trade as TradeRow),
+      is_paper_trade: Boolean(trade.is_paper_trade),
+      mistake_tags: normalizeMistakeTags(trade.mistake_tags),
+      notes: trade.notes || ''
+    });
+    setMistakePickerOpen(false);
+    setSetupQualityOpen(true);
+    setTradeLogSubtype(Boolean(trade.is_paper_trade) ? 'paper_trade' : 'live_trade');
+  }
+
+  function startEditNoTrade(noTrade: NoTradeDayRow) {
+    setEditingNoTradeId(noTrade.id);
+    setNoTradeDraft({ day_date: noTrade.day_date, reason: noTrade.reason, no_trade_mindset: resolveNoTradeMindset(noTrade), notes: noTrade.notes || '' });
+    setTradeLogSubtype('no_trade');
+    setTab('log');
+    setLogMode('no_trade');
+  }
+
+  function startEditDecision(decision: DecisionCheckRow) {
+    setEditingDecisionId(decision.id);
+    setDecisionDraft({
+      trade_intent_mode: decision.trade_intent_mode,
+      decision_timestamp: toLocalDateTimeInputValue(parseStoredDateTime(decision.decision_timestamp)),
+      displacement_confirmed: Boolean(decision.displacement_confirmed),
+      valid_poi_created: Boolean(decision.valid_poi_created),
+      pulling_back_not_chasing: Boolean(decision.pulling_back_not_chasing),
+      fib_support_quality: decision.fib_support_quality,
+      liquidity_target_clear: Boolean(decision.liquidity_target_clear),
+      stop_location_clear: Boolean(decision.stop_location_clear),
+      inside_session_window: Boolean(decision.inside_session_window),
+      hesitation_note: decision.hesitation_note || ''
+    });
+    setTab('decide');
+  }
+
+  async function deleteTrade(tradeId: string) {
+    if (!window.confirm('Delete this trade? This cannot be undone.')) return;
+    const linked = attachments.filter((a) => a.trade_id === tradeId);
+    if (linked.length) {
+      const paths = linked.map((a) => a.file_path);
+      await supabase.storage.from('attachments').remove(paths);
+    }
+    const { error: deleteError } = await supabase.from('trades').delete().eq('id', tradeId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'trade' && detail.id === tradeId) setDetail(null);
+    await loadAll();
+  }
+
+  async function deleteNoTrade(noTradeId: string) {
+    if (!window.confirm('Delete this no-trade day? This cannot be undone.')) return;
+    const linked = attachments.filter((a) => a.no_trade_day_id === noTradeId);
+    if (linked.length) {
+      await supabase.storage.from('attachments').remove(linked.map((a) => a.file_path));
+    }
+    const { error: deleteError } = await supabase.from('no_trade_days').delete().eq('id', noTradeId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'no_trade' && detail.id === noTradeId) setDetail(null);
+    if (editingNoTradeId === noTradeId) {
+      setEditingNoTradeId(null);
+      setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' });
+    }
+    await loadAll();
+  }
+
+  async function deleteSession(sessionId: string) {
+    if (!window.confirm('Delete this session?')) return;
+    const linked = attachments.filter((a) => a.session_id === sessionId);
+    if (linked.length) {
+      await supabase.storage.from('attachments').remove(linked.map((a) => a.file_path));
+    }
+    const { error: deleteError } = await supabase.from('sessions').delete().eq('id', sessionId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'session' && detail.id === sessionId) setDetail(null);
+    await loadAll();
+  }
+
+  async function deleteDecision(decisionId: string) {
+    if (!window.confirm('Delete this decision entry?')) return;
+    const { error: deleteError } = await supabase.from('decision_checks').delete().eq('id', decisionId);
+    if (deleteError) {
+      setError(normalizeSupabaseError(deleteError.message));
+      return;
+    }
+    if (detail?.kind === 'decision' && detail.id === decisionId) setDetail(null);
+    if (editingDecisionId === decisionId) setEditingDecisionId(null);
+    setDecisionChecks((prev) => prev.filter((row) => row.id !== decisionId));
+  }
+
+  async function removeSessionAttachment(attachmentId: string) {
+    const target = attachments.find((a) => a.id === attachmentId);
+    if (!target) return;
+    const { error: deleteRowError } = await supabase.from('attachments').delete().eq('id', attachmentId);
+    if (deleteRowError) {
+      setError(normalizeSupabaseError(deleteRowError.message));
+      return;
+    }
+    const { error: removeStorageError } = await supabase.storage.from('attachments').remove([target.file_path]);
+    if (removeStorageError) {
+      setError(`Attachment record was removed, but storage cleanup failed for ${target.file_name}. Remove ${target.file_path} manually from bucket "attachments".`);
+    }
+    await loadAll();
+  }
+
+  async function openEntryDetail(nextDetail: DetailState) {
+    if (!nextDetail) return;
+    setDetail(nextDetail);
+    setError('');
+    requestAnimationFrame(() => {
+      const key = `${nextDetail.kind}:${nextDetail.id}`;
+      detailAnchors.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    });
+
+    const linkedAttachments =
+      nextDetail.kind === 'trade'
+        ? attachments.filter((a) => a.trade_id === nextDetail.id)
+        : nextDetail.kind === 'no_trade'
+          ? attachments.filter((a) => a.no_trade_day_id === nextDetail.id)
+          : nextDetail.kind === 'session'
+            ? attachments.filter((a) => a.session_id === nextDetail.id)
+            : [];
+
+    if (!linkedAttachments.length) {
+      setSignedUrls({});
+      return;
+    }
+
+    const filePaths = linkedAttachments.map((a) => a.file_path);
+    const { data, error: signError } = await supabase.storage.from('attachments').createSignedUrls(filePaths, 60 * 60);
+    if (signError) {
+      setError(normalizeSupabaseError(signError.message));
+      setSignedUrls({});
+      return;
+    }
+
+    const nextUrls: Record<string, string> = {};
+    (data || []).forEach((item, idx) => {
+      if (item?.signedUrl) nextUrls[filePaths[idx]] = item.signedUrl;
+    });
+    setSignedUrls(nextUrls);
+  }
+
+  function onChangeClassification(value: string) {
+    const next = value as TradeClassification;
+    setAddTradeClassification(next);
+    setTradeDraft((prev) => ({ ...prev, classification: next }));
+    if (forcedInvalidClassifications.includes(next)) {
+      setAddTradeFamily(NA_FAMILY);
+      setAddTradeModel(NA_MODEL);
+      setTradeDraft((prev) => ({ ...prev, family: NA_FAMILY, model: NA_MODEL }));
+    }
+  }
+
+  async function clearCurrentUserActivityData() {
+    setError('');
+    setResetStorageNotice('');
+    const attachmentPaths = attachments
+      .filter((file) => file.user_id === userId && file.file_path)
+      .map((file) => file.file_path);
+    const storageFailures: string[] = [];
+    if (attachmentPaths.length) {
+      for (let i = 0; i < attachmentPaths.length; i += 50) {
+        const batch = attachmentPaths.slice(i, i + 50);
+        const { error: removeError } = await supabase.storage.from('attachments').remove(batch);
+        if (removeError) storageFailures.push(removeError.message);
+      }
+    }
+    const { error: attachmentDeleteError } = await supabase.from('attachments').delete().eq('user_id', userId);
+    if (attachmentDeleteError) {
+      setError(normalizeSupabaseError(attachmentDeleteError.message));
+      return;
+    }
+    const { error: tradeDeleteError } = await supabase.from('trades').delete().eq('user_id', userId);
+    if (tradeDeleteError) {
+      setError(normalizeSupabaseError(tradeDeleteError.message));
+      return;
+    }
+    const { error: noTradeDeleteError } = await supabase.from('no_trade_days').delete().eq('user_id', userId);
+    if (noTradeDeleteError) {
+      setError(normalizeSupabaseError(noTradeDeleteError.message));
+      return;
+    }
+    const { error: sessionsDeleteError } = await supabase.from('sessions').delete().eq('user_id', userId);
+    if (sessionsDeleteError) {
+      setError(normalizeSupabaseError(sessionsDeleteError.message));
+      return;
+    }
+    const { error: reviewsDeleteError } = await supabase.from('weekly_reviews').delete().eq('user_id', userId);
+    if (reviewsDeleteError) {
+      setError(normalizeSupabaseError(reviewsDeleteError.message));
+      return;
+    }
+    setTrades([]);
+    setNoTrades([]);
+    setSessions([]);
+    setReviews([]);
+    setAttachments([]);
+    setDetail(null);
+    setSignedUrls({});
+    setReviewSignedUrls({});
+    setReviewEntriesOpen(false);
+    setEditingTradeId(null);
+    setEditingNoTradeId(null);
+    setEditingSessionId(null);
+    setResetConfirmText('');
+    setResetActivityOpen(false);
+    if (storageFailures.length) {
+      setResetStorageNotice(`Activity rows were cleared, but some storage files could not be deleted automatically. Check Supabase Storage bucket "attachments" under prefix ${userId}/ and remove leftovers manually.`);
+    }
+  }
+
+  async function resetActivityData() {
+    const requiredText = 'RESET';
+    if (resetConfirmText.trim().toUpperCase() !== requiredText) {
+      setError(`Type ${requiredText} to confirm activity reset.`);
+      return;
+    }
+    const approved = window.confirm(
+      `Reset activity data for current user only?\n\nUser: ${email || userId}\n\nThis will permanently delete trades, no-trade days, sessions, weekly reviews, and attachment records/files for this account.`
+    );
+    if (!approved) return;
+    await clearCurrentUserActivityData();
+  }
+
+  function getExportCollections(scope: 'all_time' | 'selected_period') {
+    if (scope === 'all_time') {
+      return {
+        exportTrades: trades,
+        exportNoTrades: noTrades,
+        exportSessions: sessions,
+        exportReviews: reviews,
+        exportAttachments: attachments
+      };
+    }
+    const rangeStart = periodRange.start;
+    const rangeEnd = periodRange.end;
+    const exportTrades = trades.filter((trade) => inDateRange(trade.trade_date, rangeStart, rangeEnd));
+    const exportNoTrades = noTrades.filter((day) => inDateRange(day.day_date, rangeStart, rangeEnd));
+    const exportSessions = sessions.filter((session) => inDateRange(session.session_date, rangeStart, rangeEnd));
+    const exportReviews = reviews.filter((review) => inDateRange(review.week_key, rangeStart, rangeEnd));
+    const tradeIds = new Set(exportTrades.map((trade) => trade.id));
+    const noTradeIds = new Set(exportNoTrades.map((day) => day.id));
+    const sessionIds = new Set(exportSessions.map((session) => session.id));
+    const exportAttachments = attachments.filter((file) => (
+      (file.trade_id && tradeIds.has(file.trade_id))
+      || (file.no_trade_day_id && noTradeIds.has(file.no_trade_day_id))
+      || (file.session_id && sessionIds.has(file.session_id))
+    ));
+    return { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments };
+  }
+
+  function onSelectImportFile(file: File | null) {
+    setImportStatus('');
+    setImportPreview(null);
+    if (!file) return;
+    if (!/\.json$/i.test(file.name)) {
+      setImportStatus('Import supports JSON exports from this app only.');
+      return;
+    }
+    void file.text().then((raw) => {
+      try {
+        const parsed = JSON.parse(raw) as ImportPayload;
+        if (!parsed || typeof parsed !== 'object') {
+          setImportStatus('Invalid JSON structure.');
+          return;
+        }
+        const tradesCount = Array.isArray(parsed.trades) ? parsed.trades.length : 0;
+        const noTradesCount = Array.isArray(parsed.no_trade_days) ? parsed.no_trade_days.length : 0;
+        const sessionsCount = Array.isArray(parsed.sessions) ? parsed.sessions.length : 0;
+        const reviewsCount = Array.isArray(parsed.weekly_reviews) ? parsed.weekly_reviews.length : 0;
+        const attachmentsCount = Array.isArray(parsed.attachments) ? parsed.attachments.length : 0;
+        if (!('trades' in parsed) && !('no_trade_days' in parsed) && !('sessions' in parsed) && !('weekly_reviews' in parsed)) {
+          setImportStatus('File does not look like a supported journal export.');
+          return;
+        }
+        const warnings: string[] = [];
+        if (attachmentsCount) warnings.push('Attachment metadata can be imported for reference, but file binaries are not restored automatically.');
+        if ('settings' in parsed) warnings.push('Settings/catalog restore is not applied in this phase for safety.');
+        warnings.push('Merge mode uses ID + stable key checks where possible, but review data before importing.');
+        setImportPreview({
+          payload: parsed,
+          counts: { trades: tradesCount, no_trade_days: noTradesCount, sessions: sessionsCount, weekly_reviews: reviewsCount, attachments: attachmentsCount },
+          warnings
+        });
+      } catch {
+        setImportStatus('Could not parse JSON file.');
+      }
+    }).catch(() => setImportStatus('Failed to read selected file.'));
+  }
+
+  async function runImportRestore() {
+    if (!importPreview) return;
+    if (importMode === 'replace_activity' && importReplaceConfirmText.trim().toUpperCase() !== 'REPLACE') {
+      setImportStatus('Type REPLACE to confirm replace mode.');
+      return;
+    }
+    setImportStatus('');
+    const payload = importPreview.payload;
+    if (importMode === 'replace_activity') {
+      const confirmed = window.confirm(`Replace activity data for current signed-in user (${email || userId}) before import?`);
+      if (!confirmed) return;
+      await clearCurrentUserActivityData();
+    }
+
+    const existingTradeIds = new Set(trades.map((row) => row.id));
+    const existingTradeKeys = new Set(trades.map((row) => `${row.trade_date}|${row.ticker}|${Number(row.pnl || 0)}|${Number(row.r_multiple || 0)}|${row.family}|${row.model}`));
+    const incomingTrades = (Array.isArray(payload.trades) ? payload.trades : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const tradeRows = incomingTrades.filter((row) => {
+      const id = String(row.id || '');
+      const stable = `${String(row.trade_date || '')}|${String(row.ticker || '')}|${Number(row.pnl || 0)}|${Number(row.r_multiple || 0)}|${String(row.family || '')}|${String(row.model || '')}`;
+      return !existingTradeIds.has(id) && !existingTradeKeys.has(stable);
+    }).map((row) => ({ ...row, user_id: userId }));
+
+    const existingNoTradeIds = new Set(noTrades.map((row) => row.id));
+    const existingNoTradeKeys = new Set(noTrades.map((row) => `${row.day_date}|${row.reason}|${resolveNoTradeMindset(row)}`));
+    const incomingNoTrades = (Array.isArray(payload.no_trade_days) ? payload.no_trade_days : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const noTradeRows = incomingNoTrades.filter((row) => !existingNoTradeIds.has(String(row.id || '')) && !existingNoTradeKeys.has(`${String(row.day_date || '')}|${String(row.reason || '')}|${String(row.no_trade_mindset || '')}`)).map((row) => ({ ...row, user_id: userId }));
+
+    const existingSessionIds = new Set(sessions.map((row) => row.id));
+    const existingSessionKeys = new Set(sessions.map((row) => `${row.session_date}|${row.session_type}|${row.start_time}|${row.end_time}|${Number(row.duration_minutes || 0)}`));
+    const incomingSessions = (Array.isArray(payload.sessions) ? payload.sessions : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const sessionRows = incomingSessions.filter((row) => !existingSessionIds.has(String(row.id || '')) && !existingSessionKeys.has(`${String(row.session_date || '')}|${String(row.session_type || '')}|${String(row.start_time || '')}|${String(row.end_time || '')}|${Number(row.duration_minutes || 0)}`)).map((row) => ({ ...row, user_id: userId }));
+
+    const existingReviewIds = new Set(reviews.map((row) => row.id));
+    const existingReviewKeys = new Set(reviews.map((row) => row.week_key));
+    const incomingReviews = (Array.isArray(payload.weekly_reviews) ? payload.weekly_reviews : []).filter((row) => row && typeof row === 'object') as Record<string, unknown>[];
+    const reviewRows = incomingReviews.filter((row) => !existingReviewIds.has(String(row.id || '')) && !existingReviewKeys.has(String(row.week_key || ''))).map((row) => ({ ...row, user_id: userId }));
+
+    const results: string[] = [];
+    if (tradeRows.length) {
+      const { error } = await supabase.from('trades').insert(tradeRows);
+      results.push(error ? `Trades failed: ${normalizeSupabaseError(error.message)}` : `Trades imported: ${tradeRows.length}`);
+    }
+    if (noTradeRows.length) {
+      const { error } = await supabase.from('no_trade_days').insert(noTradeRows);
+      results.push(error ? `No-trade days failed: ${normalizeSupabaseError(error.message)}` : `No-trade days imported: ${noTradeRows.length}`);
+    }
+    if (sessionRows.length) {
+      const { error } = await supabase.from('sessions').insert(sessionRows);
+      results.push(error ? `Sessions failed: ${normalizeSupabaseError(error.message)}` : `Sessions imported: ${sessionRows.length}`);
+    }
+    if (reviewRows.length) {
+      const { error } = await supabase.from('weekly_reviews').insert(reviewRows);
+      results.push(error ? `Weekly reviews failed: ${normalizeSupabaseError(error.message)}` : `Weekly reviews imported: ${reviewRows.length}`);
+    }
+    if (!tradeRows.length && !noTradeRows.length && !sessionRows.length && !reviewRows.length) {
+      results.push('No new activity rows were imported (duplicate/safety checks skipped all rows).');
+    }
+    if (Array.isArray(payload.attachments) && payload.attachments.length) {
+      results.push(`Attachment metadata in file: ${payload.attachments.length}. Binary files are not restored automatically in this phase.`);
+    }
+    results.push('Settings/catalog restore is not applied in this phase.');
+    await loadAll();
+    setImportStatus(results.join(' | '));
+    setImportReplaceConfirmText('');
+  }
+
+  function downloadExportJson(scope: 'all_time' | 'selected_period') {
+    const { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments } = getExportCollections(scope);
+    const payload = {
+      exported_at: new Date().toISOString(),
+      user_id: userId,
+      email: email || null,
+      scope,
+      selected_period: scope === 'selected_period' ? { start: periodRange.start, end: periodRange.end, period_type: dashboardPeriod } : null,
+      includes: {
+        trades: exportTrades.length,
+        no_trade_days: exportNoTrades.length,
+        sessions: exportSessions.length,
+        weekly_reviews: exportReviews.length,
+        attachments: exportAttachments.length
+      },
+      notes: [
+        'Attachment binaries are not included in this export.',
+        'Attachment metadata includes file_path and linked row IDs for manual backup/restore workflows.'
+      ],
+      trades: exportTrades,
+      no_trade_days: exportNoTrades,
+      sessions: exportSessions,
+      weekly_reviews: exportReviews,
+      attachments: exportAttachments
+    };
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadTextFile(`journal_export_${scope}_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  }
+
+  function downloadExportCsv(scope: 'all_time' | 'selected_period') {
+    const { exportTrades, exportNoTrades, exportSessions, exportReviews, exportAttachments } = getExportCollections(scope);
+    const rows: Record<string, string | number | null | undefined>[] = [
+      ...exportTrades.map((trade) => ({
+        record_type: 'trade',
+        date: trade.trade_date,
+        ticker: trade.ticker,
+        family: trade.family,
+        model: trade.model,
+        classification: trade.classification,
+        result_usd: Number(trade.pnl || 0),
+        r_multiple: Number(trade.r_multiple || 0),
+        emotional_pressure: trade.emotional_pressure ?? '',
+        entry_emotion: resolveEntryEmotion(trade),
+        in_trade_emotion: resolveInTradeEmotion(trade),
+        no_trade_mindset: '',
+        mistake_tags: normalizeMistakeTags(trade.mistake_tags).join('|'),
+        trade_mode: isPaperTrade(trade) ? 'paper' : 'live',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: trade.notes || ''
+      })),
+      ...exportNoTrades.map((entry) => ({
+        record_type: 'no_trade_day',
+        date: entry.day_date,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        no_trade_mindset: resolveNoTradeMindset(entry as NoTradeDayRow),
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: entry.reason,
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: entry.notes || ''
+      })),
+      ...exportSessions.map((session) => ({
+        record_type: 'session',
+        date: session.session_date,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: session.session_type,
+        session_duration_minutes: Number(session.duration_minutes || 0),
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: session.notes || ''
+      })),
+      ...exportReviews.map((review) => ({
+        record_type: 'weekly_review',
+        date: review.week_key,
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: review.week_key,
+        review_q1: review.q1 || '',
+        review_q2: review.q2 || '',
+        review_q3: review.q3 || '',
+        review_q_paper: review.q_paper || '',
+        attachment_file_name: '',
+        attachment_file_path: '',
+        attachment_mime_type: '',
+        attachment_byte_size: '',
+        notes: ''
+      })),
+      ...exportAttachments.map((file) => ({
+        record_type: 'attachment_metadata',
+        date: '',
+        ticker: '',
+        family: '',
+        model: '',
+        classification: '',
+        result_usd: '',
+        r_multiple: '',
+        emotional_pressure: '',
+        entry_emotion: '',
+        in_trade_emotion: '',
+        no_trade_mindset: '',
+        mistake_tags: '',
+        trade_mode: '',
+        no_trade_reason: '',
+        session_type: '',
+        session_duration_minutes: '',
+        review_week_key: '',
+        review_q1: '',
+        review_q2: '',
+        review_q3: '',
+        review_q_paper: '',
+        attachment_file_name: file.file_name,
+        attachment_file_path: file.file_path,
+        attachment_mime_type: file.mime_type,
+        attachment_byte_size: Number(file.byte_size || 0),
+        notes: `linked_trade_id:${file.trade_id || ''};linked_no_trade_day_id:${file.no_trade_day_id || ''};linked_session_id:${file.session_id || ''}`
+      }))
+    ];
+    const csv = recordsToCsv(rows);
+    const stamp = new Date().toISOString().slice(0, 10);
+    downloadTextFile(`journal_export_${scope}_${stamp}.csv`, csv, 'text/csv;charset=utf-8');
+  }
+
+  function onChangeFamily(value: string) {
+    setAddTradeFamily(value);
+    const options = familyModels[value] || [NA_MODEL];
+    const resolvedModel = options.includes(addTradeModel) ? addTradeModel : options[0];
+    setAddTradeModel(resolvedModel);
+    setTradeDraft((prev) => ({ ...prev, family: value, model: resolvedModel }));
+  }
+
+  async function runTradeExtraction(files: File[]) {
+    setTradeExtract({ ocrStatus: 'idle', ocrSteps: ['Waiting for extraction request...'] });
+    const next = await extractTradeSuggestions(files, (debug) => {
+      setTradeExtract((prev) => ({ ...(prev || {}), ...debug }));
+    });
+    setTradeExtract(next || null);
+  }
+
+  async function runNoTradeExtraction(files: File[]) {
+    setNoTradeExtract({ ocrStatus: 'idle', ocrSteps: ['Waiting for extraction request...'] });
+    const next = await extractNoTradeSuggestions(files, (debug) => {
+      setNoTradeExtract((prev) => ({ ...(prev || {}), ...debug }));
+    });
+    setNoTradeExtract(next || null);
+  }
+
+  function applyTradeSuggestion(key: keyof TradeExtractSuggestions, value: string) {
+    if (key === 'ticker') {
+      const normalizedTicker = normalizeInstrument(String(value || ''));
+      setTradeDraft((prev) => ({ ...prev, ticker: normalizedTicker }));
+      if (normalizedTicker && settings) {
+        void saveSettings({ ...settings, instruments: normalizeUniqueInstruments([...(settings.instruments || []), normalizedTicker]) });
+      }
+    } else if (key === 'r_multiple') {
+      const parts = parseRMultipleToParts(value);
+      setTradeDraft((prev) => ({ ...prev, ...parts }));
+    } else if (key === 'trade_date' || key === 'pnl' || key === 'minutes_in_trade') {
+      setTradeDraft((prev) => ({ ...prev, [key]: value }));
+    } else {
+      return;
+    }
+    setTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function rejectTradeSuggestion(key: keyof TradeExtractSuggestions) {
+    setTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function applyNoTradeSuggestion<K extends 'day_date' | 'reason'>(key: K, value: string) {
+    setNoTradeDraft((prev) => ({ ...prev, [key]: value }));
+    setNoTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  function rejectNoTradeSuggestion(key: keyof NoTradeExtractSuggestions) {
+    setNoTradeExtract((prev) => {
+      if (!prev) return prev;
+      const next = { ...prev };
+      delete (next as Record<string, unknown>)[key];
+      return next;
+    });
+  }
+
+  const reviewStatus = `${selectedWeekKey === currentWeekKey() ? 'Current week' : 'Past week'} • ${reviewRow ? 'Saved review' : 'Unsaved draft for selected week'}`;
+  const classificationLocksSetup = forcedInvalidClassifications.includes(addTradeClassification);
+  const activeHelpItems: readonly HelpItem[] = openHelp ? helpDefinitions[openHelp] : [];
+  const initials = buildInitials(accountFirstName, accountLastName, email);
+  const logType: LogType = logMode === 'session' ? 'session' : 'trade_log';
+  const showTradePlaybookReferences = logMode === 'trade' && (tradeLogSubtype === 'live_trade' || tradeLogSubtype === 'paper_trade');
+  const decisionByConvertedTradeId = useMemo(() => {
+    const mapped = new Map<string, DecisionCheckRow>();
+    for (const decision of decisionChecks) {
+      if (decision.converted_trade_id) mapped.set(decision.converted_trade_id, decision);
+    }
+    return mapped;
+  }, [decisionChecks]);
+
+  function openPlaybookSection(sectionKey: string) {
+    setTab('playbook');
+    setPlaybookOpen(Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((entry) => [entry.key, entry.key === sectionKey])));
+    setPlaybookJumpOpen(false);
+    requestAnimationFrame(() => {
+      detailAnchors.current[`playbook-${sectionKey}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  function renderPlaybookReferenceCards(
+    sections: Array<{ key: string; title: string; content: string }>,
+    context: 'Pre-session' | 'Trade entry' | 'Review'
+  ) {
+    if (!sections.length) return null;
+    return (
+      <section className="playbook-reference-group" aria-label={`${context} playbook references`}>
+        <div className="small muted">{context} playbook references</div>
+        <div className="stack">
+          {sections.map((section) => {
+            const isOpen = Boolean(playbookReferenceOpen[section.key]);
+            return (
+              <article key={`reference-${context}-${section.key}`} className="trade playbook-reference-card">
+                <div className="row" style={{ alignItems: 'center', gap: 8 }}>
+                  <strong className="small">{section.title}</strong>
+                  <button className="inline playbook-reference-toggle" type="button" onClick={() => setPlaybookReferenceOpen((prev) => ({ ...prev, [section.key]: !isOpen }))}>
+                    {isOpen ? 'Collapse' : 'Expand'}
+                  </button>
+                </div>
+                <div className="playbook-reference-body" style={{ marginTop: 4 }}>
+                  <RichTextContent
+                    value={isOpen ? section.content : playbookExcerpt(section.content)}
+                    emptyLabel="No notes yet."
+                  />
+                </div>
+                <div className="row" style={{ justifyContent: 'flex-end', marginTop: 6 }}>
+                  <button className="inline playbook-reference-link" type="button" onClick={() => openPlaybookSection(section.key)}>
+                    View in Playbook
+                  </button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <main className="app">
+      <header className="header">
+        <div>
+          <div className="sub">JY Trading Journal</div>
+          <h1>Own your process.<br />Build consistency.</h1>
+        </div>
+        <div className="stack" style={{ alignItems: 'flex-end' }}>
+          <button
+            className="inline account-avatar"
+            type="button"
+            aria-expanded={accountOpen}
+            onClick={() => setAccountOpen((open) => !open)}
+          >
+            {initials}
+          </button>
+        </div>
+      </header>
+      {accountOpen ? <button className="account-backdrop" aria-label="Close account menu" type="button" onClick={() => setAccountOpen(false)} /> : null}
+      {accountOpen && (
+        <section className="card stack account-flyout" style={{ marginTop: -6 }}>
+          <div className="row">
+            <strong>Account</strong>
+            <span className="badge">{initials}</span>
+          </div>
+          <div className="small muted">Signed in as {email || '—'}</div>
+          <div className="small muted">Profile name: {[accountFirstName, accountLastName].join(' ').trim() || 'Not set'}</div>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+            <button className="inline" type="button" onClick={() => { setShowAccountSettings(true); setAccountOpen(false); }}>Settings</button>
+            <button className="inline" type="button" onClick={() => { setTab('playbook'); setAccountOpen(false); }}>Playbook</button>
+            <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
+          </div>
+        </section>
+      )}
+      {showAccountSettings && settings && (
+        <section className="card stack settings-root">
+          <div className="row">
+            <strong>Account settings</strong>
+            <button className="inline" type="button" onClick={() => setShowAccountSettings(false)}>Close</button>
+          </div>
+          <article className="trade stack">
+            <strong>Profile & account</strong>
+            <div className="small muted">Used for avatar initials and profile display.</div>
+            <label className="small muted" htmlFor="account-first-name">First name</label>
+            <input id="account-first-name" placeholder="First name" value={accountFirstName} onChange={(e) => setAccountFirstName(e.target.value)} />
+            <label className="small muted" htmlFor="account-last-name">Last name</label>
+            <input id="account-last-name" placeholder="Last name" value={accountLastName} onChange={(e) => setAccountLastName(e.target.value)} />
+            <label className="small muted" htmlFor="account-email">Email</label>
+            <input id="account-email" value={email || ''} disabled />
+          </article>
+          <article className="trade stack">
+            <strong>Session defaults</strong>
+            <div className="small muted">Used to prefill session logging times. You can still override in Log.</div>
+            <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-chart-start">Chart session start</label>
+                <input className="settings-session-time-control" id="settings-chart-start" type="time" value={normalizeTimeInput(settings.chart_session_start_default) || SESSION_DEFAULT_TIMES.chart.start} onChange={(e) => setSettings({ ...settings, chart_session_start_default: e.target.value })} />
+              </div>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-chart-end">Chart session end</label>
+                <input className="settings-session-time-control" id="settings-chart-end" type="time" value={normalizeTimeInput(settings.chart_session_end_default) || SESSION_DEFAULT_TIMES.chart.end} onChange={(e) => setSettings({ ...settings, chart_session_end_default: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid settings-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-journal-start">Journal session start</label>
+                <input className="settings-session-time-control" id="settings-journal-start" type="time" value={normalizeTimeInput(settings.journal_session_start_default) || SESSION_DEFAULT_TIMES.journal.start} onChange={(e) => setSettings({ ...settings, journal_session_start_default: e.target.value })} />
+              </div>
+              <div className="stack">
+                <label className="small muted" htmlFor="settings-journal-end">Journal session end</label>
+                <input className="settings-session-time-control" id="settings-journal-end" type="time" value={normalizeTimeInput(settings.journal_session_end_default) || SESSION_DEFAULT_TIMES.journal.end} onChange={(e) => setSettings({ ...settings, journal_session_end_default: e.target.value })} />
+              </div>
+            </div>
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Mistake catalog</strong>
+              <span className="small muted">{activeMistakeCatalog.length} active</span>
+            </div>
+            <div className="small muted">Active mistakes are shown in Log → Trade selection. Hidden items stay out of pickers but remain on existing records.</div>
+            <div className="stack">
+              {activeMistakeCatalog.length ? activeMistakeCatalog.map((tag) => (
+                <div key={`active-${tag}`} className="row" style={{ gap: 8 }}>
+                  <span className="badge">{tag}</span>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      const nextActive = activeMistakeCatalog.filter((item) => item !== tag);
+                      const nextHidden = normalizeHiddenMistakeCatalog([...(settings.mistake_catalog_hidden || []), tag], nextActive);
+                      void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                    }}
+                  >
+                    Hide
+                  </button>
+                </div>
+              )) : <div className="small muted">No active mistakes yet.</div>}
+            </div>
+            <div className="row">
+              <input placeholder="Add mistake category" value={newCatalogMistakeTag} onChange={(e) => setNewCatalogMistakeTag(e.target.value)} />
+              <button
+                className="inline"
+                type="button"
+                onClick={() => {
+                  const next = normalizeTag(newCatalogMistakeTag);
+                  if (!next) return;
+                  const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden);
+                  const nextHidden = normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), nextActive);
+                  void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                  setNewCatalogMistakeTag('');
+                }}
+              >
+                Add
+              </button>
+            </div>
+            {hiddenMistakeCatalog.length ? (
+              <details>
+                <summary className="small muted">Hidden mistakes ({hiddenMistakeCatalog.length})</summary>
+                <div className="stack" style={{ marginTop: 8 }}>
+                  {hiddenMistakeCatalog.map((tag) => (
+                    <div key={`hidden-${tag}`} className="row" style={{ gap: 8 }}>
+                      <span className="badge">{tag}</span>
+                      <button
+                        className="inline"
+                        type="button"
+                        onClick={() => {
+                          const nextActive = normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), tag], settings.mistake_catalog_hidden);
+                          const nextHidden = normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== tag), nextActive);
+                          void saveSettings({ ...settings, mistake_catalog: nextActive, mistake_catalog_hidden: nextHidden });
+                        }}
+                      >
+                        Restore
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            ) : null}
+          </article>
+          <article className="trade stack">
+            <strong>About</strong>
+            <div className="small muted">Version <span className="badge">{APP_VERSION}</span></div>
+          </article>
+          <article className="trade stack">
+            <strong>Account actions</strong>
+            <div className="small muted">Saving updates profile and settings above. Sign out ends the current session on this device.</div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button
+                className="inline"
+                type="button"
+                onClick={() => {
+                  const nextDisplay = [accountFirstName, accountLastName].join(' ').trim() || settings.display_name;
+                  void saveSettings({ ...settings, display_name: nextDisplay });
+                }}
+              >
+                Save settings
+              </button>
+              <button className="inline" type="button" onClick={() => void onSignOut()}>Sign out</button>
+            </div>
+          </article>
+          <article className="trade stack danger-zone">
+            <div className="row">
+              <strong>Clean start (activity reset)</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">
+              Use this when preparing a clean go-live account. This removes activity data only for <strong>{email || userId}</strong>.
+            </div>
+            <div className="small muted">
+              Deletes: trades, no-trade days, sessions, weekly reviews, and attachment records + storage file cleanup attempts.
+            </div>
+            <div className="small muted">
+              Preserves: auth identity, profile name, instrument catalog, and active/hidden mistake catalog.
+            </div>
+            <button className="inline danger-button" type="button" onClick={() => setResetActivityOpen((open) => !open)}>
+              {resetActivityOpen ? 'Cancel reset' : 'Reset activity data'}
+            </button>
+            {resetActivityOpen ? (
+              <div className="stack reset-panel">
+                <label className="small muted" htmlFor="reset-confirm">
+                  Type <strong>RESET</strong> to confirm permanent deletion for this signed-in user.
+                </label>
+                <input
+                  id="reset-confirm"
+                  placeholder="Type RESET"
+                  value={resetConfirmText}
+                  onChange={(e) => setResetConfirmText(e.target.value)}
+                />
+                <button className="danger-button" type="button" onClick={() => void resetActivityData()}>
+                  Confirm clean start
+                </button>
+                <div className="small muted">If storage file deletion is partially blocked, you will see a manual cleanup message.</div>
+              </div>
+            ) : null}
+            {resetStorageNotice ? <div className="small">{resetStorageNotice}</div> : null}
+            <details>
+              <summary className="small muted">Post-reset smoke test checklist</summary>
+              <div className="stack small muted" style={{ marginTop: 8 }}>
+                <div>1) Log one live trade and one paper trade in Log → Trade.</div>
+                <div>2) Log one no-trade day and one session.</div>
+                <div>3) Save one weekly review in Review tab.</div>
+                <div>4) Upload one attachment on a trade/no-trade entry.</div>
+                <div>5) Verify Dashboard/History/Review each show the new items correctly.</div>
+              </div>
+            </details>
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Backup & export</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">Export includes journal activity for <strong>{email || userId}</strong>. Choose scope, then download CSV (spreadsheet) or JSON (full-fidelity backup).</div>
+            <div style={{ maxWidth: 280 }}>
+              <label className="small muted" htmlFor="export-scope">Export scope</label>
+              <select id="export-scope" value={exportScope} onChange={(e) => setExportScope(e.target.value as 'all_time' | 'selected_period')}>
+                <option value="all_time">All time</option>
+                <option value="selected_period">Selected dashboard period</option>
+              </select>
+            </div>
+            {exportScope === 'selected_period'
+              ? <div className="small muted">Selected period: {formatPeriodLabel(dashboardPeriod, dashboardAnchor, periodRange.start, periodRange.end)}</div>
+              : <div className="small muted">All-time export includes all rows visible to this signed-in user.</div>}
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" onClick={() => downloadExportCsv(exportScope)}>Export CSV</button>
+              <button className="inline" type="button" onClick={() => downloadExportJson(exportScope)}>Export JSON</button>
+            </div>
+            <div className="small muted">
+              Included data types: trades, no-trade days, sessions, weekly reviews, and attachment metadata.
+            </div>
+            <div className="small muted">
+              Attachments: file binaries are not bundled in CSV/JSON. Export includes file metadata + storage paths only; private attachment access behavior is unchanged.
+            </div>
+          </article>
+          <article className="trade stack">
+            <div className="row">
+              <strong>Import / restore</strong>
+              <span className="badge">Current user only</span>
+            </div>
+            <div className="small muted">Use this to safely restore from JSON backups exported by this app. Import is always manual and deliberate.</div>
+            <label className="small muted" htmlFor="import-file">Select JSON export file</label>
+            <input id="import-file" type="file" accept="application/json,.json" onChange={(e) => onSelectImportFile(e.target.files?.[0] || null)} />
+            <label className="small muted">Import mode</label>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" style={importMode === 'merge' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setImportMode('merge')}>Merge import</button>
+              <button className="inline" type="button" style={importMode === 'replace_activity' ? { background: '#74461f', borderColor: '#915a32', color: '#fff2ea' } : undefined} onClick={() => setImportMode('replace_activity')}>Replace activity data</button>
+            </div>
+            <div className="small muted">
+              Merge = adds rows with duplicate safety checks. Replace = clears current user activity first, then imports backup activity rows.
+            </div>
+            {importMode === 'replace_activity' ? (
+              <div className="stack">
+                <label className="small muted" htmlFor="replace-import-confirm">Type <strong>REPLACE</strong> to enable replace mode import.</label>
+                <input id="replace-import-confirm" placeholder="Type REPLACE" value={importReplaceConfirmText} onChange={(e) => setImportReplaceConfirmText(e.target.value)} />
+              </div>
+            ) : null}
+            {importPreview ? (
+              <section className="trade stack" style={{ padding: '10px 12px' }}>
+                <strong>Import preview</strong>
+                <div className="small">Trades: {importPreview.counts.trades}</div>
+                <div className="small">No-trade days: {importPreview.counts.no_trade_days}</div>
+                <div className="small">Sessions: {importPreview.counts.sessions}</div>
+                <div className="small">Weekly reviews: {importPreview.counts.weekly_reviews}</div>
+                <div className="small">Attachment metadata rows: {importPreview.counts.attachments}</div>
+                {importPreview.warnings.map((warning) => <div key={warning} className="small muted">• {warning}</div>)}
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => void runImportRestore()}>Confirm import</button>
+                  <button className="inline" type="button" onClick={() => { setImportPreview(null); setImportStatus('Import canceled.'); }}>Cancel</button>
+                </div>
+              </section>
+            ) : null}
+            {importStatus ? <div className="small muted">{importStatus}</div> : null}
+          </article>
+        </section>
+      )}
+
+      {tab === 'dashboard' && (
+        <section className="stack">
+          <section className="card stack dashboard-controls control-card">
+            <div className="dashboard-controls-grid">
+              <div className="dashboard-control-item">
+                <label className="small muted" htmlFor="period-type">Period type</label>
+                <select id="period-type" value={dashboardPeriod} onChange={(e) => setDashboardPeriod(e.target.value as DashboardPeriod)}>
+                  <option value="weekly">Week</option>
+                  <option value="monthly">Month</option>
+                  <option value="quarterly">Quarter</option>
+                  <option value="annual">Year</option>
+                  <option value="ytd">YTD</option>
+                  <option value="lifetime">All time (lifetime)</option>
+                </select>
+              </div>
+              <div className="dashboard-control-item">
+                <label className="small muted">Jump to</label>
+                <select
+                  value={periodJumpOptions.selected}
+                  onChange={(e) => {
+                    const next = periodJumpOptions.options.find((opt) => opt.value === e.target.value);
+                    if (next) setDashboardAnchor(next.anchor);
+                  }}
+                >
+                  {periodJumpOptions.options.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="dashboard-control-item">
+                <label className="small muted" htmlFor="dashboard-trade-filter">Trade type</label>
+                <select id="dashboard-trade-filter" value={dashboardTradeFilter} onChange={(e) => setDashboardTradeFilter(e.target.value as TradeTypeFilter)}>
+                  <option value="all">All</option>
+                  <option value="live">Live only</option>
+                  <option value="paper">Paper only</option>
+                </select>
+              </div>
+            </div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, -1))}>Prev</button>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(new Date())}>Today</button>
+              <button className="inline" type="button" onClick={() => setDashboardAnchor(shiftPeriod(dashboardAnchor, dashboardPeriod, 1))}>Next</button>
+            </div>
+            {!periodHasActivity ? (
+              <div className="small muted dashboard-empty-state">No trades, no-trade days, or sessions match this period/filter yet.</div>
+            ) : null}
+          </section>
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Snapshot</div>
+          <section className="card stack">
+            <details>
+              <summary className="row" style={{ cursor: 'pointer', listStyle: 'none' }}>
+                <strong>Lifetime snapshot (by trade type)</strong>
+                <span className="small muted">{lifetimeTrades.length} trades · {lifetimeNetPnl >= 0 ? '+' : ''}{lifetimeNetPnl.toFixed(0)} · {lifetimeWinRate.toFixed(0)}%</span>
+              </summary>
+              <div className="small muted" style={{ marginTop: 8 }}>Scope: trade type filter only.</div>
+              <div className="grid" style={{ marginTop: 8 }}>
+                <article className="trade"><div className="muted small">Trades</div><div>{lifetimeTrades.length}</div></article>
+                <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: lifetimeNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeNetPnl.toFixed(2)}</div></article>
+                <article className="trade"><div className="muted small">Win rate</div><div style={{ color: lifetimeWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{lifetimeWinRate.toFixed(1)}%</div></article>
+                <article className="trade"><div className="muted small">No-trade days</div><div>{lifetimeNoTrades.length}</div></article>
+              </div>
+            </details>
+          </section>
+
+          <section className="card stack">
+            <strong>Performance (by trade type & period)</strong>
+            <div className="small muted">Scope: trade type filter + selected period.</div>
+            <div className="grid">
+              <article className="trade"><div className="muted small">Net P&L</div><div style={{ color: periodNetPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Net R</div><div style={{ color: periodNetR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodNetR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Win rate</div><div style={{ color: periodWinRate >= 50 ? '#4ad66d' : '#ff6b6b' }}>{periodWinRate.toFixed(1)}%</div></article>
+              <article className="trade"><div className="muted small">Avg R / trade</div><div style={{ color: periodAvgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodAvgR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Avg hold time (winners)</div><div>{winningTrades.length ? formatMinutesLabel(Math.round(avgHoldWinners)) : '—'}</div></article>
+              <article className="trade"><div className="muted small">Avg hold time (losers)</div><div>{losingTrades.length ? formatMinutesLabel(Math.round(avgHoldLosers)) : '—'}</div></article>
+              <article className="trade"><div className="muted small">Expectancy / trade ($)</div><div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Expectancy / trade (R)</div><div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div></article>
+              <article className="trade"><div className="muted small">Average winner result</div><div style={{ color: '#4ad66d' }}>{avgWinnerResult.toFixed(2)}</div></article>
+              <article className="trade"><div className="muted small">Average loser result</div><div style={{ color: '#ff6b6b' }}>{avgLoserResult.toFixed(2)}</div></article>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Activity & process (by trade type & period)</strong>
+            <div className="small muted">Scope: trade type filter + selected period.</div>
+            <div className="grid">
+              <article className="trade"><div className="muted small">Trades</div><div>{periodTrades.length}</div></article>
+              <article className="trade"><div className="muted small">No-trade days</div><div>{periodNoTrades.length}</div></article>
+              <article className="trade">
+                <div className="muted small">Journal sessions</div>
+                <div>{formatMinutesLabel(periodJournalMinutes)}</div>
+                <div className="small muted">Avg {formatMinutesLabel(periodJournalSessions.length ? Math.round(periodJournalMinutes / periodJournalSessions.length) : 0)} / session</div>
+                <div className="small muted">{periodJournalSessions.length} {periodJournalSessions.length === 1 ? 'session' : 'sessions'}</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Chart sessions</div>
+                <div>{formatMinutesLabel(periodChartMinutes)}</div>
+                <div className="small muted">Avg {formatMinutesLabel(periodChartSessions.length ? Math.round(periodChartMinutes / periodChartSessions.length) : 0)} / session</div>
+                <div className="small muted">{periodChartSessions.length} {periodChartSessions.length === 1 ? 'session' : 'sessions'}</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Session days</div>
+                <div>{periodSessionDays}</div>
+                <div className="small muted">Unique dates with at least one session</div>
+              </article>
+              <article className="trade"><div className="muted small">Avg emotional pressure</div><div>{periodAvgEmotion.toFixed(2)} / 5</div></article>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Setup Quality</strong>
+            <div className="small muted">Scope: selected period + trade type filter. Uses graded trades only.</div>
+            <div className="grid">
+              <article className="trade">
+                <div className="muted small">Avg setup score</div>
+                <div>{avgSetupScore == null ? '—' : avgSetupScore.toFixed(1)}</div>
+                <div className="small muted">{gradedTrades.length} graded trade{gradedTrades.length === 1 ? '' : 's'}</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Quality outcome insight</div>
+                {strongQualityAvgR == null && weakQualityAvgR == null ? (
+                  <div className="small muted">Sample too small for A/A+ vs C/D comparison.</div>
+                ) : (
+                  <>
+                    <div className="small">A/A+ setups avg: <span style={{ color: rValueColor(strongQualityAvgR || 0) }}>{strongQualityAvgR == null ? '—' : `${strongQualityAvgR.toFixed(2)}R`}</span></div>
+                    <div className="small">C/D setups avg: <span style={{ color: rValueColor(weakQualityAvgR || 0) }}>{weakQualityAvgR == null ? '—' : `${weakQualityAvgR.toFixed(2)}R`}</span></div>
+                  </>
+                )}
+              </article>
+            </div>
+          </section>
+
+          <section className="card stack">
+            <strong>Process &amp; Playbook Alignment</strong>
+            <div className="small muted">Scope: selected period + trade type filter. Consolidated validation, setup alignment, and drift/exception signals.</div>
+            <div className="grid">
+              <article className="trade">
+                <div className="muted small">Validation accuracy</div>
+                {dashboardProcessSummary.bias.sampleCount ? (
+                  <div>Bias: {dashboardProcessSummary.bias.accuracy.toFixed(0)}%</div>
+                ) : <div className="small muted">Not enough post-session bias reviews yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.bias.sampleCount} bias review{dashboardProcessSummary.bias.sampleCount === 1 ? '' : 's'} (Yes/Partially = accurate)</div>
+                {dashboardProcessSummary.marketCondition.sampleCount ? (
+                  <div>Market condition: {dashboardProcessSummary.marketCondition.accuracy.toFixed(0)}%</div>
+                ) : <div className="small muted">Not enough market-condition reviews yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.marketCondition.sampleCount} condition review{dashboardProcessSummary.marketCondition.sampleCount === 1 ? '' : 's'} (Yes/Partially = accurate)</div>
+              </article>
+              <article className="trade">
+                <div className="muted small">Setup quality alignment</div>
+                {dashboardProcessSummary.setup.gradedCount ? (
+                  <div>A/A+ setup rate: {dashboardProcessSummary.setup.aaRate.toFixed(0)}%</div>
+                ) : <div className="small muted">No graded trades in this scope yet.</div>}
+                <div className="small muted">{dashboardProcessSummary.setup.gradedCount} graded trade{dashboardProcessSummary.setup.gradedCount === 1 ? '' : 's'} in scope</div>
+                {dashboardPlaybookAlignment.setup.gradedCount ? (
+                  <>
+                    <div className="small">POI quality rate: {dashboardPlaybookAlignment.setup.poiQualityRate.toFixed(0)}%</div>
+                    <div className="small">Target room discipline: {dashboardPlaybookAlignment.setup.targetRoomRate.toFixed(0)}%</div>
+                  </>
+                ) : <div className="small muted">Need graded trades for POI/target-room alignment signals.</div>}
+              </article>
+              <article className="trade">
+                <div className="muted small">Drift & exceptions</div>
+                <div className="small">Most common rule drift: <strong>{dashboardPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</strong></div>
+                <div className="small">Rule-following losses: <strong>{dashboardProcessSummary.setup.ruleFollowingLosses}</strong> · Won despite weak setup: <strong>{dashboardProcessSummary.setup.wonDespiteWeak}</strong></div>
+                {dashboardProcessSummary.setup.strongAvgR == null && dashboardProcessSummary.setup.weakAvgR == null ? (
+                  <div className="small muted" style={{ marginTop: 6 }}>Outcome comparison needs A/A+ or C/D graded samples (small sample right now).</div>
+                ) : (
+                  <div className="small muted" style={{ marginTop: 6 }}>
+                    A/A+ setups avg: {dashboardProcessSummary.setup.strongAvgR == null ? '—' : `${dashboardProcessSummary.setup.strongAvgR.toFixed(2)}R`} · C/D setups avg: {dashboardProcessSummary.setup.weakAvgR == null ? '—' : `${dashboardProcessSummary.setup.weakAvgR.toFixed(2)}R`}
+                  </div>
+                )}
+              </article>
+            </div>
+            <div className="small muted">Definitions preserved: Bias/Market condition accuracy = post-session validations marked Yes or Partially (N/A excluded). A/A+ setup rate = graded trades with setup grade A/A+. POI quality rate = Strong confluence POI or Clean POI only. Target room discipline = 2R+ or 1.5R–2R.</div>
+          </section>
+
+          <section className="card stack control-card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>Performance chart</strong>
+              <select value={chartView} onChange={(e) => setChartView(e.target.value as 'daily' | 'cumulative')} style={{ width: 'auto', maxWidth: 140 }}>
+                <option value="daily">Daily</option>
+                <option value="cumulative">Cumulative</option>
+              </select>
+            </div>
+            <div className="chart-overlay-controls">
+              <span className="small muted">Overlays</span>
+              <button className="inline" type="button" onClick={() => setOverlayR((v) => !v)} style={overlayR ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayR ? '✓ ' : ''}R line
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlayTradeCount((v) => !v)} style={overlayTradeCount ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayTradeCount ? '✓ ' : ''}Trade count
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlayChartTime((v) => !v)} style={overlayChartTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayChartTime ? '✓ ' : ''}Chart time
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlayJournalTime((v) => !v)} style={overlayJournalTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlayJournalTime ? '✓ ' : ''}Journal time
+              </button>
+              <button className="inline" type="button" onClick={() => setOverlaySessionTime((v) => !v)} style={overlaySessionTime ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0', width: 'auto' } : { width: 'auto' }}>
+                {overlaySessionTime ? '✓ ' : ''}Total session time
+              </button>
+            </div>
+            {(overlayR || overlayTradeCount || overlayChartTime || overlayJournalTime || overlaySessionTime) ? (
+              <div className="stack" style={{ gap: 6 }}>
+                <div className="small muted">Right axis focus</div>
+                <div className="row" style={{ gap: 6, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'r' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('r')}>R</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'trade_count' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('trade_count')}>Trade count</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'chart_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('chart_time')}>Chart time</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'journal_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('journal_time')}>Journal time</button>
+                  <button className="inline" type="button" style={chartRightAxisMode === 'session_time' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setChartRightAxisMode('session_time')}>Total time</button>
+                </div>
+              </div>
+            ) : null}
+            {!periodTrades.length ? <div className="small muted">No trades for the selected period + trade type filter.</div> : null}
+            <PerformanceChart
+              points={chartBuckets}
+              view={chartView}
+              showROverlay={overlayR}
+              showTradeCountOverlay={overlayTradeCount}
+              showChartTimeOverlay={overlayChartTime}
+              showJournalTimeOverlay={overlayJournalTime}
+              showSessionTimeOverlay={overlaySessionTime}
+              rightAxisMode={chartRightAxisMode}
+            />
+          </section>
+
+          <section className="card stack control-card">
+            <strong>{dashboardPeriod === 'monthly' ? 'Calendar month view' : 'Context calendar (anchor month)'}</strong>
+            <div className="row calendar-toggle-row" style={{ justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+              <div className="stack" style={{ gap: 6, width: 'auto' }}>
+                <div className="small muted">Range view</div>
+                <div className="row" style={{ gap: 6, width: 'auto' }}>
+                  <button className="inline" type="button" style={calendarView === 'month' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarView('month')}>{calendarView === 'month' ? '✓ ' : ''}Month</button>
+                  <button className="inline" type="button" style={calendarView === 'weekly' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarView('weekly')}>{calendarView === 'weekly' ? '✓ ' : ''}Weekly</button>
+                </div>
+              </div>
+              <div className="stack" style={{ gap: 6, width: 'auto' }}>
+                <div className="small muted">Calendar metric</div>
+                <div className="row" style={{ gap: 6, width: 'auto' }}>
+                  <button className="inline" type="button" style={calendarMetric === 'pnl' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarMetric('pnl')}>{calendarMetric === 'pnl' ? '✓ ' : ''}$</button>
+                  <button className="inline" type="button" style={calendarMetric === 'r' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setCalendarMetric('r')}>{calendarMetric === 'r' ? '✓ ' : ''}R</button>
+                </div>
+              </div>
+            </div>
+            <div className="small muted">Cell colors: green = positive, red = negative, gray = explicit no-trade, neutral = blank day{dashboardTradeFilter === 'live' ? ' · PT = paper-only activity' : dashboardTradeFilter === 'paper' ? ' · LT = live-only activity' : ''}.</div>
+            <div className="small muted">
+              {dashboardPeriod === 'monthly'
+                ? calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+                : `Showing ${calendarMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' })} only as context. Metrics above use ${periodTypeLabel(dashboardPeriod)}.`}
+            </div>
+            {calendarView === 'month' ? (
+              <div className="calendar-grid">
+                {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d) => <div key={d} className="small muted" style={{ textAlign: 'center' }}>{d}</div>)}
+                {calendarCells.map((cell) => {
+                  const metricValue = calendarMetric === 'pnl' ? cell.pnl : cell.rTotal;
+                  const calendarCellTone = cell.isOutside
+                    ? 'calendar-cell-outside'
+                    : metricValue > 0
+                      ? 'calendar-cell-positive'
+                      : metricValue < 0
+                        ? 'calendar-cell-negative'
+                        : cell.noTrade
+                          ? 'calendar-cell-no-trade'
+                          : cell.oppositeModeOnly
+                            ? 'calendar-cell-opposite-mode'
+                            : 'calendar-cell-blank';
+                  return (
+                    <article key={cell.date} className={`trade calendar-cell ${calendarCellTone}`}>
+                      <div className="small muted calendar-day-label">{cell.day}</div>
+                      {cell.tradeCount > 0 ? <div className="small calendar-main-metric">{calendarMetric === 'pnl' ? `$${cell.pnl.toFixed(0)}` : `${cell.rTotal.toFixed(1)}R`}</div> : null}
+                      {cell.tradeCount > 0 ? <div className="small muted">T{cell.tradeCount}</div> : null}
+                      {cell.oppositeModeOnly ? <div className="small muted">{cell.oppositeModeOnly}</div> : null}
+                      {cell.noTrade ? <div className="small muted">NT</div> : null}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="stack">
+                {calendarWeekRows.map((week) => {
+                  const start = week[0];
+                  const end = week[week.length - 1];
+                  const total = week.reduce((sum, day) => sum + (calendarMetric === 'pnl' ? day.pnl : day.rTotal), 0);
+                  const tradeCount = week.reduce((sum, day) => sum + day.tradeCount, 0);
+                  const noTradeCount = week.filter((day) => day.noTrade).length;
+                  return (
+                    <article key={start.date} className="trade">
+                      <div className="row">
+                        <strong>{formatShortDate(start.date)} – {formatShortDate(end.date)}</strong>
+                        <span style={{ color: total >= 0 ? '#4ad66d' : '#ff6b6b' }}>{calendarMetric === 'pnl' ? `$${total.toFixed(2)}` : `${total.toFixed(2)}R`}</span>
+                      </div>
+                      <div className="small muted">{tradeCount} trade(s){noTradeCount ? ` · ${noTradeCount} no-trade day(s)` : ''}</div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Coaching</div>
+          <section className="card stack">
+            <strong>Coaching summary</strong>
+            <article className="trade" style={{ borderColor: '#4f6ea6', background: 'rgba(44,78,140,0.14)' }}>
+              <div className="small muted">Primary takeaway</div>
+              <div className="small">{selectedPeriodTakeaway}</div>
+            </article>
+            <article className="trade">
+              <div className="small muted">What is helping most?</div>
+              <div className="small">{coachingHelping}</div>
+            </article>
+            <article className="trade">
+              <div className="small muted">What is hurting most?</div>
+              <div className="small">{coachingHurting}</div>
+            </article>
+            <article className="trade">
+              <div className="small muted">What to focus on next?</div>
+              <div className="small">{coachingFocus}</div>
+            </article>
+            {multiTradeDayInsight ? <div className="small muted">{multiTradeDayInsight}</div> : null}
+          </section>
+
+          <div className="small muted" style={{ letterSpacing: '.08em', textTransform: 'uppercase' }}>Detailed breakdowns & diagnostics</div>
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Top 3 mistake drags</strong></summary>
+            {topMistakeDrags.length ? (
+              <div className="stack">
+                {topMistakeDrags.map((row, idx) => (
+                  <article key={`mistake-drag-${row.key}`} className="trade">
+                    <div className="row">
+                      <strong>#{idx + 1} {row.key}</strong>
+                      <span className="small muted">{row.trades} tagged trade(s)</span>
+                    </div>
+                    <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Win rate: {row.winRate.toFixed(1)}%</div>
+                  </article>
+                ))}
+              </div>
+            ) : <div className="small muted">Need at least two tagged trades per mistake to rank drag reliably (small sample right now).</div>}
+          </details>
+
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Best edge callouts</strong></summary>
+            <article className="trade">
+              <div className="small muted">Strongest setup family</div>
+              <div>{strongestFamilyCallout ? `${strongestFamilyCallout.key} · ${strongestFamilyCallout.trades} trades · ${strongestFamilyCallout.winRate.toFixed(0)}% win rate · ${strongestFamilyCallout.avgR.toFixed(2)}R avg` : 'Not enough setup family samples yet.'}</div>
+              {strongestFamilyCallout?.limited ? <div className="small muted">Early signal only (small sample).</div> : null}
+            </article>
+            <article className="trade">
+              <div className="small muted">Strongest setup model</div>
+              <div>{strongestModelCallout ? `${strongestModelCallout.key} · ${strongestModelCallout.trades} trades · ${strongestModelCallout.winRate.toFixed(0)}% win rate · ${strongestModelCallout.avgR.toFixed(2)}R avg` : 'Not enough setup model samples yet.'}</div>
+              {strongestModelCallout?.limited ? <div className="small muted">Early signal only (small sample).</div> : null}
+            </article>
+          </details>
+
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure coaching</strong></summary>
+            {emotionCoachingNotes.length ? emotionCoachingNotes.map((line) => <div key={line} className="small muted">• {line}</div>) : <div className="small muted">Need a larger spread of pressure levels before drawing a coaching signal.</div>}
+          </details>
+
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Session habit coaching</strong></summary>
+            <div className="small muted">{sessionCoachingNote || 'Log more sessions and trades in this period to unlock session-vs-outcome coaching.'}</div>
+          </details>
+
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Selected period insights</strong></summary>
+            <div className="small muted"><strong>Mistakes:</strong> {topMistakes.length ? topMistakes.map(([tag, count]) => `${tag} (${count})`).join(', ') : 'None logged'}</div>
+            <div className="small muted"><strong>Setup edge:</strong> Best family {bestFamily ? `${bestFamily.key} (${bestFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Best model {bestModel ? `${bestModel.key} (${bestModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted"><strong>Setup drag:</strong> Worst family {worstFamily ? `${worstFamily.key} (${worstFamily.netPnl.toFixed(2)}$)` : 'N/A'} · Worst model {worstModel ? `${worstModel.key} (${worstModel.netPnl.toFixed(2)}$)` : 'N/A'}</div>
+            <div className="small muted"><strong>Win-rate leaders:</strong> Families {topWinFamilies.length ? topWinFamilies.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'} · Models {topWinModels.length ? topWinModels.map((x) => `${x.key} (${x.winRate.toFixed(0)}%)`).join(', ') : 'N/A'}</div>
+            <div className="small muted"><strong>Pressure mix:</strong> {pressureBuckets.map((b) => `${b.level}:${b.count}`).join(' · ')}</div>
+            <div className="small muted"><strong>Pressure impact:</strong> High (4-5) avg P&L <span style={{ color: highPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{highPressureAvgPnl.toFixed(2)}</span> · Low (1-2) avg P&L <span style={{ color: lowPressureAvgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{lowPressureAvgPnl.toFixed(2)}</span></div>
+          </details>
+
+          <details className="card stack">
+            <summary className="small" style={{ cursor: 'pointer' }}><strong>Intelligence insights</strong> <span className="muted">· diagnostics by selected period</span></summary>
+            <div className="small muted">Based on {periodTrades.length} trade(s) in selected period</div>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Mistake impact</strong> <span className="muted">· behavior cost profile</span></summary>
+              {mistakeImpact.length ? (
+                <div className="stack" style={{ marginTop: 8 }}>
+                  {mistakeImpact.map((row) => (
+                    <article key={row.key} className="trade">
+                      <div className="row">
+                        <strong>{row.key}</strong>
+                        <span className="small muted">{row.trades} trade(s)</span>
+                      </div>
+                      {!activeMistakeCatalog.includes(row.key) ? <div className="small muted">Legacy tag (not in active catalog)</div> : null}
+                      <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Win rate: {row.winRate.toFixed(1)}%</div>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="small muted" style={{ marginTop: 8 }}>No mistake tags logged in this period.</div>}
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Setup performance breakdown</strong> <span className="muted">· where edge is strongest</span></summary>
+              <div className="stack" style={{ marginTop: 8 }}>
+                <div className="small muted"><strong>By setup family</strong></div>
+                {familyBreakdown.length ? familyBreakdown.map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Win rate: {row.winRate.toFixed(1)}% · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Total P&L: <span style={{ color: row.netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.netPnl.toFixed(2)}</span></div>
+                  </article>
+                )) : <div className="small muted">No setup families in this period.</div>}
+                <div className="small muted"><strong>By setup model</strong></div>
+                {modelBreakdown.length ? modelBreakdown.slice(0, 8).map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Win rate: {row.winRate.toFixed(1)}% · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span> · Total P&L: <span style={{ color: row.netPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.netPnl.toFixed(2)}</span></div>
+                  </article>
+                )) : <div className="small muted">No setup models in this period.</div>}
+              </div>
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Emotional pressure analysis</strong> <span className="muted">· state vs outcome</span></summary>
+              <div className="stack" style={{ marginTop: 8 }}>
+                {emotionBreakdown.length ? emotionBreakdown.map((row) => (
+                  <article key={row.key} className="trade">
+                    <div className="row">
+                      <strong>{row.key}</strong>
+                      <span className="small muted">{row.trades} trade(s)</span>
+                    </div>
+                    <div className="small muted">Avg P&L: <span style={{ color: row.avgPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgPnl.toFixed(2)}</span> · Avg R: <span style={{ color: row.avgR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{row.avgR.toFixed(2)}R</span></div>
+                  </article>
+                )) : <div className="small muted">No emotional pressure data logged in this period.</div>}
+                {emotionalInsight ? <div className="small muted">{emotionalInsight}</div> : null}
+              </div>
+            </details>
+
+            <details>
+              <summary className="small" style={{ cursor: 'pointer' }}><strong>Streaks & expectancy</strong> <span className="muted">· momentum context</span></summary>
+              <div className="grid" style={{ marginTop: 8 }}>
+                <article className="trade" style={streakCardStyle(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}>
+                  <div className="small muted">Current streak</div>
+                  <div style={{ color: streakColor(allTimeStreaks.currentWin, allTimeStreaks.currentLoss) }}>{formatStreakLabel(allTimeStreaks.currentWin, allTimeStreaks.currentLoss)}</div>
+                </article>
+                <article className="trade" style={streakCardStyle(periodStreaks.currentWin, periodStreaks.currentLoss)}>
+                  <div className="small muted">Period streak</div>
+                  <div style={{ color: streakColor(periodStreaks.currentWin, periodStreaks.currentLoss) }}>{formatStreakLabel(periodStreaks.currentWin, periodStreaks.currentLoss)}</div>
+                </article>
+                <article className="trade" style={{ background: 'rgba(74,214,109,0.10)', borderColor: '#2f6f4a' }}>
+                  <div className="small muted">Longest win streak</div>
+                  <div style={{ color: '#4ad66d' }}>{allTimeStreaks.longestWin}</div>
+                </article>
+                <article className="trade" style={{ background: 'rgba(255,107,107,0.10)', borderColor: '#7a3f3f' }}>
+                  <div className="small muted">Longest loss streak</div>
+                  <div style={{ color: '#ff6b6b' }}>{allTimeStreaks.longestLoss}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Expectancy / trade ($)</div>
+                  <div style={{ color: periodExpectancyPnl >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyPnl.toFixed(2)}</div>
+                </article>
+                <article className="trade">
+                  <div className="small muted">Expectancy / trade (R)</div>
+                  <div style={{ color: periodExpectancyR >= 0 ? '#4ad66d' : '#ff6b6b' }}>{periodExpectancyR.toFixed(2)}R</div>
+                </article>
+              </div>
+            </details>
+          </details>
+
+        </section>
+      )}
+
+      {tab === 'history' && (
+        <section className="card stack control-card">
+          <div className="row" style={{ gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-entry-type-filter">Entry type</label>
+              <select id="history-entry-type-filter" value={historyEntryTypeFilter} onChange={(e) => setHistoryEntryTypeFilter(e.target.value as HistoryEntryTypeFilter)}>
+                <option value="all">All</option>
+                <option value="trade_all">Trade (all)</option>
+                <option value="session_all">Session (all)</option>
+                <option value="live_trade">Live trade</option>
+                <option value="paper_trade">Paper trade</option>
+                <option value="no_trade_day">No-trade day</option>
+                <option value="pre_session_plan">Pre-session plan</option>
+                <option value="chart_session">Chart session</option>
+                <option value="post_session_review">Post-session review</option>
+              </select>
+            </div>
+            <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+              <label className="small muted" htmlFor="history-date-filter">Date range</label>
+              <select id="history-date-filter" value={historyDateFilter} onChange={(e) => setHistoryDateFilter(e.target.value as HistoryDateFilter)}>
+                <option value="all_time">All time</option>
+                <option value="this_month">This month</option>
+                <option value="last_30_days">Last 30 days</option>
+                <option value="custom">Custom range</option>
+              </select>
+            </div>
+          </div>
+          {historyDateFilter === 'custom' ? (
+            <div className="row" style={{ gap: 10, flexWrap: 'wrap' }}>
+              <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+                <label className="small muted" htmlFor="history-date-start">Start date</label>
+                <input id="history-date-start" type="date" value={historyDateStart} onChange={(e) => setHistoryDateStart(e.target.value)} />
+              </div>
+              <div style={{ minWidth: 148, flex: '1 1 160px' }}>
+                <label className="small muted" htmlFor="history-date-end">End date</label>
+                <input id="history-date-end" type="date" value={historyDateEnd} onChange={(e) => setHistoryDateEnd(e.target.value)} />
+              </div>
+            </div>
+          ) : null}
+          <div className="small muted">
+            Active filters: <strong>{historyEntryFilterLabel}</strong> · <strong>{historyDateScopeLabel}</strong>
+          </div>
+          {filteredActivityItems.map((item, index) => {
+            const showDateDivider = index === 0 || filteredActivityItems[index - 1]?.date !== item.date;
+            return (
+              <Fragment key={`history-item-${item.type}-${item.id}`}>
+                {showDateDivider ? <div className="small muted" style={{ fontWeight: 700, letterSpacing: '.02em', paddingTop: index === 0 ? 0 : 6 }}>{formatDateShort(item.date)}</div> : null}
+                {item.type === 'trade' ? (
+              <Fragment>
+                <article className={`trade ${isPaperTrade(item.trade) ? 'trade-paper' : 'trade-live'}`} ref={(node) => { detailAnchors.current[`trade:${item.trade.id}`] = node; }}>
+                  <div className="row"><strong>{item.trade.ticker}</strong><span>{item.trade.trade_date}</span></div>
+                  <div className="small muted"><span className="badge">Trade</span> <span className="badge">{isPaperTrade(item.trade) ? 'Paper' : 'Live'}</span> {item.trade.family} · {item.trade.model} {resolveSetupGrade(item.trade) ? <span className="badge" style={{ borderColor: setupGradeColor(resolveSetupGrade(item.trade) || ''), color: setupGradeColor(resolveSetupGrade(item.trade) || '') }}>Setup {resolveSetupGrade(item.trade)}</span> : null}</div>
+                  <div className="small">
+                    {item.trade.classification} · <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span> · {item.trade.minutes_in_trade}m
+                  </div>
+                  <div className="small muted">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
+                  <div className="small muted">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
+                  <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
+                  <div className="row">
+                    <div className="small muted">Attachments: {entryAttachments('trade', item.trade.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: item.trade.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditTrade(item.trade)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteTrade(item.trade.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'trade' && detail.id === item.trade.id && (
+                  <article className={`trade ${isPaperTrade(item.trade) ? 'trade-paper' : 'trade-live'}`} style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>Trade detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.trade.trade_date} · {item.trade.ticker}</div>
+                      <div className="small"><span className="badge">{isPaperTrade(item.trade) ? 'Paper trade' : 'Live trade'}</span></div>
+                      <div className="small">Family: {item.trade.family}</div>
+                      <div className="small">Model: {item.trade.model}</div>
+                      <div className="small">Classification: {item.trade.classification}</div>
+                      <div className="small">Result: <span style={{ color: pnlValueColor(item.trade.pnl) }}>${Number(item.trade.pnl || 0).toFixed(2)}</span></div>
+                      <div className="small">R multiple: <span style={{ color: rValueColor(item.trade.r_multiple) }}>{Number(item.trade.r_multiple || 0).toFixed(2)}R</span></div>
+                      <div className="small">Minutes in trade: {item.trade.minutes_in_trade}</div>
+                      <div className="small">Emotional pressure: <span style={{ color: emotionalPressureColor(item.trade.emotional_pressure) }}>{item.trade.emotional_pressure}/5</span></div>
+                      <div className="small">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
+                      <div className="small">Mistake tags: {normalizeMistakeTags(item.trade.mistake_tags).length ? normalizeMistakeTags(item.trade.mistake_tags).join(', ') : 'None'}</div>
+                      <section className="trade stack" style={{ padding: '8px 10px' }}>
+                        <strong>Setup Quality</strong>
+                        <div className="small">Setup Score: {resolveSetupScore(item.trade) == null ? 'pending' : resolveSetupScore(item.trade)}</div>
+                        <div className="small">Setup Grade: {resolveSetupGrade(item.trade) || 'Setup Grade pending'}</div>
+                        <div className="small muted">{setupGradeLabel(resolveSetupGrade(item.trade))}</div>
+                        <div className="small muted">Suggested setup tags</div>
+                        <div>{resolveSetupTags(item.trade).length ? resolveSetupTags(item.trade).map((tag) => <span className="badge" key={tag}>{tag}</span>) : <span className="small muted">None</span>}</div>
+                        {(resolveSetupAnswers(item.trade).market_context_quality || resolveSetupAnswers(item.trade).liquidity_structure_quality || resolveSetupAnswers(item.trade).displacement_quality || resolveSetupAnswers(item.trade).poi_quality || resolveSetupAnswers(item.trade).target_room_quality) ? (
+                          <div className="small muted">
+                            Market Context: {resolveSetupAnswers(item.trade).market_context_quality || '—'} · Liquidity/Structure: {resolveSetupAnswers(item.trade).liquidity_structure_quality || '—'} · Displacement: {resolveSetupAnswers(item.trade).displacement_quality || '—'} · POI: {resolveSetupAnswers(item.trade).poi_quality || '—'} · Target Room: {resolveSetupAnswers(item.trade).target_room_quality || '—'}
+                          </div>
+                        ) : null}
+                      </section>
+                      {decisionByConvertedTradeId.get(item.trade.id) ? (
+                        <section className="trade stack" style={{ padding: '8px 10px' }}>
+                          <strong>Pre-entry Decision</strong>
+                          <div className="small">Result: {decisionByConvertedTradeId.get(item.trade.id)?.go_no_go_result.replace('_', ' ')} · {decisionByConvertedTradeId.get(item.trade.id)?.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
+                          <div className="small muted">Readiness: {decisionByConvertedTradeId.get(item.trade.id)?.readiness_yes_count}/{decisionByConvertedTradeId.get(item.trade.id)?.readiness_applicable_count} ({decisionByConvertedTradeId.get(item.trade.id)?.readiness_grade})</div>
+                          {(decisionByConvertedTradeId.get(item.trade.id)?.execution_auto_tags || []).length ? (
+                            <div>{(decisionByConvertedTradeId.get(item.trade.id)?.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.trade.id}-${tag}`}>{tag}</span>)}</div>
+                          ) : null}
+                          {decisionByConvertedTradeId.get(item.trade.id)?.hesitation_note ? <div className="small muted">Hesitation: {decisionByConvertedTradeId.get(item.trade.id)?.hesitation_note}</div> : null}
+                        </section>
+                      ) : null}
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
+                      <AttachmentPreviewList entries={entryAttachments('trade', item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
+              </Fragment>
+            ) : item.type === 'no_trade' ? (
+              <Fragment>
+                <article className="trade no-trade" ref={(node) => { detailAnchors.current[`no_trade:${item.noTrade.id}`] = node; }}>
+                  <div className="row"><strong>No-trade day</strong><span>{item.noTrade.day_date}</span></div>
+                  <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
+                  <div className="small muted">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
+                  <div className="row">
+                    <div className="small muted">Attachments: {entryAttachments('no_trade', item.noTrade.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: item.noTrade.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditNoTrade(item.noTrade)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteNoTrade(item.noTrade.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'no_trade' && detail.id === item.noTrade.id && (
+                  <article className="trade no-trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>No-trade detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.noTrade.day_date}</div>
+                      <div className="small">Reason: {item.noTrade.reason}</div>
+                      <div className="small">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={item.noTrade.notes || ''} emptyLabel="—" />
+                      <AttachmentPreviewList entries={entryAttachments('no_trade', item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
+              </Fragment>
+            ) : item.type === 'decision' ? (
+              <Fragment>
+                <article className="trade" ref={(node) => { detailAnchors.current[`decision:${item.decision.id}`] = node; }}>
+                  <div className="row"><strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'}</strong><span>{formatDecisionTimestampLocal(item.decision.decision_timestamp)}</span></div>
+                  <div className="small muted"><span className="badge">Decide</span> <span className="badge">{item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</span></div>
+                  <div className="small">{item.decision.go_no_go_result.replace('_', ' ')} · Readiness {item.decision.readiness_grade} ({item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count})</div>
+                  <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`${item.decision.id}-${tag}`}>{tag}</span>)}</div>
+                  <div className="row">
+                    <div className="small muted">Decision entry</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'decision', id: item.decision.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => startEditDecision(item.decision)}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteDecision(item.decision.id)}>Delete</button>
+                    </div>
+                  </div>
+                  {item.decision.skipped_setup ? (
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'live')}>Convert to Live trade</button>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'paper')}>Convert to Paper trade</button>
+                      <button className="inline" type="button" onClick={() => convertSkippedDecisionToNoTrade(item.decision)}>Convert to No-trade day</button>
+                    </div>
+                  ) : null}
+                </article>
+                {detail?.kind === 'decision' && detail.id === item.decision.id ? (
+                  <article className="trade" style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>{item.decision.skipped_setup ? 'Skipped setup' : 'GO / NO GO check'} detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{formatDecisionTimestampLocal(item.decision.decision_timestamp)} · {item.decision.trade_intent_mode === 'paper' ? 'Paper intent' : 'Live intent'}</div>
+                      <div className="small">Result: {item.decision.go_no_go_result.replace('_', ' ')}</div>
+                      <div className="small">Readiness: {item.decision.readiness_yes_count}/{item.decision.readiness_applicable_count} ({item.decision.readiness_grade})</div>
+                      <div>{(item.decision.execution_auto_tags || []).map((tag) => <span className="badge" key={`detail-${item.decision.id}-${tag}`}>{tag}</span>)}</div>
+                      {item.decision.hesitation_note ? <div className="small muted">Hesitation: {item.decision.hesitation_note}</div> : <div className="small muted">Hesitation: —</div>}
+                      {item.decision.skipped_setup ? (
+                        <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'live')}>Convert to Live trade</button>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToTrade(item.decision, 'paper')}>Convert to Paper trade</button>
+                          <button className="inline" type="button" onClick={() => convertSkippedDecisionToNoTrade(item.decision)}>Convert to No-trade day</button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </article>
+                ) : null}
+              </Fragment>
+            ) : (
+              <Fragment>
+                <article className={`trade session-${sessionStyleKey(item.session.session_type)}`} ref={(node) => { detailAnchors.current[`session:${item.session.id}`] = node; }}>
+                  <div className="row"><strong>{sessionSubtypeLabel(item.session.session_type)}</strong><span>{item.session.session_date}</span></div>
+                  <div className="small muted">
+                    <span className="badge">{isChartSessionType(item.session.session_type) ? 'Chart study' : 'Review work'}</span>{' '}
+                    {isPreSessionPlan(item.session) ? `Duration-first entry · ${formatMinutesLabel(item.session.duration_minutes)}` : `${item.session.start_time.slice(0, 5)}–${item.session.end_time.slice(0, 5)} · ${formatMinutesLabel(item.session.duration_minutes)}`}
+                  </div>
+                  {isPreSessionPlan(item.session) && getPreSessionMeta(item.session) ? <div className="small muted">Bias: {getPreSessionMeta(item.session)?.session_bias} · Condition: {getPreSessionMeta(item.session)?.expected_market_condition}</div> : null}
+                  <div className="row">
+                    <div className="small muted">{item.session.notes ? 'Includes notes' : 'No notes added'} · Attachments: {attachments.filter((a) => a.session_id === item.session.id).length}</div>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'session', id: item.session.id })}>View</button>
+                      <button className="inline" type="button" onClick={() => {
+                        const parsed = parseSessionNotes(item.session.notes || '');
+                        const subtype = resolveSessionSubtype(item.session.session_type);
+                        setEditingSessionId(item.session.id);
+                        setSessionDraft({
+                          session_type: item.session.session_type,
+                          session_date: item.session.session_date,
+                          start_time: item.session.start_time.slice(0, 5),
+                          end_time: item.session.end_time.slice(0, 5),
+                          notes: parsed.note || ''
+                        });
+                        if (subtype === 'pre_session_plan' && parsed.meta?.kind === 'pre_session_plan') {
+                          setPreSessionDraft({
+                            minutes_spent: Number(parsed.meta.minutes_spent || item.session.duration_minutes || 1),
+                            higher_timeframe_context: parsed.meta.higher_timeframe_context || higherTimeframeContextOptions[4],
+                            session_bias: parsed.meta.session_bias || sessionBiasOptions[2],
+                            bias_confidence: parsed.meta.bias_confidence || biasConfidenceOptions[1],
+                            expected_market_condition: parsed.meta.expected_market_condition || expectedMarketConditionOptions[2],
+                            primary_setup_focus: parsed.meta.primary_setup_focus || primarySetupFocusOptions[0],
+                            sit_out_condition: parsed.meta.sit_out_condition || sitOutConditionOptions[0],
+                            main_objective: parsed.meta.main_objective || sessionObjectiveOptions[0],
+                            starting_emotional_state: parsed.meta.starting_emotional_state || startingEmotionalStateOptions[0]
+                          });
+                        }
+                        if (subtype === 'post_session_review' && parsed.meta?.kind === 'post_session_review') {
+                          setPostSessionDraft({
+                            post_session_emotion: parsed.meta.post_session_emotion || postSessionEmotionOptions[0],
+                            validation: {
+                              bias_correctness: normalizeValidationYesPartialNoNa(parsed.meta.validation?.bias_correctness),
+                              expected_condition_correctness: normalizeValidationYesPartialNoNa(parsed.meta.validation?.expected_condition_correctness),
+                              setup_focus_correctness: normalizeSetupFocusOutcome(parsed.meta.validation?.setup_focus_correctness)
+                            }
+                          });
+                        }
+                        setSessionSubtypeView(subtype);
+                        setTab('log');
+                        setLogMode('session');
+                      }}>Edit</button>
+                      <button className="inline" type="button" onClick={() => void deleteSession(item.session.id)}>Delete</button>
+                    </div>
+                  </div>
+                </article>
+                {detail?.kind === 'session' && detail.id === item.session.id && (
+                  <article className={`trade session-${sessionStyleKey(item.session.session_type)}`} style={{ marginTop: -4 }}>
+                    <div className="row">
+                      <strong>Session detail</strong>
+                      <button className="inline" type="button" onClick={() => setDetail(null)}>Close</button>
+                    </div>
+                    <div className="stack">
+                      <div className="small muted">{item.session.session_date} · {sessionSubtypeLabel(item.session.session_type)}</div>
+                      <div className="small">Duration: {formatMinutesLabel(item.session.duration_minutes)}</div>
+                      {isPreSessionPlan(item.session) && getPreSessionMeta(item.session) ? (
+                        <>
+                          <div className="small">Higher-timeframe context: {getPreSessionMeta(item.session)?.higher_timeframe_context}</div>
+                          <div className="small">Session bias: {getPreSessionMeta(item.session)?.session_bias} ({getPreSessionMeta(item.session)?.bias_confidence})</div>
+                          <div className="small">Expected market condition: {getPreSessionMeta(item.session)?.expected_market_condition}</div>
+                          <div className="small">Primary setup focus: {getPreSessionMeta(item.session)?.primary_setup_focus}</div>
+                          <div className="small">Sit-out condition: {getPreSessionMeta(item.session)?.sit_out_condition}</div>
+                          <div className="small">Main objective: {getPreSessionMeta(item.session)?.main_objective}</div>
+                          <div className="small">Starting emotional state: {getPreSessionMeta(item.session)?.starting_emotional_state}</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="small">Start: {item.session.start_time.slice(0, 5)}</div>
+                          <div className="small">End: {item.session.end_time.slice(0, 5)}</div>
+                        </>
+                      )}
+                      <div className="small">Notes:</div>
+                      <RichTextContent value={readableSessionNotes(item.session.notes)} emptyLabel="—" />
+                      <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === item.session.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    </div>
+                  </article>
+                )}
+              </Fragment>
+            )}
+              </Fragment>
+            );
+          })}
+          {!filteredActivityItems.length ? <div className="small muted">No history entries match the selected filters yet.</div> : null}
+        </section>
+      )}
+
+      {tab === 'log' && (
+        <section className="stack">
+          <div className="card stack control-card">
+            <label className="small muted" htmlFor="log-mode-select">Log type</label>
+            <select
+              id="log-mode-select"
+              value={logType}
+              onChange={(e) => {
+                const nextType = e.target.value as LogType;
+                if (nextType === 'session') {
+                  setLogMode('session');
+                } else {
+                  setLogMode(tradeLogSubtype === 'no_trade' ? 'no_trade' : 'trade');
+                }
+              }}
+            >
+              <option value="trade_log">Trade log</option>
+              <option value="session">Session</option>
+            </select>
+            {logType === 'trade_log' ? (
+              <>
+                <div className="small muted">Subtype</div>
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'live_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('live_trade');
+                      setTradeDraft((p) => ({ ...p, is_paper_trade: false }));
+                      setLogMode('trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'live_trade' ? '✓ ' : ''}Live trade
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'paper_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('paper_trade');
+                      setTradeDraft((p) => ({ ...p, is_paper_trade: true }));
+                      setLogMode('trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'paper_trade' ? '✓ ' : ''}Paper trade
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    style={tradeLogSubtype === 'no_trade' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                    onClick={() => {
+                      setTradeLogSubtype('no_trade');
+                      setLogMode('no_trade');
+                    }}
+                  >
+                    {tradeLogSubtype === 'no_trade' ? '✓ ' : ''}No-trade day
+                  </button>
+                </div>
+                <div className="small muted">Selected subtype: <strong>{tradeLogSubtype === 'live_trade' ? 'Live trade' : tradeLogSubtype === 'paper_trade' ? 'Paper trade' : 'No-trade day'}</strong></div>
+              </>
+            ) : null}
+          </div>
+          {logMode === 'trade' && (
+          <form className="card stack" action={(fd) => startTransition(() => void addTrade(fd))}>
+            <div className="row">
+              <strong>{editingTradeId ? 'Edit trade' : 'Add trade'}</strong>
+              {editingTradeId && <button className="inline" type="button" onClick={resetTradeDraft}>Cancel edit</button>}
+            </div>
+            <label className="small muted">Date</label>
+            <input className="log-date-control" name="trade_date" type="date" required value={tradeDraft.trade_date} onChange={(e) => setTradeDraft((p) => ({ ...p, trade_date: e.target.value }))} />
+            <label className="small muted">Ticker</label>
+            <select name="ticker" value={tradeDraft.ticker} onChange={(e) => setTradeDraft((p) => ({ ...p, ticker: e.target.value }))} required>
+              <option value="" disabled>Select instrument</option>
+              {instrumentOptions.map((symbol) => <option key={symbol} value={symbol}>{symbol}</option>)}
+            </select>
+            <div className="row">
+              <input placeholder="Add new instrument (e.g. NQ)" value={newInstrument} onChange={(e) => setNewInstrument(e.target.value.toUpperCase())} />
+              <button className="inline" type="button" onClick={() => {
+                const next = normalizeInstrument(newInstrument);
+                if (!next) return;
+                const nextSettings = settings
+                  ? { ...settings, instruments: normalizeUniqueInstruments([...(settings.instruments || []), next]) }
+                  : null;
+                if (nextSettings) void saveSettings(nextSettings);
+                setTradeDraft((p) => ({ ...p, ticker: next }));
+                setNewInstrument('');
+              }}>Add</button>
+            </div>
+            <div className="row">
+              <label className="small muted">Trade classification</label>
+              <button className="info-btn" aria-label="Trade classification help" type="button" onClick={() => setOpenHelp('classification')}>i</button>
+            </div>
+            <select name="classification" value={addTradeClassification} onChange={(e) => onChangeClassification(e.target.value)}>
+              {classifications.map((c) => <option key={c}>{c}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">Setup family</label>
+              <button className="info-btn" aria-label="Setup family help" type="button" onClick={() => setOpenHelp('family')}>i</button>
+            </div>
+            <select name="family" value={addTradeFamily} onChange={(e) => onChangeFamily(e.target.value)} disabled={classificationLocksSetup}>
+              {Object.keys(familyModels).map((f) => <option key={f}>{f}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">Setup model</label>
+              <button className="info-btn" aria-label="Setup model help" type="button" onClick={() => setOpenHelp('model')}>i</button>
+            </div>
+            <select name="model" value={addTradeModel} onChange={(e) => { setAddTradeModel(e.target.value); setTradeDraft((p) => ({ ...p, model: e.target.value })); }} disabled={classificationLocksSetup}>
+              {(familyModels[addTradeFamily] || [NA_MODEL]).map((m) => <option key={m}>{m}</option>)}
+            </select>
+            {showTradePlaybookReferences ? renderPlaybookReferenceCards(tradePlaybookSections, 'Trade entry') : null}
+            <section className="trade stack" style={{ padding: '10px 12px' }}>
+              <div className="row">
+                <strong>Setup Quality Check</strong>
+                <button className="inline" type="button" onClick={() => setSetupQualityOpen((open) => !open)}>
+                  {setupQualityOpen ? 'Hide' : (setupQualityPreview.grade ? `${setupQualityPreview.grade} · ${setupQualityPreview.score}` : 'Setup Grade pending')}
+                </button>
+              </div>
+              {setupQualityOpen ? (
+                <div className="stack">
+                  <label className="small muted">Did the setup align with market context?</label>
+                  <div className="small muted">HTF bias + session flow + structure + key levels</div>
+                  <select value={tradeDraft.market_context_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, market_context_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {marketContextQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">What did price do before entry?</label>
+                  <select value={tradeDraft.liquidity_structure_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, liquidity_structure_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {liquidityStructureQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">How strong was displacement?</label>
+                  <div className="small muted">Strong = clearly larger than recent candles, closes near its extreme, clean move<br />Moderate = noticeably stronger than recent candles, but not explosive<br />Weak = only slightly better than normal<br />Choppy / overlapping = messy overlap, no clear impulse</div>
+                  <select value={tradeDraft.displacement_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, displacement_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {displacementQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">What was the quality of the entry zone?</label>
+                  <div className="small muted">A POI can be an FVG, fib level, VWAP, prior level, HTF level, order block, or other key entry zone. Not every valid setup requires an FVG. “Fib / level confluence only” is for trades where the entry was mainly based on a fib level or key level rather than an FVG.</div>
+                  <select value={tradeDraft.poi_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, poi_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {poiQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Was there enough room to target?</label>
+                  <select value={tradeDraft.target_room_quality} onChange={(e) => setTradeDraft((p) => ({ ...p, target_room_quality: e.target.value }))}>
+                    <option value="">Select</option>
+                    {targetRoomQualityOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <article className="trade" style={{ padding: '8px 10px' }}>
+                    <div className="small"><strong>Setup Score:</strong> {setupQualityPreview.score ?? 'pending'}</div>
+                    <div className="small"><strong>Setup Grade:</strong> {setupQualityPreview.grade || 'Setup Grade pending'}</div>
+                    <div className="small muted">{setupQualityPreview.label}</div>
+                  </article>
+                  <div className="small muted">Suggested setup tags:</div>
+                  <div>{setupQualityPreview.tags.length ? setupQualityPreview.tags.map((tag) => <span className="badge" key={tag}>{tag}</span>) : <span className="small muted">No diagnostics yet.</span>}</div>
+                </div>
+              ) : null}
+            </section>
+            <input name="pnl" type="number" step="0.01" placeholder="Result ($)" value={tradeDraft.pnl} onChange={(e) => setTradeDraft((p) => ({ ...p, pnl: e.target.value }))} />
+            <label className="small muted">R multiple</label>
+            <div className="row">
+              <select
+                name="r_multiple_whole"
+                value={tradeDraft.r_multiple_whole}
+                onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple_whole: e.target.value }))}
+              >
+                {buildRWholeOptions().map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <span className="small muted">.</span>
+              <select
+                name="r_multiple_decimal"
+                value={tradeDraft.r_multiple_decimal}
+                onChange={(e) => setTradeDraft((p) => ({ ...p, r_multiple_decimal: e.target.value }))}
+              >
+                {Array.from({ length: 100 }, (_, i) => String(i).padStart(2, '0')).map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+            </div>
+            <label className="small muted">Minutes in trade</label>
+            <select name="minutes_in_trade" value={tradeDraft.minutes_in_trade} onChange={(e) => setTradeDraft((p) => ({ ...p, minutes_in_trade: e.target.value }))}>
+              {Array.from({ length: 481 }, (_, i) => String(i)).map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+            <label className="small muted">Emotional pressure (1-5)</label>
+            <select name="emotional_pressure" value={tradeDraft.emotional_pressure} onChange={(e) => setTradeDraft((p) => ({ ...p, emotional_pressure: e.target.value }))}>
+              {emotionalPressureScale.map((level) => (
+                <option key={level.value} value={level.value}>{level.label}</option>
+              ))}
+            </select>
+            <div className="small muted">Use this to log emotional pressure, urge to interfere, revenge impulses, or panic.</div>
+            <div className="row">
+              <label className="small muted">Entry emotion</label>
+              <button className="info-btn" aria-label="Entry emotion help" type="button" onClick={() => setOpenHelp('entry_emotion')}>i</button>
+            </div>
+            <select name="entry_emotion" value={tradeDraft.entry_emotion} onChange={(e) => setTradeDraft((p) => ({ ...p, entry_emotion: normalizeEntryEmotion(e.target.value) }))}>
+              {entryEmotionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <div className="row">
+              <label className="small muted">In-trade emotion</label>
+              <button className="info-btn" aria-label="In-trade emotion help" type="button" onClick={() => setOpenHelp('in_trade_emotion')}>i</button>
+            </div>
+            <select name="in_trade_emotion" value={tradeDraft.in_trade_emotion} onChange={(e) => setTradeDraft((p) => ({ ...p, in_trade_emotion: normalizeInTradeEmotion(e.target.value) }))}>
+              {inTradeEmotionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <label className="small muted">Mistake tags</label>
+            <div className="row" style={{ flexWrap: 'wrap', gap: 6 }}>
+              {normalizeMistakeTags(tradeDraft.mistake_tags).length ? normalizeMistakeTags(tradeDraft.mistake_tags).map((tag) => (
+                <button
+                  key={tag}
+                  className="inline"
+                  type="button"
+                  onClick={() => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags(normalizeMistakeTags(p.mistake_tags).filter((existing) => existing !== tag)) }))}
+                >
+                  {tag} ✕
+                </button>
+              )) : <span className="small muted">No mistakes selected.</span>}
+            </div>
+            <div className="stack">
+              <button className="inline" type="button" onClick={() => setMistakePickerOpen((open) => !open)}>
+                {mistakePickerOpen ? 'Done selecting mistakes' : 'Select saved mistake tags'}
+              </button>
+              {mistakePickerOpen ? (
+                <div className="trade stack" style={{ maxHeight: 190, overflow: 'auto' }}>
+                  {mistakeTagOptions.map((tag) => {
+                    const selected = normalizeMistakeTags(tradeDraft.mistake_tags).some((existing) => existing.toLowerCase() === tag.toLowerCase());
+                    return (
+                      <button
+                        key={tag}
+                        className="inline"
+                        type="button"
+                        onClick={() => setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...normalizeMistakeTags(p.mistake_tags), tag]) }))}
+                      >
+                        {selected ? '✓ ' : ''}{tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : null}
+            </div>
+            <div className="row">
+              <input placeholder="Add new mistake tag" value={newMistakeTag} onChange={(e) => setNewMistakeTag(e.target.value)} />
+              <button className="inline" type="button" onClick={() => {
+                const next = normalizeTag(newMistakeTag);
+                if (!next) return;
+                const currentTags = normalizeMistakeTags(tradeDraft.mistake_tags);
+                if (!currentTags.some((existing) => existing.localeCompare(next, undefined, { sensitivity: 'accent' }) === 0)) {
+                  setTradeDraft((p) => ({ ...p, mistake_tags: normalizeMistakeTags([...currentTags, next]) }));
+                }
+                const nextSettings = settings
+                  ? {
+                    ...settings,
+                    mistake_catalog: normalizeActiveMistakeCatalog([...(settings.mistake_catalog || []), next], settings.mistake_catalog_hidden),
+                    mistake_catalog_hidden: normalizeHiddenMistakeCatalog((settings.mistake_catalog_hidden || []).filter((item) => item !== next), [...(settings.mistake_catalog || []), next])
+                  }
+                  : null;
+                if (nextSettings) void saveSettings(nextSettings);
+                setNewMistakeTag('');
+              }}>Add</button>
+            </div>
+            <RichTextEditor
+              label="Trade notes"
+              value={tradeDraft.notes}
+              onChange={(next) => setTradeDraft((p) => ({ ...p, notes: next }))}
+              placeholder="Capture execution thoughts, context, and lessons."
+              minRows={5}
+            />
+            <input
+              name="files"
+              type="file"
+              accept="image/*,.pdf,.txt,.csv"
+              multiple
+              onChange={(e) => void runTradeExtraction(Array.from(e.currentTarget.files || []))}
+            />
+            <div className="trade stack">
+              <strong>Day attachments</strong>
+              <div className="small muted">Reusable for other entries on {tradeDraft.trade_date || 'this date'}.</div>
+              {(dayAttachments.filter((row) => row.attachment_date === (tradeDraft.trade_date || new Date().toISOString().slice(0, 10))).length === 0) ? (
+                <div className="small muted">No day attachments found for this date yet.</div>
+              ) : dayAttachments
+                .filter((row) => row.attachment_date === (tradeDraft.trade_date || new Date().toISOString().slice(0, 10)))
+                .map((row) => {
+                  const linked = editingTradeId ? entryDayAttachmentLinks.some((l) => l.day_attachment_id === row.id && l.trade_id === editingTradeId) : false;
+                  return (
+                    <div className="row small" key={`trade-day-${row.id}`}>
+                      <span>{row.file_name}</span>
+                      <button className="inline" type="button" disabled={!editingTradeId || linked} onClick={() => editingTradeId ? void linkDayAttachmentToEntry(row.id, 'trade', editingTradeId) : undefined}>{linked ? 'Linked' : (editingTradeId ? 'Link' : 'Save trade first')}</button>
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="row">
+              <span className="small muted">Upload-assisted autofill</span>
+              <button className="inline" type="button" onClick={(e) => {
+                const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"files\"]') as HTMLInputElement | null);
+                void runTradeExtraction(Array.from(input?.files || []));
+              }}>
+                Extract from upload
+              </button>
+            </div>
+            {tradeExtract && (
+              <div className="trade">
+                <strong>Suggested from upload</strong>
+                {tradeExtract.trade_date && (
+                  <div className="row small">
+                    <span>Date: {tradeExtract.trade_date}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('trade_date', tradeExtract.trade_date!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('trade_date')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.ticker && (
+                  <div className="row small">
+                    <span>Ticker: {tradeExtract.ticker}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('ticker', tradeExtract.ticker!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('ticker')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.pnl && (
+                  <div className="row small">
+                    <span>Result: {tradeExtract.pnl}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('pnl', tradeExtract.pnl!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('pnl')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.r_multiple && (
+                  <div className="row small">
+                    <span>R multiple: {tradeExtract.r_multiple}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('r_multiple', tradeExtract.r_multiple!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('r_multiple')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {tradeExtract.minutes_in_trade && (
+                  <div className="row small">
+                    <span>Minutes: {tradeExtract.minutes_in_trade}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyTradeSuggestion('minutes_in_trade', tradeExtract.minutes_in_trade!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectTradeSuggestion('minutes_in_trade')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {!tradeExtract.trade_date && !tradeExtract.ticker && !tradeExtract.pnl && !tradeExtract.r_multiple && !tradeExtract.minutes_in_trade && (
+                  <div className="small muted">No useful trade fields detected yet (filename/metadata + beta OCR).</div>
+                )}
+                {tradeExtract.hints?.length ? <div className="small muted">Hints: {tradeExtract.hints.join(', ')}</div> : null}
+                <div className="small muted">OCR status: {formatOcrStatus(tradeExtract.ocrStatus)}</div>
+                <div className="small muted">OCR character count: {tradeExtract.ocrCharCount ?? 0}</div>
+                {tradeExtract.ocrError ? <div className="small muted">OCR error: {tradeExtract.ocrError}</div> : null}
+                {tradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {tradeExtract.parsedHeaderLine}</div> : null}
+                <div className="small muted">Ticker source: {tradeExtract.tickerSource || 'none'}</div>
+                {tradeExtract.microResolutionRule ? <div className="small muted">Micro/standard resolution: {tradeExtract.microResolutionRule}</div> : null}
+                {tradeExtract.tickerRejectReason ? <div className="small muted">Ticker rejection: {tradeExtract.tickerRejectReason}</div> : null}
+                {tradeExtract.minutesRejectReason ? <div className="small muted">Minutes decision: {tradeExtract.minutesRejectReason}</div> : null}
+                {tradeExtract.timeframeRejected ? <div className="small muted">Minutes rejected as chart timeframe token.</div> : null}
+                {tradeExtract.detectedText ? (
+                  <details>
+                    <summary className="small muted">Detected text (beta OCR)</summary>
+                    {tradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {tradeExtract.ocrSteps.join(' → ')}</div> : null}
+                    {tradeExtract.headerOcrText ? (
+                      <>
+                        <div className="small muted" style={{ marginTop: 8 }}>Cropped header OCR text</div>
+                        <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{tradeExtract.headerOcrText}</pre>
+                      </>
+                    ) : null}
+                    <div className="small muted" style={{ marginTop: 8 }}>Full-image OCR text</div>
+                    <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{tradeExtract.detectedText}</pre>
+                  </details>
+                ) : null}
+              </div>
+            )}
+            <div className="small muted">Uploads are stored attachments only. AI extraction is not implemented.</div>
+            <button className="primary" disabled={pending}>{editingTradeId ? 'Update trade' : 'Save trade'}</button>
+          </form>
+          )}
+
+          {logMode === 'no_trade' && (
+          <form className="card stack" action={(fd) => startTransition(() => void addNoTrade(fd))}>
+            <div className="row">
+              <strong>{editingNoTradeId ? 'Edit no-trade day' : 'No-trade day'}</strong>
+              {editingNoTradeId ? <button className="inline" type="button" onClick={() => { setEditingNoTradeId(null); setNoTradeDraft({ day_date: new Date().toISOString().slice(0, 10), reason: noTradeReasons[0], no_trade_mindset: noTradeMindsetOptions[0].value, notes: '' }); }}>Cancel edit</button> : null}
+            </div>
+            <input className="log-date-control" name="day_date" type="date" required value={noTradeDraft.day_date} onChange={(e) => setNoTradeDraft((p) => ({ ...p, day_date: e.target.value }))} />
+            <select name="reason" value={noTradeDraft.reason} onChange={(e) => setNoTradeDraft((p) => ({ ...p, reason: e.target.value }))}>{noTradeReasons.map((r) => <option key={r}>{r}</option>)}</select>
+            <div className="row">
+              <label className="small muted">No-trade mindset</label>
+              <button className="info-btn" aria-label="No-trade mindset help" type="button" onClick={() => setOpenHelp('no_trade_mindset')}>i</button>
+            </div>
+            <select name="no_trade_mindset" value={noTradeDraft.no_trade_mindset} onChange={(e) => setNoTradeDraft((p) => ({ ...p, no_trade_mindset: normalizeNoTradeMindset(e.target.value) }))}>
+              {noTradeMindsetOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+            <RichTextEditor
+              label="No-trade notes"
+              value={noTradeDraft.notes}
+              onChange={(next) => setNoTradeDraft((p) => ({ ...p, notes: next }))}
+              placeholder={noTradeDraft.reason === 'Missed opportunity / hesitation'
+                ? 'Optional: what setup was missed, and what hesitation showed up?'
+                : 'Describe why you stayed flat and what confirmed discipline.'}
+              minRows={4}
+            />
+            <input
+              name="no_trade_files"
+              type="file"
+              accept="image/*,.pdf,.txt,.csv"
+              multiple
+              onChange={(e) => void runNoTradeExtraction(Array.from(e.currentTarget.files || []))}
+            />
+            <div className="trade stack">
+              <strong>Day attachments</strong>
+              <div className="small muted">Reusable for other entries on {noTradeDraft.day_date || 'this date'}.</div>
+              {(dayAttachments.filter((row) => row.attachment_date === (noTradeDraft.day_date || new Date().toISOString().slice(0, 10))).length === 0) ? (
+                <div className="small muted">No day attachments found for this date yet.</div>
+              ) : dayAttachments
+                .filter((row) => row.attachment_date === (noTradeDraft.day_date || new Date().toISOString().slice(0, 10)))
+                .map((row) => {
+                  const linked = editingNoTradeId ? entryDayAttachmentLinks.some((l) => l.day_attachment_id === row.id && l.no_trade_day_id === editingNoTradeId) : false;
+                  return (
+                    <div className="row small" key={`no-trade-day-${row.id}`}>
+                      <span>{row.file_name}</span>
+                      <button className="inline" type="button" disabled={!editingNoTradeId || linked} onClick={() => editingNoTradeId ? void linkDayAttachmentToEntry(row.id, 'no_trade', editingNoTradeId) : undefined}>{linked ? 'Linked' : (editingNoTradeId ? 'Link' : 'Save no-trade day first')}</button>
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="row">
+              <span className="small muted">Upload-assisted autofill</span>
+              <button className="inline" type="button" onClick={(e) => {
+                const input = (e.currentTarget.closest('form')?.querySelector('input[name=\"no_trade_files\"]') as HTMLInputElement | null);
+                void runNoTradeExtraction(Array.from(input?.files || []));
+              }}>
+                Extract from upload
+              </button>
+            </div>
+            {noTradeExtract && (
+              <div className="trade no-trade">
+                <strong>Suggested from upload</strong>
+                {noTradeExtract.day_date && (
+                  <div className="row small">
+                    <span>Date: {noTradeExtract.day_date}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyNoTradeSuggestion('day_date', noTradeExtract.day_date!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectNoTradeSuggestion('day_date')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {noTradeExtract.reason && (
+                  <div className="row small">
+                    <span>Reason hint: {noTradeExtract.reason}</span>
+                    <div className="row">
+                      <button className="inline" type="button" onClick={() => applyNoTradeSuggestion('reason', noTradeExtract.reason!)}>Accept</button>
+                      <button className="inline" type="button" onClick={() => rejectNoTradeSuggestion('reason')}>Reject</button>
+                    </div>
+                  </div>
+                )}
+                {!noTradeExtract.day_date && !noTradeExtract.reason && (
+                  <div className="small muted">No no-trade date/reason hints detected yet (filename/metadata + beta OCR).</div>
+                )}
+                {noTradeExtract.hints?.length ? <div className="small muted">Hints: {noTradeExtract.hints.join(', ')}</div> : null}
+                <div className="small muted">OCR status: {formatOcrStatus(noTradeExtract.ocrStatus)}</div>
+                <div className="small muted">OCR character count: {noTradeExtract.ocrCharCount ?? 0}</div>
+                {noTradeExtract.ocrError ? <div className="small muted">OCR error: {noTradeExtract.ocrError}</div> : null}
+                {noTradeExtract.parsedHeaderLine ? <div className="small muted">Parsed header line: {noTradeExtract.parsedHeaderLine}</div> : null}
+                {noTradeExtract.detectedText ? (
+                  <details>
+                    <summary className="small muted">Detected text (beta OCR)</summary>
+                    {noTradeExtract.ocrSteps?.length ? <div className="small muted" style={{ marginTop: 8 }}>OCR steps: {noTradeExtract.ocrSteps.join(' → ')}</div> : null}
+                    {noTradeExtract.headerOcrText ? (
+                      <>
+                        <div className="small muted" style={{ marginTop: 8 }}>Cropped header OCR text</div>
+                        <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{noTradeExtract.headerOcrText}</pre>
+                      </>
+                    ) : null}
+                    <div className="small muted" style={{ marginTop: 8 }}>Full-image OCR text</div>
+                    <pre className="small muted" style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{noTradeExtract.detectedText}</pre>
+                  </details>
+                ) : null}
+              </div>
+            )}
+            <button disabled={pending}>{editingNoTradeId ? 'Update no-trade day' : 'Save no-trade day'}</button>
+          </form>
+          )}
+
+          {logMode === 'session' && (
+            <form className="card stack" action={(formData) => startTransition(() => void addSession(formData))}>
+              <div className="row">
+                <strong>{editingSessionId ? 'Edit session' : 'Log session'}</strong>
+                {editingSessionId ? <button className="inline" type="button" onClick={() => {
+                  setEditingSessionId(null);
+                  setSessionSubtypeView('chart_session');
+                  setSessionDraft({
+                    session_type: 'chart_session',
+                    session_date: new Date().toISOString().slice(0, 10),
+                    start_time: normalizeTimeInput(settings?.chart_session_start_default || '') || SESSION_DEFAULT_TIMES.chart.start,
+                    end_time: normalizeTimeInput(settings?.chart_session_end_default || '') || SESSION_DEFAULT_TIMES.chart.end,
+                    notes: ''
+                  });
+                }}>Cancel edit</button> : null}
+              </div>
+              <div className="small muted">What kind of session did you run? (required)</div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionSubtypeView === 'pre_session_plan' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('pre_session_plan'); applySessionDefaults('pre_session_plan'); }}
+                >
+                  {sessionSubtypeView === 'pre_session_plan' ? '✓ ' : ''}Pre-session plan
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionSubtypeView === 'chart_session' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('chart_session'); applySessionDefaults('chart_session'); }}
+                >
+                  {sessionSubtypeView === 'chart_session' ? '✓ ' : ''}Chart session
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  style={sessionSubtypeView === 'post_session_review' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined}
+                  onClick={() => { setSessionSubtypeView('post_session_review'); applySessionDefaults('post_session_review'); }}
+                >
+                  {sessionSubtypeView === 'post_session_review' ? '✓ ' : ''}Post-session review
+                </button>
+              </div>
+              <div className="small muted">Selected subtype: <strong>{sessionSubtypeLabel(sessionSubtypeView)}</strong></div>
+              <div className="small muted">Pre-session plan and Chart session use chart defaults. Post-session review uses post-session review defaults.</div>
+              <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                <button className="inline" type="button" onClick={() => applySessionDefaults(sessionSubtypeView)}>Use default times</button>
+                <button
+                  className="inline"
+                  type="button"
+                  disabled={!latestChartSession}
+                  onClick={() => {
+                    if (!latestChartSession) return;
+                    setSessionSubtypeView('chart_session');
+                    setSessionDraft((p) => ({
+                      ...p,
+                      session_type: 'chart_session',
+                      start_time: latestChartSession.start_time.slice(0, 5),
+                      end_time: latestChartSession.end_time.slice(0, 5),
+                      notes: readableSessionNotes(latestChartSession.notes)
+                    }));
+                  }}
+                >
+                  Duplicate last chart session
+                </button>
+                <button
+                  className="inline"
+                  type="button"
+                  disabled={!latestPostSessionReview}
+                  onClick={() => {
+                    if (!latestPostSessionReview) return;
+                    setSessionSubtypeView('post_session_review');
+                    setSessionDraft((p) => ({
+                      ...p,
+                      session_type: 'post_session_review',
+                      start_time: latestPostSessionReview.start_time.slice(0, 5),
+                      end_time: latestPostSessionReview.end_time.slice(0, 5),
+                      notes: readableSessionNotes(latestPostSessionReview.notes)
+                    }));
+                  }}
+                >
+                  Duplicate last post-session review
+                </button>
+              </div>
+              <label className="small muted">Date</label>
+              <input className="log-date-control" type="date" value={sessionDraft.session_date} onChange={(e) => setSessionDraft((p) => ({ ...p, session_date: e.target.value }))} />
+              {sessionSubtypeView === 'pre_session_plan' ? (
+                <div className="stack">
+                  <label className="small muted">Minutes spent</label>
+                  <select value={preSessionDraft.minutes_spent} onChange={(e) => setPreSessionDraft((p) => ({ ...p, minutes_spent: Number(e.target.value) }))}>
+                    {preSessionMinutesOptions.map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                  </select>
+                  <div className="small muted">Duration: {formatMinutesLabel(preSessionDraft.minutes_spent)}</div>
+                  <label className="small muted">Higher-timeframe context</label>
+                  <select value={preSessionDraft.higher_timeframe_context} onChange={(e) => setPreSessionDraft((p) => ({ ...p, higher_timeframe_context: e.target.value }))}>
+                    {higherTimeframeContextOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <div className="row">
+                    <label className="small muted">Session bias</label>
+                    <button className="info-btn" aria-label="Session bias help" type="button" onClick={() => setOpenHelp('session_bias')}>i</button>
+                  </div>
+                  <select value={preSessionDraft.session_bias} onChange={(e) => setPreSessionDraft((p) => ({ ...p, session_bias: e.target.value }))}>
+                    {sessionBiasOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Bias confidence</label>
+                  <select value={preSessionDraft.bias_confidence} onChange={(e) => setPreSessionDraft((p) => ({ ...p, bias_confidence: e.target.value }))}>
+                    {biasConfidenceOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  {renderPlaybookReferenceCards(preSessionPlaybookSections, 'Pre-session')}
+                  <label className="small muted">Expected market condition</label>
+                  <select value={preSessionDraft.expected_market_condition} onChange={(e) => setPreSessionDraft((p) => ({ ...p, expected_market_condition: e.target.value }))}>
+                    {expectedMarketConditionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Primary setup focus</label>
+                  <select value={preSessionDraft.primary_setup_focus} onChange={(e) => setPreSessionDraft((p) => ({ ...p, primary_setup_focus: e.target.value }))}>
+                    {primarySetupFocusOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                  <label className="small muted">Starting emotional state</label>
+                  <select value={preSessionDraft.starting_emotional_state} onChange={(e) => setPreSessionDraft((p) => ({ ...p, starting_emotional_state: e.target.value }))}>
+                    {startingEmotionalStateOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </div>
+              ) : (
+                <>
+                  <div className="grid log-session-time-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+                    <div className="stack">
+                      <label className="small muted">Start time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.start_time} onChange={(e) => setSessionDraft((p) => ({ ...p, start_time: e.target.value }))} />
+                    </div>
+                    <div className="stack">
+                      <label className="small muted">End time (local)</label>
+                      <input className="log-session-time-control" type="time" value={sessionDraft.end_time} onChange={(e) => setSessionDraft((p) => ({ ...p, end_time: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="small muted">Duration: {formatMinutesLabel(calculateDurationMinutes(sessionDraft.start_time, sessionDraft.end_time))}</div>
+                </>
+              )}
+              {sessionSubtypeView === 'post_session_review' ? (
+                <section className="trade stack">
+                  <strong>Post-session validation</strong>
+                  {referencedPreSessionMeta ? (
+                    <>
+                      <div className="small muted">Using pre-session plan from {referencedPreSessionPlan?.session_date}.</div>
+                      <div className="small">Session bias planned: <strong>{referencedPreSessionMeta.session_bias}</strong></div>
+                      <label className="small muted">Was that bias correct?</label>
+                      <select value={postSessionDraft.validation.bias_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, bias_correctness: e.target.value } }))}>
+                        {validationYesPartialNoNaOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <div className="small">Expected condition planned: <strong>{referencedPreSessionMeta.expected_market_condition}</strong></div>
+                      <label className="small muted">Was expected condition correct?</label>
+                      <select value={postSessionDraft.validation.expected_condition_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, expected_condition_correctness: e.target.value } }))}>
+                        {validationYesPartialNoNaOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                      <div className="small">Primary setup focus planned: <strong>{referencedPreSessionMeta.primary_setup_focus}</strong></div>
+                      <label className="small muted">What happened with my planned setup focus?</label>
+                      <select value={postSessionDraft.validation.setup_focus_correctness} onChange={(e) => setPostSessionDraft((p) => ({ ...p, validation: { ...p.validation, setup_focus_correctness: e.target.value } }))}>
+                        {setupFocusOutcomeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                      </select>
+                    </>
+                  ) : <div className="small muted">No same-date pre-session plan found. Log one first to compare planned vs actual context.</div>}
+                  <label className="small muted">Post-session emotion</label>
+                  <select value={postSessionDraft.post_session_emotion} onChange={(e) => setPostSessionDraft((p) => ({ ...p, post_session_emotion: e.target.value }))}>
+                    {postSessionEmotionOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                  </select>
+                </section>
+              ) : null}
+              <label className="small muted" htmlFor="session-notes">{sessionSubtypeView === 'pre_session_plan' ? 'Optional short pre-session note' : 'Session notes (optional)'}</label>
+              <textarea id="session-notes" placeholder={sessionSubtypeView === 'pre_session_plan' ? 'Optional quick note before session start.' : 'What did you work on? What improved or still needs reps?'} value={sessionDraft.notes} onChange={(e) => setSessionDraft((p) => ({ ...p, notes: e.target.value }))} />
+              <label className="small muted" htmlFor="session-files">Attach files (optional)</label>
+              <input id="session-files" name="session_files" type="file" multiple />
+              {editingSessionId ? (
+                <div className="stack">
+                  <div className="small muted">Existing attachments</div>
+                  {attachments.filter((a) => a.session_id === editingSessionId).length ? attachments.filter((a) => a.session_id === editingSessionId).map((file) => (
+                    <div className="row small" key={file.id}>
+                      <span>{file.file_name}</span>
+                      <button className="inline" type="button" onClick={() => void removeSessionAttachment(file.id)}>Remove</button>
+                    </div>
+                  )) : <div className="small muted">No attachments linked to this session.</div>}
+                </div>
+              ) : null}
+              <button className="primary" disabled={pending}>{editingSessionId ? 'Update session' : 'Save session'}</button>
+            </form>
+          )}
+        </section>
+      )}
+
+      {tab === 'review' && (
+        <section className="card stack control-card">
+          <strong>Weekly review</strong>
+          {!trades.length && !noTrades.length && !sessions.length ? (
+            <div className="small muted">No activity logged yet. Use Log tab to add a trade, no-trade day, or session, then return here for weekly review.</div>
+          ) : null}
+          <div className="grid review-week-selector-grid" style={{ gridTemplateColumns: '1fr 1fr' }}>
+            <input className="review-week-control" type="week" value={weekInput} onChange={(e) => setWeekInput(e.target.value)} />
+            <select className="review-week-control" value={weekInput} onChange={(e) => setWeekInput(e.target.value)}>
+              {[currentWeekInput(), ...reviews.map((r) => weekInputFromKey(r.week_key))]
+                .filter((v, i, a) => v && a.indexOf(v) === i)
+                .sort((a, b) => b.localeCompare(a))
+                .map((w) => {
+                  const sunday = weekKeyFromInput(w);
+                  const saturday = addDaysKey(sunday, 6);
+                  return <option value={w} key={w}>{`${formatDateShort(sunday)} – ${formatDateShort(saturday)} (${w})`}</option>;
+                })}
+            </select>
+          </div>
+          <div className="chip">{reviewStatus}</div>
+          {reviewSaveMessage ? <div className={`small ${reviewSaveMessage === 'Review saved' ? 'muted' : ''}`}>{reviewSaveMessage}</div> : null}
+          <div style={{ maxWidth: 220 }}>
+            <label className="small muted" htmlFor="review-trade-filter">Trade type</label>
+            <select id="review-trade-filter" value={reviewTradeFilter} onChange={(e) => setReviewTradeFilter(e.target.value as TradeTypeFilter)}>
+              <option value="all">All</option>
+              <option value="live">Live only</option>
+              <option value="paper">Paper only</option>
+            </select>
+          </div>
+          <div className="trade small muted">Review week: {selectedReviewRangeLabel} (Sunday–Saturday). Stats: {weekTradesForReview.length} trade(s) in filter, {weekLiveTrades.length} live, {weekPaperTrades.length} paper, {weekNoTrades.length} no-trade day(s), {weekSessions.length} session(s), {weekTradesForReview.filter((t) => t.classification === 'FOMO trade').length} FOMO trade(s).</div>
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week&apos;s process summary</strong>
+              <span className="small muted">{selectedReviewRangeLabel}</span>
+            </div>
+            <div className="small">Bias accuracy: {weeklyProcessSummary.bias.sampleCount ? `${weeklyProcessSummary.bias.accuracy.toFixed(0)}%` : 'Not enough post-session bias reviews yet.'}</div>
+            <div className="small">Market condition accuracy: {weeklyProcessSummary.marketCondition.sampleCount ? `${weeklyProcessSummary.marketCondition.accuracy.toFixed(0)}%` : 'Not enough market-condition reviews yet.'}</div>
+            <div className="small">A/A+ setup rate: {weeklyProcessSummary.setup.gradedCount ? `${weeklyProcessSummary.setup.aaRate.toFixed(0)}%` : 'No graded trades this week.'}</div>
+            <div className="small">Top weakness: {weeklyProcessSummary.setup.topWeaknessLabel || 'Not enough graded setup diagnostics yet.'}</div>
+            <div className="small muted">Uses selected review week only (Sunday–Saturday).</div>
+          </section>
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week&apos;s playbook alignment</strong>
+              <span className="small muted">{selectedReviewRangeLabel}</span>
+            </div>
+            <div className="small">Bias accuracy: {weeklyPlaybookAlignment.bias.sampleCount ? `${weeklyPlaybookAlignment.bias.accuracy.toFixed(0)}%` : 'Not enough post-session bias reviews yet.'}</div>
+            <div className="small">Market condition accuracy: {weeklyPlaybookAlignment.marketCondition.sampleCount ? `${weeklyPlaybookAlignment.marketCondition.accuracy.toFixed(0)}%` : 'Not enough market-condition reviews yet.'}</div>
+            <div className="small">A/A+ setup rate: {weeklyPlaybookAlignment.setup.gradedCount ? `${weeklyPlaybookAlignment.setup.aaRate.toFixed(0)}%` : 'No graded trades this week.'}</div>
+            <div className="small">Top rule drift: {weeklyPlaybookAlignment.setup.topRuleDriftLabel || 'Not enough setup/mistake drift data yet.'}</div>
+            <div className="small muted">Uses selected review week + review trade filter only (Sunday–Saturday).</div>
+          </section>
+          {renderPlaybookReferenceCards(reviewPlaybookSections, 'Review')}
+          <RichTextEditor
+            label="1) Reflection on mistakes"
+            helperText="What patterns drove mistakes this week?"
+            value={reviewAnswers.q1}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q1: next }))}
+            placeholder=""
+            minRows={5}
+          />
+          <RichTextEditor
+            label="2) Reflection on no-trade choices"
+            helperText="Which no-trade decisions protected your edge?"
+            value={reviewAnswers.q2}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q2: next }))}
+            placeholder=""
+            minRows={5}
+          />
+          <RichTextEditor
+            label="3) Rule for next week"
+            helperText="Write one process rule you will enforce next week."
+            value={reviewAnswers.q3}
+            onChange={(next) => setReviewAnswers((s) => ({ ...s, q3: next }))}
+            placeholder=""
+            minRows={5}
+          />
+          {weekPaperTrades.length ? (
+            <RichTextEditor
+              label="Paper trades: What made me choose to paper trade, and what was I testing?"
+              helperText="Concise reflection for this week only."
+              value={reviewAnswers.q_paper}
+              onChange={(next) => setReviewAnswers((s) => ({ ...s, q_paper: next }))}
+              placeholder=""
+              minRows={3}
+            />
+          ) : null}
+          <section className="trade stack">
+            <div className="row">
+              <strong>This week's entries reference</strong>
+              <button className="inline" type="button" onClick={() => setReviewEntriesOpen((open) => !open)}>
+                {reviewEntriesOpen ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            <div className="small muted">Read-only journal context for this selected week.</div>
+            {reviewEntriesOpen ? (
+              <div className="stack" style={{ maxHeight: 340, overflow: 'auto', paddingRight: 4 }}>
+                {reviewReferenceItems.map((entry) => (
+                  <article key={`${entry.kind}:${entry.id}`} className={`trade${entry.kind === 'no_trade' ? ' no-trade' : ''}`} style={{ padding: '10px 12px' }}>
+                    <div className="row">
+                      <div className="small muted">
+                        <span className="badge">{entry.kind === 'trade' ? 'Trade' : entry.kind === 'no_trade' ? 'No-trade day' : 'Session'}</span>{' '}
+                        {entry.timeLabel}
+                      </div>
+                      {entry.attachmentCount > 0 ? <span className="badge">{entry.attachmentCount} file{entry.attachmentCount === 1 ? '' : 's'}</span> : null}
+                    </div>
+                    <div className="small"><strong>{entry.title}</strong></div>
+                    <div className="small muted" style={{ lineHeight: 1.35 }}>{entry.summary}</div>
+                    <div className="row" style={{ marginTop: 6 }}>
+                      <button className="inline" type="button" onClick={() => setReviewReferenceDetail({ kind: entry.kind, id: entry.id })}>View details</button>
+                    </div>
+                  </article>
+                ))}
+                {!reviewReferenceItems.length && <div className="small muted">No entries for selected week and trade-type filter.</div>}
+              </div>
+            ) : null}
+          </section>
+          <div style={{ position: 'sticky', bottom: 0, background: 'linear-gradient(180deg, rgba(11,18,32,0), rgba(11,18,32,0.92) 35%, rgba(11,18,32,1) 100%)', paddingTop: 14, marginTop: 4 }}>
+            <button className="primary" onClick={() => startTransition(() => void saveReview())} disabled={pending}>Save review</button>
+          </div>
+        </section>
+      )}
+
+      {tab === 'playbook' && (
+        <section className="stack playbook-page">
+          <section className="card stack control-card playbook-quick-card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>Quick Reminders</strong>
+              <span className="small muted">Last edited: {formatPlaybookUpdatedAt(playbookQuickReminderRow?.updated_at)}</span>
+            </div>
+            {playbookQuickReminderEditing ? (
+              <>
+                <textarea
+                  value={playbookQuickReminderDraft}
+                  onChange={(e) => setPlaybookQuickReminderDraft(e.target.value)}
+                  rows={6}
+                  placeholder="Add short reminders, one line per bullet."
+                />
+                <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      void savePlaybookSection(
+                        PLAYBOOK_QUICK_REMINDERS_KEY,
+                        'Quick Reminders',
+                        playbookQuickReminderDraft || PLAYBOOK_QUICK_REMINDERS_DEFAULT
+                      );
+                      setPlaybookQuickReminderEditing(false);
+                    }}
+                  >
+                    Save
+                  </button>
+                  <button
+                    className="inline"
+                    type="button"
+                    onClick={() => {
+                      setPlaybookQuickReminderDraft(PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+                      void savePlaybookSection(PLAYBOOK_QUICK_REMINDERS_KEY, 'Quick Reminders', PLAYBOOK_QUICK_REMINDERS_DEFAULT);
+                      setPlaybookQuickReminderEditing(false);
+                    }}
+                  >
+                    Reset to default
+                  </button>
+                  <button className="inline" type="button" onClick={() => setPlaybookQuickReminderEditing(false)}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="playbook-quick-content">
+                  <RichTextContent value={playbookQuickReminderRow?.content || PLAYBOOK_QUICK_REMINDERS_DEFAULT} emptyLabel="—" />
+                </div>
+                <button className="inline" type="button" onClick={() => setPlaybookQuickReminderEditing(true)}>Edit</button>
+              </>
+            )}
+          </section>
+
+          <section className="card stack control-card playbook-sections-card">
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <strong>Playbook Sections</strong>
+              <input
+                style={{ maxWidth: 260 }}
+                value={playbookSearch}
+                onChange={(e) => setPlaybookSearch(e.target.value)}
+                placeholder="Search sections"
+              />
+            </div>
+            <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+              <div className="small muted">Quick jump</div>
+              <button className="inline playbook-jump-toggle" type="button" onClick={() => setPlaybookJumpOpen((open) => !open)}>
+                {playbookJumpOpen ? 'Hide' : 'Show'}
+              </button>
+            </div>
+            {playbookJumpOpen ? (
+              <div className="playbook-jump-chips">
+                {PLAYBOOK_SECTIONS_DEFAULTS.map((section) => (
+                  <button
+                    key={`jump-${section.key}`}
+                    className="inline playbook-jump-chip"
+                    type="button"
+                    onClick={() => {
+                      setPlaybookOpen(Object.fromEntries(PLAYBOOK_SECTIONS_DEFAULTS.map((entry) => [entry.key, entry.key === section.key])));
+                      detailAnchors.current[`playbook-${section.key}`]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }}
+                  >
+                    {section.title}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {!filteredPlaybookSections.length ? <div className="small muted">No sections match your search.</div> : null}
+            {filteredPlaybookSections.map((section) => {
+              const isOpen = Boolean(playbookOpen[section.key]);
+              const isEditing = Boolean(playbookEditing[section.key]);
+              const draft = playbookDrafts[section.key] ?? section.content;
+              return (
+                <article
+                  key={section.key}
+                  className="trade stack playbook-section-item"
+                  ref={(node) => { detailAnchors.current[`playbook-${section.key}`] = node; }}
+                >
+                  <div className="row" style={{ justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <strong>{section.title}</strong>
+                    <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                      <span className="small muted">Last edited: {formatPlaybookUpdatedAt(section.updated_at)}</span>
+                      <button
+                        className="inline"
+                        type="button"
+                        onClick={() => setPlaybookOpen((prev) => {
+                          const next: Record<string, boolean> = {};
+                          for (const entry of PLAYBOOK_SECTIONS_DEFAULTS) next[entry.key] = false;
+                          next[section.key] = !isOpen;
+                          if (!isOpen) return next;
+                          return { ...prev, ...next };
+                        })}
+                      >
+                        {isOpen ? 'Collapse' : 'Expand'}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="playbook-pin-row">
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(section.pin_pre_session)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: e.target.checked, pin_trade_entry: Boolean(section.pin_trade_entry), pin_review: Boolean(section.pin_review) })}
+                      />
+                      <span className="small muted">Pin to Pre-Session</span>
+                    </label>
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(section.pin_trade_entry)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_trade_entry: e.target.checked, pin_review: Boolean(section.pin_review) })}
+                      />
+                      <span className="small muted">Pin to Trade Entry</span>
+                    </label>
+                    <label className="playbook-pin-option">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(section.pin_review)}
+                        onChange={(e) => void savePlaybookSection(section.key, section.title, section.content, { pin_pre_session: Boolean(section.pin_pre_session), pin_trade_entry: Boolean(section.pin_trade_entry), pin_review: e.target.checked })}
+                      />
+                      <span className="small muted">Pin to Review</span>
+                    </label>
+                  </div>
+                  {isOpen ? (
+                    <>
+                      {isEditing ? (
+                        <>
+                          <textarea value={draft} rows={10} onChange={(e) => setPlaybookDrafts((prev) => ({ ...prev, [section.key]: e.target.value }))} />
+                          <div className="row" style={{ gap: 8, flexWrap: 'wrap' }}>
+                            <button
+                              className="inline"
+                              type="button"
+                              onClick={() => {
+                                void savePlaybookSection(section.key, section.title, draft);
+                                setPlaybookEditing((prev) => ({ ...prev, [section.key]: false }));
+                              }}
+                            >
+                              Save
+                            </button>
+                            <button className="inline" type="button" onClick={() => void resetPlaybookSection(section.key)}>Reset to default</button>
+                            <button className="inline" type="button" onClick={() => setPlaybookEditing((prev) => ({ ...prev, [section.key]: false }))}>Cancel</button>
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <RichTextContent value={section.content} emptyLabel="—" />
+                          <button className="inline" type="button" onClick={() => setPlaybookEditing((prev) => ({ ...prev, [section.key]: true }))}>Edit</button>
+                        </>
+                      )}
+                    </>
+                  ) : null}
+                </article>
+              );
+            })}
+          </section>
+        </section>
+      )}
+
+      {tab === 'decide' && (
+        <section className="card stack control-card">
+          <div className="row">
+            <strong>GO / NO GO execution check</strong>
+            <span className="badge">{decisionComputed.readinessGrade}</span>
+          </div>
+          {editingDecisionId ? <div className="small muted">Editing existing decision entry.</div> : null}
+          {decisionStatusMessage ? <div className="small muted">{decisionStatusMessage}</div> : null}
+          <div className="small muted">Fast pre-entry decision tool. Use this before committing to a trade.</div>
+          <label className="small muted">Trade mode</label>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+            <button className="inline" type="button" style={decisionDraft.trade_intent_mode === 'live' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, trade_intent_mode: 'live' }))}>Live trade</button>
+            <button className="inline" type="button" style={decisionDraft.trade_intent_mode === 'paper' ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, trade_intent_mode: 'paper' }))}>Paper trade</button>
+          </div>
+          <label className="small muted" htmlFor="decision-timestamp">Timestamp</label>
+          <input id="decision-timestamp" type="datetime-local" value={decisionDraft.decision_timestamp} onChange={(e) => setDecisionDraft((prev) => ({ ...prev, decision_timestamp: e.target.value }))} />
+          <article className="trade stack">
+            <strong>Checklist</strong>
+            <div className="small">1) Displacement present in intended direction?</div>
+            <YesNoButtons value={decisionDraft.displacement_confirmed} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, displacement_confirmed: next }))} />
+            <div className="small">2) Valid 5m FVG or POI created?</div>
+            <YesNoButtons value={decisionDraft.valid_poi_created} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, valid_poi_created: next }))} />
+            <div className="small">3) Price is pulling back into the POI, not chasing?</div>
+            <YesNoButtons value={decisionDraft.pulling_back_not_chasing} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, pulling_back_not_chasing: next }))} />
+            <div className="small">4) Fib supports the entry zone?</div>
+            <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+              {(['yes', 'no', 'na'] as DecideFibAnswer[]).map((option) => (
+                <button key={option} className="inline" type="button" style={decisionDraft.fib_support_quality === option ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => setDecisionDraft((prev) => ({ ...prev, fib_support_quality: option }))}>{option.toUpperCase()}</button>
+              ))}
+            </div>
+            <div className="small">5) Clear liquidity target identified before opposing structure?</div>
+            <YesNoButtons value={decisionDraft.liquidity_target_clear} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, liquidity_target_clear: next }))} />
+            <div className="small">6) Logical stop location is clear and structure-based?</div>
+            <YesNoButtons value={decisionDraft.stop_location_clear} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, stop_location_clear: next }))} />
+            <div className="small">7) Within allowed trading session / time window?</div>
+            <YesNoButtons value={decisionDraft.inside_session_window} onChange={(next) => setDecisionDraft((prev) => ({ ...prev, inside_session_window: next }))} />
+          </article>
+          <label className="small muted" htmlFor="decision-hesitation">Why am I hesitating? (optional)</label>
+          <textarea id="decision-hesitation" value={decisionDraft.hesitation_note} onChange={(e) => setDecisionDraft((prev) => ({ ...prev, hesitation_note: e.target.value }))} placeholder="Optional quick note..." rows={3} />
+          <article className="trade">
+            <div className="small"><strong>Result:</strong> {decisionComputed.result.replace('_', ' ')}</div>
+            <div className="small muted">Readiness: {decisionComputed.yesCount}/{decisionComputed.applicableCount} · {decisionComputed.readinessGrade}</div>
+            <div className="small" style={{ marginTop: 6 }}>
+              {decisionComputed.result === 'GO'
+                ? 'A/A+ setup. Execute according to plan. Do not invent extra confirmation.'
+                : decisionComputed.result === 'WAIT'
+                  ? 'Setup is forming but incomplete. Wait for the missing condition or pass.'
+                  : 'No trade. Passing is the correct decision here.'}
+            </div>
+            <div style={{ marginTop: 6 }}>{decisionComputed.tags.map((tag) => <span key={tag} className="badge">{tag}</span>)}</div>
+          </article>
+          <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO' || decisionSaving} onClick={() => void startTradeFromDecision('live')}>Start Live Trade Log</button>
+            <button className="inline" type="button" disabled={decisionComputed.result === 'NO_GO' || decisionSaving} onClick={() => void startTradeFromDecision('paper')}>Start Paper Trade Log</button>
+            <button className="inline" type="button" disabled={decisionSaving} onClick={() => void saveDecisionCheck(true).then((saved) => { if (saved) setDecisionStatusMessage('Skipped setup saved.'); })}>{editingDecisionId ? 'Update Skipped Setup' : 'Save Skipped Setup'}</button>
+            {editingDecisionId ? <button className="inline" type="button" onClick={() => setEditingDecisionId(null)}>Cancel Edit</button> : null}
+          </div>
+        </section>
+      )}
+
+      {reviewReferenceDetail && (
+        <>
+          <button className="help-backdrop" aria-label="Close reference details" type="button" onClick={() => setReviewReferenceDetail(null)} />
+          <section className="card stack help-modal" style={{ maxWidth: 860, width: 'min(860px, 96vw)', margin: 'auto', alignSelf: 'center', maxHeight: '86vh', overflow: 'auto' }}>
+            <div className="row">
+              <strong>
+                {reviewReferenceDetail.kind === 'trade' ? 'Trade detail' : reviewReferenceDetail.kind === 'no_trade' ? 'No-trade detail' : 'Session detail'}
+              </strong>
+              <button className="inline" type="button" onClick={() => setReviewReferenceDetail(null)}>Close</button>
+            </div>
+            {reviewReferenceDetail.kind === 'trade' && weekTradeById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const t = weekTradeById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade">
+                    <div className="small muted">{t.trade_date} · {t.ticker} · <span className="badge">{isPaperTrade(t) ? 'Paper' : 'Live'}</span></div>
+                    <div className="small">{t.family} · {t.model} · {t.classification}</div>
+                    <div className="small"><span style={{ color: pnlValueColor(t.pnl) }}>${Number(t.pnl || 0).toFixed(2)}</span> · <span style={{ color: rValueColor(t.r_multiple) }}>{Number(t.r_multiple || 0).toFixed(2)}R</span> · {t.minutes_in_trade}m · Emotion <span style={{ color: emotionalPressureColor(t.emotional_pressure) }}>{t.emotional_pressure}/5</span> · Entry {resolveEntryEmotion(t)} · In-trade {resolveInTradeEmotion(t)}</div>
+                    <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={t.notes || ''} emptyLabel="—" />
+                    <AttachmentPreviewList entries={entryAttachments('trade', t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </article>
+                );
+              })()
+            ) : null}
+            {reviewReferenceDetail.kind === 'no_trade' && weekNoTradeById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const n = weekNoTradeById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade no-trade">
+                    <div className="small muted">{n.day_date}</div>
+                    <div className="small">Reason: {n.reason}</div>
+                    <div className="small">No-trade mindset: {resolveNoTradeMindset(n)}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={n.notes || ''} emptyLabel="—" />
+                    <AttachmentPreviewList entries={entryAttachments('no_trade', n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </article>
+                );
+              })()
+            ) : null}
+            {reviewReferenceDetail.kind === 'session' && weekSessionById.get(reviewReferenceDetail.id) ? (
+              (() => {
+                const s = weekSessionById.get(reviewReferenceDetail.id)!;
+                return (
+                  <article className="trade">
+                    <div className="small muted">{s.session_date} · {sessionSubtypeLabel(s.session_type)}</div>
+                    <div className="small">{s.start_time.slice(0, 5)}-{s.end_time.slice(0, 5)} · {formatMinutesLabel(s.duration_minutes)}</div>
+                    <div className="small">Notes:</div>
+                    <RichTextContent value={readableSessionNotes(s.notes)} emptyLabel="—" />
+                    <AttachmentPreviewList entries={attachments.filter((a) => a.session_id === s.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                  </article>
+                );
+              })()
+            ) : null}
+          </section>
+        </>
+      )}
+
+      {openHelp && (
+        <>
+          <button className="help-backdrop" aria-label="Close help" type="button" onClick={() => setOpenHelp(null)} />
+          <section className="card stack help-modal">
+          <div className="row">
+            <strong>
+              {openHelp === 'classification'
+                ? 'Trade classification definitions'
+                : openHelp === 'family'
+                  ? 'Setup family definitions'
+                  : openHelp === 'entry_emotion'
+                    ? 'Entry emotion definitions'
+                    : openHelp === 'in_trade_emotion'
+                      ? 'In-trade emotion definitions'
+                      : openHelp === 'no_trade_mindset'
+                        ? 'No-trade mindset definitions'
+                        : openHelp === 'session_bias'
+                          ? 'Session bias guidance'
+                        : 'Setup model definitions'}
+            </strong>
+            <button className="inline" type="button" onClick={() => setOpenHelp(null)}>Close</button>
+          </div>
+          {activeHelpItems.map(([title, text]) => (
+            <article key={title} className="trade">
+              <strong>{title}</strong>
+              <div className="small muted" style={{ marginTop: 6 }}>{text}</div>
+            </article>
+          ))}
+          {openHelp === 'classification' && (
+            <article className="trade" style={{ borderColor: '#4f6ea6' }}>
+              <strong>When to use N/A</strong>
+              <div className="small muted" style={{ marginTop: 6 }}>{helpNote}</div>
+            </article>
+          )}
+          </section>
+        </>
+      )}
+
+      {lightbox && (
+        <>
+          <button className="help-backdrop" aria-label="Close image preview" type="button" onClick={() => setLightbox(null)} />
+          <section className="card stack help-modal" style={{ maxWidth: 900 }}>
+            <div className="row">
+              <strong>{lightbox.name}</strong>
+              <button className="inline" type="button" onClick={() => setLightbox(null)}>Close</button>
+            </div>
+            <img src={lightbox.url} alt={lightbox.name} style={{ width: '100%', maxHeight: '70vh', objectFit: 'contain', borderRadius: 12 }} />
+            <div className="row">
+              <a href={lightbox.url} target="_blank" rel="noreferrer">
+                <span className="chip">Open full image</span>
+              </a>
+              <a href={lightbox.url} download={lightbox.name}>
+                <span className="chip">Download</span>
+              </a>
+            </div>
+          </section>
+        </>
+      )}
+
+      {error ? <div className="error">{error}</div> : null}
+
+      <nav className="bottom">
+        <div className="nav">
+          {bottomTabs.map((t) => (
+            <button key={t} className={tab === t ? 'active' : ''} onClick={() => setTab(t)}>{titleCase(t)}</button>
+          ))}
+        </div>
+      </nav>
+    </main>
+  );
+}
+
+function RichTextEditor({
+  label,
+  helperText,
+  value,
+  onChange,
+  placeholder,
+  minRows = 4
+}: {
+  label: string;
+  helperText?: string;
+  value: string;
+  onChange: (next: string) => void;
+  placeholder?: string;
+  minRows?: number;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const [textValue, setTextValue] = useState(() => toEditorText(value || ''));
+
+  useEffect(() => {
+    const next = toEditorText(value || '');
+    setTextValue((prev) => (prev === next ? prev : next));
+  }, [value]);
+
+  function applyMutation(
+    transform: (source: string, start: number, end: number) => { text: string; nextStart?: number; nextEnd?: number },
+    options?: { collapseSelection?: boolean }
+  ) {
+    const node = textareaRef.current;
+    if (!node) return;
+    const start = node.selectionStart ?? 0;
+    const end = node.selectionEnd ?? 0;
+    const next = transform(textValue, start, end);
+    setTextValue(next.text);
+    onChange(next.text);
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return;
+      const nextStart = next.nextStart ?? start;
+      const nextEnd = options?.collapseSelection ? nextStart : (next.nextEnd ?? end);
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(nextStart, nextEnd);
+    });
+  }
+
+  const controls: Array<{ key: string; icon: string; label: string; run: () => void }> = [
+    { key: 'bold', icon: 'B', label: 'Bold', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '**')) },
+    { key: 'underline', icon: 'U', label: 'Underline', run: () => applyMutation((source, start, end) => wrapWithToken(source, start, end, '__')) },
+    { key: 'bullet', icon: '•', label: 'Bullet list', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'bullet'), { collapseSelection: true }) },
+    { key: 'number', icon: '1.', label: 'Numbered list', run: () => applyMutation((source, start, end) => applyListActivation(source, start, end, 'numbered'), { collapseSelection: true }) },
+    { key: 'indent', icon: '→', label: 'Indent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, 2), { collapseSelection: true }) },
+    { key: 'outdent', icon: '←', label: 'Outdent', run: () => applyMutation((source, start, end) => indentLines(source, start, end, -2), { collapseSelection: true }) }
+  ];
+
+  function handleEnterListContinuation(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.metaKey || event.ctrlKey) return;
+    const node = textareaRef.current;
+    if (!node) return;
+    const start = node.selectionStart ?? 0;
+    const end = node.selectionEnd ?? 0;
+    if (start !== end) return;
+    const lineStart = textValue.lastIndexOf('\n', start - 1) + 1;
+    const nextBreak = textValue.indexOf('\n', start);
+    const lineEnd = nextBreak === -1 ? textValue.length : nextBreak;
+    const line = textValue.slice(lineStart, lineEnd);
+
+    const bulletMatch = line.match(/^(\s*)-\s+(.*)$/);
+    if (bulletMatch) {
+      event.preventDefault();
+      const indent = bulletMatch[1] || '';
+      const content = bulletMatch[2] || '';
+      if (!content.trim()) {
+        const nextText = `${textValue.slice(0, lineStart)}${indent}${textValue.slice(lineEnd)}`;
+        setTextValue(nextText);
+        onChange(nextText);
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(lineStart + indent.length, lineStart + indent.length);
+        });
+        return;
+      }
+      const insertion = `\n${indent}- `;
+      const nextText = `${textValue.slice(0, start)}${insertion}${textValue.slice(end)}`;
+      const cursor = start + insertion.length;
+      setTextValue(nextText);
+      onChange(nextText);
+      requestAnimationFrame(() => {
+        textareaRef.current?.setSelectionRange(cursor, cursor);
+      });
+      return;
+    }
+
+    const numberedMatch = line.match(/^(\s*)(\d+)\.\s+(.*)$/);
+    if (numberedMatch) {
+      event.preventDefault();
+      const indent = numberedMatch[1] || '';
+      const currentNumber = Number(numberedMatch[2] || 1);
+      const content = numberedMatch[3] || '';
+      if (!content.trim()) {
+        const nextText = `${textValue.slice(0, lineStart)}${indent}${textValue.slice(lineEnd)}`;
+        setTextValue(nextText);
+        onChange(nextText);
+        requestAnimationFrame(() => {
+          textareaRef.current?.setSelectionRange(lineStart + indent.length, lineStart + indent.length);
+        });
+        return;
+      }
+      const insertion = `\n${indent}${currentNumber + 1}. `;
+      const nextText = `${textValue.slice(0, start)}${insertion}${textValue.slice(end)}`;
+      const cursor = start + insertion.length;
+      setTextValue(nextText);
+      onChange(nextText);
+      requestAnimationFrame(() => {
+        textareaRef.current?.setSelectionRange(cursor, cursor);
+      });
+    }
+  }
+
+  return (
+    <div className="stack editor-shell">
+      <label className="small muted">{label}</label>
+      {helperText ? <div className="small muted editor-helper">{helperText}</div> : null}
+      <div className="editor-toolbar" role="toolbar" aria-label="Formatting controls">
+        {controls.map((control) => (
+          <button
+            key={control.key}
+            className="inline editor-tool-btn"
+            type="button"
+            title={control.label}
+            aria-label={control.label}
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={control.run}
+          >
+            {control.icon}
+          </button>
+        ))}
+      </div>
+      <textarea
+        className="editor-textarea"
+        ref={textareaRef}
+        value={textValue}
+        onChange={(event) => {
+          setTextValue(event.target.value);
+          onChange(event.target.value);
+        }}
+        onKeyDown={handleEnterListContinuation}
+        placeholder={placeholder}
+        rows={minRows}
+        style={{ minHeight: `${Math.max(120, minRows * 26)}px` }}
+      />
+      <div className="small muted editor-footnote">Stable mobile editor mode: formatting actions apply to selected text/lines in this same writing area.</div>
+    </div>
+  );
+}
+
+function YesNoButtons({ value, onChange }: { value: boolean; onChange: (next: boolean) => void }) {
+  return (
+    <div className="row" style={{ gap: 8, flexWrap: 'wrap', justifyContent: 'flex-start' }}>
+      <button className="inline" type="button" style={value ? { background: '#1f7446', borderColor: '#32915a', color: '#eafbf0' } : undefined} onClick={() => onChange(true)}>Yes</button>
+      <button className="inline" type="button" style={!value ? { background: '#7a3f3f', borderColor: '#9b4e4e', color: '#ffe8e8' } : undefined} onClick={() => onChange(false)}>No</button>
+    </div>
+  );
+}
+
+function RichTextContent({ value, emptyLabel = '—' }: { value: string; emptyLabel?: string }) {
+  const html = toDisplayHtml(value || '');
+  if (!html.trim()) return <div className="small muted">{emptyLabel}</div>;
+  return <div className="small rich-content" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+function AttachmentPreviewList({ entries, signedUrls, onOpenImage }: { entries: AttachmentRow[]; signedUrls: Record<string, string>; onOpenImage: (url: string, name: string) => void }) {
+  if (!entries.length) {
+    return <div className="small muted">No attachments saved for this entry.</div>;
+  }
+
+  return (
+    <div className="stack">
+      <div className="small muted">Attachments</div>
+      {entries.map((file) => {
+        const url = signedUrls[file.file_path];
+        const image = isImageFile(file);
+        return (
+          <article key={file.id} className="trade">
+            <div className="small">{file.file_name}</div>
+            <div className="small muted">{file.mime_type} · {formatFileSize(file.byte_size)}</div>
+            {!url ? (
+              <div className="small muted">Preparing secure link...</div>
+            ) : image ? (
+              <div className="stack" style={{ marginTop: 8 }}>
+                <button type="button" style={{ padding: 0, border: 0, background: 'transparent' }} onClick={() => onOpenImage(url, file.file_name)}>
+                  <img src={url} alt={file.file_name} style={{ width: '100%', borderRadius: 10 }} />
+                </button>
+                <div className="row">
+                  <button className="inline" type="button" onClick={() => onOpenImage(url, file.file_name)}>View image</button>
+                  <a href={url} download={file.file_name}>
+                    <span className="chip">Download</span>
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="row" style={{ marginTop: 8 }}>
+                <a href={url} target="_blank" rel="noreferrer">
+                  <span className="chip">Open attachment</span>
+                </a>
+                <a href={url} download={file.file_name}>
+                  <span className="chip">Download</span>
+                </a>
+              </div>
+            )}
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+type TimelinePoint = {
+  key: string;
+  label: string;
+  start: string;
+  end: string;
+  dailyPnl: number;
+  dailyR: number;
+  tradeCount: number;
+  chartMinutes: number;
+  journalMinutes: number;
+  totalSessionMinutes: number;
+  explicitNoTrade: boolean;
+  bucketType: 'day' | 'week';
+};
+
+function PerformanceChart({
+  points,
+  view,
+  showROverlay,
+  showTradeCountOverlay,
+  showChartTimeOverlay,
+  showJournalTimeOverlay,
+  showSessionTimeOverlay,
+  rightAxisMode
+}: {
+  points: TimelinePoint[];
+  view: 'daily' | 'cumulative';
+  showROverlay: boolean;
+  showTradeCountOverlay: boolean;
+  showChartTimeOverlay: boolean;
+  showJournalTimeOverlay: boolean;
+  showSessionTimeOverlay: boolean;
+  rightAxisMode: 'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time';
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(points.length ? points.length - 1 : null);
+  if (!points.length) return <div className="small muted">No data in selected period.</div>;
+  const mainSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.dailyPnl, 0) : point.dailyPnl;
+  });
+  const rSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.dailyR, 0) : point.dailyR;
+  });
+  const values = mainSeries;
+  const maxAbs = Math.max(1, ...values.map((v) => Math.abs(v)), 0.01);
+  const yMax = Math.ceil(maxAbs * 1.2 * 10) / 10;
+  const yMin = -yMax;
+  const chartHeight = 170;
+  const width = 340;
+  const plotLeft = 42;
+  const plotRight = width - 14;
+  const plotTop = 12;
+  const plotBottom = chartHeight - 32;
+  const plotHeight = plotBottom - plotTop;
+  const plotWidth = plotRight - plotLeft;
+  const baseline = mapValueToY(0, yMin, yMax, plotTop, plotBottom);
+  const maxTradeCount = Math.max(1, ...points.map((p) => p.tradeCount));
+  const maxRAbs = Math.max(1, ...rSeries.map((v) => Math.abs(v)), 0.01);
+  const chartMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.chartMinutes, 0) : point.chartMinutes;
+  });
+  const journalMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.journalMinutes, 0) : point.journalMinutes;
+  });
+  const sessionMinutesSeries = points.map((point, idx) => {
+    const prefix = points.slice(0, idx + 1);
+    return view === 'cumulative' ? prefix.reduce((sum, item) => sum + item.totalSessionMinutes, 0) : point.totalSessionMinutes;
+  });
+  const maxSessionMinutes = Math.max(1, ...sessionMinutesSeries, ...chartMinutesSeries, ...journalMinutesSeries);
+  const xForIndex = (idx: number) => plotLeft + (idx / Math.max(1, points.length - 1)) * plotWidth;
+  const yForValue = (value: number) => mapValueToY(value, yMin, yMax, plotTop, plotBottom);
+  const polyline = points.map((point, idx) => {
+    const x = xForIndex(idx);
+    const y = yForValue(mainSeries[idx]);
+    return `${x},${y}`;
+  }).join(' ');
+  const rPolyline = points.map((point, idx) => {
+    const x = xForIndex(idx);
+    const y = mapValueToY(rSeries[idx], -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
+    return `${x},${y}`;
+  }).join(' ');
+  const xTickIndexes = buildAxisTickIndexes(points.length, 5);
+  const yTicks = [yMax, yMax / 2, 0, yMin / 2, yMin];
+  const tradeCountTicks = [maxTradeCount, Math.ceil(maxTradeCount / 2), 0];
+  const enabledRightMetrics = [
+    showROverlay ? 'r' : null,
+    showTradeCountOverlay ? 'trade_count' : null,
+    showChartTimeOverlay ? 'chart_time' : null,
+    showJournalTimeOverlay ? 'journal_time' : null,
+    showSessionTimeOverlay ? 'session_time' : null
+  ].filter(Boolean) as Array<'r' | 'trade_count' | 'chart_time' | 'journal_time' | 'session_time'>;
+  const rightAxisMetric = enabledRightMetrics.includes(rightAxisMode) ? rightAxisMode : (enabledRightMetrics[0] || null);
+  const safeActiveIndex = activeIndex == null ? null : Math.max(0, Math.min(points.length - 1, activeIndex));
+  const activePoint = safeActiveIndex != null ? points[safeActiveIndex] : null;
+  const activeX = safeActiveIndex != null ? xForIndex(safeActiveIndex) : null;
+  const activeY = safeActiveIndex != null ? yForValue(mainSeries[safeActiveIndex]) : null;
+
+  return (
+    <div style={{ width: '100%' }}>
+      <svg viewBox={`0 0 ${width} ${chartHeight}`} style={{ width: '100%', height: 170, display: 'block' }}>
+        {yTicks.map((tick) => {
+          const y = yForValue(tick);
+          return (
+            <g key={`y-${tick}`}>
+              <line x1={plotLeft} y1={y} x2={plotRight} y2={y} stroke="#1f2937" strokeWidth={1} />
+              <text x={4} y={y + 4} fill="#93a3b8" fontSize={10}>{formatMetricValue(tick, 'pnl')}</text>
+            </g>
+          );
+        })}
+        <line x1={plotLeft} y1={baseline} x2={plotRight} y2={baseline} stroke="#2a3445" strokeWidth={1} />
+        {view === 'daily' && points.map((point, idx) => {
+          if (point.tradeCount === 0) return null;
+          const x = xForIndex(idx) - 5;
+          const value = mainSeries[idx];
+          const barHeight = Math.max(2, Math.abs(value / (yMax || 1)) * (plotHeight / 2 - 2));
+          const y = value >= 0 ? baseline - barHeight : baseline;
+          return <rect key={`bar-${point.key}`} x={x} y={y} width={10} height={barHeight} fill={value >= 0 ? '#4ad66d' : '#ff6b6b'} rx={2} onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />;
+        })}
+        {view === 'cumulative' && <polyline fill="none" stroke="#70c8ff" strokeWidth={2} points={polyline} />}
+        {view === 'cumulative' && points.map((point, idx) => (
+          <circle key={`line-hit-${point.key}`} cx={xForIndex(idx)} cy={yForValue(mainSeries[idx])} r={6} fill="transparent" onMouseEnter={() => setActiveIndex(idx)} onClick={() => setActiveIndex(idx)} />
+        ))}
+        {showROverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth={rightAxisMetric === 'r' ? 1.7 : 1}
+              points={rPolyline}
+            />
+            {points.map((point, idx) => {
+              if (point.tradeCount === 0 && point.explicitNoTrade) return null;
+              const x = xForIndex(idx);
+              const y = mapValueToY(rSeries[idx], -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
+              return <circle key={`r-${point.key}`} cx={x} cy={y} r={2} fill="#94a3b8" />;
+            })}
+          </>
+        )}
+        {showTradeCountOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#a5b4fc"
+              strokeWidth={rightAxisMetric === 'trade_count' ? 1.7 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(point.tradeCount, 0, maxTradeCount, plotTop, plotBottom);
+              return point.tradeCount > 0 ? <circle key={`count-${point.key}`} cx={x} cy={y} r={2.5} fill="#c7d2fe" /> : null;
+            })}
+          </>
+        )}
+        {showChartTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#facc15"
+              strokeWidth={rightAxisMetric === 'chart_time' ? 1.7 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(chartMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(chartMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return chartMinutesSeries[idx] > 0 ? <circle key={`chart-time-${point.key}`} cx={x} cy={y} r={2.2} fill="#fde68a" /> : null;
+            })}
+          </>
+        )}
+        {showJournalTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#2dd4bf"
+              strokeWidth={rightAxisMetric === 'journal_time' ? 1.7 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(journalMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(journalMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return journalMinutesSeries[idx] > 0 ? <circle key={`journal-time-${point.key}`} cx={x} cy={y} r={2.2} fill="#99f6e4" /> : null;
+            })}
+          </>
+        )}
+        {showSessionTimeOverlay && (
+          <>
+            <polyline
+              fill="none"
+              stroke="#f59e0b"
+              strokeWidth={rightAxisMetric === 'session_time' ? 1.8 : 1}
+              points={points.map((point, idx) => `${xForIndex(idx)},${mapValueToY(sessionMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom)}`).join(' ')}
+            />
+            {points.map((point, idx) => {
+              const x = xForIndex(idx);
+              const y = mapValueToY(sessionMinutesSeries[idx], 0, maxSessionMinutes, plotTop, plotBottom);
+              return sessionMinutesSeries[idx] > 0 ? <circle key={`session-time-${point.key}`} cx={x} cy={y} r={2.5} fill="#fcd34d" /> : null;
+            })}
+          </>
+        )}
+        {rightAxisMetric === 'trade_count' && tradeCountTicks.map((tick) => {
+          const y = mapValueToY(tick, 0, maxTradeCount, plotTop, plotBottom);
+          return <text key={`right-y-count-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{tick}</text>;
+        })}
+        {rightAxisMetric === 'r' && [maxRAbs, maxRAbs / 2, 0, -maxRAbs / 2, -maxRAbs].map((tick) => {
+          const y = mapValueToY(tick, -maxRAbs * 1.2, maxRAbs * 1.2, plotTop, plotBottom);
+          return <text key={`right-y-r-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{formatMetricValue(tick, 'r')}</text>;
+        })}
+        {(rightAxisMetric === 'chart_time' || rightAxisMetric === 'journal_time' || rightAxisMetric === 'session_time') && [maxSessionMinutes, Math.ceil(maxSessionMinutes / 2), 0].map((tick) => {
+          const y = mapValueToY(tick, 0, maxSessionMinutes, plotTop, plotBottom);
+          return <text key={`right-y-time-${tick}`} x={plotRight + 4} y={y + 4} fill="#9aa7d1" fontSize={10}>{formatMinutesLabel(tick)}</text>;
+        })}
+        {points.map((point, idx) => {
+          if (!point.explicitNoTrade) return null;
+          const x = xForIndex(idx) - 3;
+          return <line key={`nt-${point.key}`} x1={x} y1={plotBottom + 6} x2={x + 6} y2={plotBottom + 6} stroke="#9ca3af" strokeWidth={2} />;
+        })}
+        {xTickIndexes.map((idx) => {
+          const point = points[idx];
+          const x = xForIndex(idx);
+          return (
+            <g key={`x-${point.key}`}>
+              <line x1={x} y1={plotBottom} x2={x} y2={plotBottom + 4} stroke="#475569" />
+              <text x={x} y={chartHeight - 8} fill="#93a3b8" fontSize={10} textAnchor="middle">{point.label}</text>
+            </g>
+          );
+        })}
+        {activePoint && activeX != null && activeY != null && (
+          <>
+            <line x1={activeX} y1={plotTop} x2={activeX} y2={plotBottom} stroke="#64748b" strokeDasharray="3 3" />
+            <circle cx={activeX} cy={activeY} r={3.5} fill="#e2e8f0" />
+          </>
+        )}
+      </svg>
+      {activePoint && (
+        <div className="small muted" style={{ marginTop: 4 }}>
+          <strong>{formatLongDate(activePoint.start)}{activePoint.bucketType === 'week' ? ` – ${formatLongDate(activePoint.end)}` : ''}</strong>
+          {' · '}
+          <span>P&L {formatMetricValue(view === 'cumulative' ? mainSeries[safeActiveIndex ?? 0] : activePoint.dailyPnl, 'pnl')}</span>
+          {' · '}
+          <span>R {(view === 'cumulative' ? rSeries[safeActiveIndex ?? 0] : activePoint.dailyR).toFixed(2)}R</span>
+          {' · '}
+          <span>Trades {activePoint.tradeCount}</span>
+          {(showChartTimeOverlay || showSessionTimeOverlay || rightAxisMetric === 'chart_time') ? <><span>{' · '}</span><span>Chart {formatMinutesLabel(view === 'cumulative' ? chartMinutesSeries[safeActiveIndex ?? 0] : activePoint.chartMinutes)}</span></> : null}
+          {(showJournalTimeOverlay || showSessionTimeOverlay || rightAxisMetric === 'journal_time') ? <><span>{' · '}</span><span>Journal {formatMinutesLabel(view === 'cumulative' ? journalMinutesSeries[safeActiveIndex ?? 0] : activePoint.journalMinutes)}</span></> : null}
+          {(showSessionTimeOverlay || rightAxisMetric === 'session_time') ? <><span>{' · '}</span><span>Total session {formatMinutesLabel(view === 'cumulative' ? sessionMinutesSeries[safeActiveIndex ?? 0] : activePoint.totalSessionMinutes)}</span></> : null}
+          {' · '}
+          <span>{activePoint.tradeCount > 0 ? 'Trade day' : activePoint.explicitNoTrade ? 'Explicit no-trade day' : 'Blank day (no logged activity)'}</span>
+        </div>
+      )}
+      <div className="small muted">Legend: green +$, red -$, gray tick explicit no-trade, empty = blank day{showROverlay ? ' · slate line = R' : ''}{showTradeCountOverlay ? ' · lavender = trade count' : ''}{showChartTimeOverlay ? ' · yellow = chart time' : ''}{showJournalTimeOverlay ? ' · teal = journal time' : ''}{showSessionTimeOverlay ? ' · amber = total session time' : ''}{rightAxisMetric === 'r' ? ' · right axis: R' : rightAxisMetric === 'trade_count' ? ' · right axis: trade count' : rightAxisMetric === 'chart_time' ? ' · right axis: chart time' : rightAxisMetric === 'journal_time' ? ' · right axis: journal time' : rightAxisMetric === 'session_time' ? ' · right axis: total session time' : ''}.</div>
+    </div>
+  );
+}
+
+function buildChartBuckets(start: string, end: string, periodTrades: TradeRow[], periodNoTrades: NoTradeDayRow[], periodSessions: SessionRow[], periodType: DashboardPeriod): TimelinePoint[] {
+  const dates = enumerateDates(start, end);
+  if (periodType === 'weekly' || periodType === 'monthly') {
+    return dates.map((date) => {
+      const dayTrades = periodTrades.filter((t) => t.trade_date === date);
+      const daySessions = periodSessions.filter((s) => s.session_date === date);
+      const chartMinutes = daySessions.filter((s) => isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+      const journalMinutes = daySessions.filter((s) => !isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+      return {
+        key: date,
+        label: formatAxisDate(date),
+        start: date,
+        end: date,
+        dailyPnl: dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
+        dailyR: dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
+        tradeCount: dayTrades.length,
+        chartMinutes,
+        journalMinutes,
+        totalSessionMinutes: chartMinutes + journalMinutes,
+        explicitNoTrade: periodNoTrades.some((n) => n.day_date === date),
+        bucketType: 'day'
+      };
+    });
+  }
+  const weeks = new Map<string, { start: string; end: string; dates: string[] }>();
+  dates.forEach((date) => {
+    const key = sundayWeekStart(date);
+    const existing = weeks.get(key);
+    if (existing) {
+      existing.end = date;
+      existing.dates.push(date);
+    } else {
+      weeks.set(key, { start: date, end: date, dates: [date] });
+    }
+  });
+  return Array.from(weeks.entries()).map(([key, value]) => {
+    const bucketTrades = periodTrades.filter((t) => value.dates.includes(t.trade_date));
+    const bucketSessions = periodSessions.filter((s) => value.dates.includes(s.session_date));
+    const chartMinutes = bucketSessions.filter((s) => isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+    const journalMinutes = bucketSessions.filter((s) => !isChartSessionType(s.session_type)).reduce((sum, s) => sum + Number(s.duration_minutes || 0), 0);
+    const hasNoTrade = periodNoTrades.some((n) => value.dates.includes(n.day_date));
+    return {
+      key,
+      label: formatAxisDate(value.start),
+      start: value.start,
+      end: value.end,
+      dailyPnl: bucketTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0),
+      dailyR: bucketTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0),
+      tradeCount: bucketTrades.length,
+      chartMinutes,
+      journalMinutes,
+      totalSessionMinutes: chartMinutes + journalMinutes,
+      explicitNoTrade: hasNoTrade,
+      bucketType: 'week'
+    };
+  });
+}
+
+function enumerateDates(start: string, end: string) {
+  const out: string[] = [];
+  const cursor = new Date(`${start}T00:00:00Z`);
+  const last = new Date(`${end}T00:00:00Z`);
+  while (cursor <= last) {
+    out.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return out;
+}
+
+function buildPeriodJumpOptions(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') {
+    const selectedAnchor = new Date();
+    return {
+      selected: 'all_time',
+      options: [{ value: 'all_time', label: 'All time (lifetime)', anchor: selectedAnchor }]
+    };
+  }
+  const options: Array<{ value: string; label: string; anchor: Date }> = [];
+  const selectedAnchor = normalizeAnchorForPeriod(period, anchor);
+  const selected = jumpValueForAnchor(period, selectedAnchor);
+  const now = new Date();
+  const latestYear = now.getUTCFullYear() + 1;
+  const earliestYear = now.getUTCFullYear() - 10;
+
+  if (period === 'weekly') {
+    const latestWeekStart = sundayWeekStart(`${latestYear}-12-31`);
+    const earliestWeekStart = sundayWeekStart(`${earliestYear}-01-01`);
+    let cursor = latestWeekStart;
+    while (cursor >= earliestWeekStart) {
+      const next = new Date(`${cursor}T00:00:00Z`);
+      options.push({
+        value: jumpValueForAnchor(period, next),
+        label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+        anchor: normalizeAnchorForPeriod(period, next)
+      });
+      cursor = addDaysKey(cursor, -7);
+    }
+  } else if (period === 'monthly') {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      for (let m = 11; m >= 0; m -= 1) {
+        const next = new Date(Date.UTC(y, m, 1));
+        options.push({
+          value: jumpValueForAnchor(period, next),
+          label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+          anchor: next
+        });
+      }
+    }
+  } else if (period === 'quarterly') {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      for (let q = 3; q >= 0; q -= 1) {
+        const next = new Date(Date.UTC(y, q * 3, 1));
+        options.push({
+          value: jumpValueForAnchor(period, next),
+          label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+          anchor: next
+        });
+      }
+    }
+  } else {
+    for (let y = latestYear; y >= earliestYear; y -= 1) {
+      const next = period === 'annual' ? new Date(Date.UTC(y, 0, 1)) : anchorForYtdYear(y);
+      options.push({
+        value: jumpValueForAnchor(period, next),
+        label: formatPeriodLabel(period, next, getPeriodRange(period, next).start, getPeriodRange(period, next).end),
+        anchor: next
+      });
+    }
+  }
+
+  if (!options.some((opt) => opt.value === selected)) {
+    options.unshift({
+      value: selected,
+      label: formatPeriodLabel(period, selectedAnchor, getPeriodRange(period, selectedAnchor).start, getPeriodRange(period, selectedAnchor).end),
+      anchor: selectedAnchor
+    });
+  }
+  return { selected, options };
+}
+
+function jumpValueForAnchor(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') return 'all_time';
+  if (period === 'weekly') return weekKeyFromDate(anchor.toISOString().slice(0, 10));
+  if (period === 'monthly') return `${anchor.getUTCFullYear()}-${String(anchor.getUTCMonth() + 1).padStart(2, '0')}`;
+  if (period === 'quarterly') return `${anchor.getUTCFullYear()}-Q${Math.floor(anchor.getUTCMonth() / 3) + 1}`;
+  return String(anchor.getUTCFullYear());
+}
+
+function normalizeAnchorForPeriod(period: DashboardPeriod, anchor: Date) {
+  if (period === 'lifetime') return new Date();
+  if (period === 'weekly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()));
+  if (period === 'monthly') return new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), 1));
+  if (period === 'quarterly') return new Date(Date.UTC(anchor.getUTCFullYear(), Math.floor(anchor.getUTCMonth() / 3) * 3, 1));
+  if (period === 'annual') return new Date(Date.UTC(anchor.getUTCFullYear(), 0, 1));
+  return anchorForYtdYear(anchor.getUTCFullYear());
+}
+
+function chunkCalendarWeeks<T>(cells: T[]) {
+  const rows: T[][] = [];
+  for (let i = 0; i < cells.length; i += 7) rows.push(cells.slice(i, i + 7));
+  return rows;
+}
+
+function formatShortDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function formatAxisDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function formatDateShort(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+const SESSION_META_PREFIX = '[session_meta]';
+
+function parseSessionNotes(raw: string | null | undefined): { note: string; meta: (PreSessionMeta & { kind: 'pre_session_plan' }) | (PostSessionMeta & { kind: 'post_session_review' }) | null } {
+  const value = String(raw || '');
+  if (!value.startsWith(SESSION_META_PREFIX)) return { note: value, meta: null };
+  const [firstLine, ...rest] = value.split('\n');
+  const payload = firstLine.slice(SESSION_META_PREFIX.length);
+  try {
+    const meta = JSON.parse(payload);
+    return { note: rest.join('\n').trim(), meta };
+  } catch {
+    return { note: value, meta: null };
+  }
+}
+
+function withSessionMeta(note: string, meta: ((PreSessionMeta & { kind: 'pre_session_plan' }) | (PostSessionMeta & { kind: 'post_session_review' })) | null) {
+  if (!meta) return note || '';
+  return `${SESSION_META_PREFIX}${JSON.stringify(meta)}\n${String(note || '').trim()}`;
+}
+
+function readableSessionNotes(raw: string | null | undefined) {
+  return parseSessionNotes(raw).note || '';
+}
+
+function getPreSessionMeta(session: Pick<SessionRow, 'session_type' | 'notes'>) {
+  if (session.session_type === 'pre_session_plan') {
+    const parsed = parseSessionNotes(session.notes || '');
+    if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
+  }
+  if (session.session_type === 'chart') {
+    const parsed = parseSessionNotes(session.notes || '');
+    if (parsed.meta?.kind === 'pre_session_plan') return parsed.meta;
+  }
+  return null;
+}
+
+function isPreSessionPlan(session: Pick<SessionRow, 'session_type' | 'notes'>) {
+  if (session.session_type === 'pre_session_plan') return true;
+  return Boolean(getPreSessionMeta(session));
+}
+
+function minutesToTimeValue(minutes: number) {
+  const clamped = Math.max(1, Math.min(24 * 60 - 1, Number(minutes || 1)));
+  const hh = String(Math.floor(clamped / 60)).padStart(2, '0');
+  const mm = String(clamped % 60).padStart(2, '0');
+  return `${hh}:${mm}:00`;
+}
+
+function isChartSessionType(sessionType: string) {
+  return sessionType === 'chart' || sessionType === 'chart_session' || sessionType === 'pre_session_plan';
+}
+
+function resolveSessionSubtype(sessionType: string): SessionSubtypeView {
+  if (sessionType === 'pre_session_plan') return 'pre_session_plan';
+  if (sessionType === 'post_session_review' || sessionType === 'journal') return 'post_session_review';
+  return 'chart_session';
+}
+
+function sessionStyleKey(sessionType: string) {
+  const subtype = resolveSessionSubtype(sessionType);
+  if (subtype === 'pre_session_plan') return 'pre';
+  if (subtype === 'post_session_review') return 'post';
+  return 'chart';
+}
+
+function sessionSubtypeLabel(sessionType: string) {
+  if (sessionType === 'pre_session_plan') return 'Pre-session plan';
+  if (sessionType === 'chart_session' || sessionType === 'chart') return 'Chart session';
+  if (sessionType === 'post_session_review' || sessionType === 'journal') return 'Post-session review';
+  return titleCase(String(sessionType || 'session').replace(/_/g, ' '));
+}
+
+function sessionSubtypeTagLabel(sessionType: string) {
+  return isChartSessionType(sessionType) ? 'Chart study' : 'Review work';
+}
+
+function sundayWeekStart(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - day);
+  return date.toISOString().slice(0, 10);
+}
+
+function addDaysKey(dateStr: string, days: number) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function formatLongDate(dateStr: string) {
+  const date = new Date(`${dateStr}T00:00:00Z`);
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+function formatMetricValue(value: number, metric: 'pnl' | 'r') {
+  return metric === 'pnl' ? `${value >= 0 ? '+' : ''}$${value.toFixed(2)}` : `${value >= 0 ? '+' : ''}${value.toFixed(2)}R`;
+}
+
+function mapValueToY(value: number, min: number, max: number, top: number, bottom: number) {
+  if (max === min) return (top + bottom) / 2;
+  const ratio = (value - min) / (max - min);
+  return bottom - ratio * (bottom - top);
+}
+
+function pnlValueColor(value: number) {
+  if (Number(value || 0) > 0) return '#4ad66d';
+  if (Number(value || 0) < 0) return '#ff6b6b';
+  return '#93a3b8';
+}
+
+function rValueColor(value: number) {
+  return pnlValueColor(value);
+}
+
+function emotionalPressureColor(value: number | null | undefined) {
+  const level = Number(value || 0);
+  if (level >= 3) return '#ff6b6b';
+  if (level >= 1) return '#4ad66d';
+  return '#93a3b8';
+}
+
+function buildAxisTickIndexes(length: number, targetTicks: number) {
+  if (length <= 1) return [0];
+  if (length <= targetTicks) return Array.from({ length }, (_, idx) => idx);
+  const out = new Set<number>([0, length - 1]);
+  const step = (length - 1) / (targetTicks - 1);
+  for (let i = 1; i < targetTicks - 1; i += 1) {
+    out.add(Math.round(i * step));
+  }
+  return Array.from(out).sort((a, b) => a - b);
+}
+
+function titleCase(v: string) {
+  return v[0].toUpperCase() + v.slice(1);
+}
+
+function isImageFile(file: AttachmentRow) {
+  return file.mime_type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(file.file_name);
+}
+
+function formatFileSize(bytes: number) {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function extractTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDebugState) => void): Promise<TradeExtractSuggestions> {
+  const out: TradeExtractSuggestions = {};
+  const hints: string[] = [];
+  const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
+
+  Object.assign(out, parseTradeText(text));
+  if (out.ticker && !out.tickerSource) out.tickerSource = 'metadata';
+  hints.push(...extractContextHints(text));
+
+  if (/fomo/i.test(text)) hints.push('FOMO mention found');
+  if (/forced/i.test(text)) hints.push('Forced-trade mention found');
+  if (/news/i.test(text)) hints.push('News mention found');
+
+  const ocrResult = await extractTextFromImages(files, onOcrDebug);
+  out.ocrStatus = ocrResult.status;
+  out.ocrCharCount = ocrResult.charCount;
+  out.ocrError = ocrResult.error;
+  out.ocrSteps = ocrResult.steps;
+  out.headerOcrText = ocrResult.headerText;
+  const ocrText = ocrResult.text;
+  const combinedOcrText = [ocrResult.headerText, ocrText].filter(Boolean).join('\n');
+  if (combinedOcrText) {
+    const parsedFromImage = parseTradeText(combinedOcrText, ocrResult.headerText);
+    out.trade_date = out.trade_date || parsedFromImage.trade_date;
+    out.ticker = out.ticker || parsedFromImage.ticker;
+    out.pnl = out.pnl || parsedFromImage.pnl;
+    out.r_multiple = out.r_multiple || parsedFromImage.r_multiple;
+    out.minutes_in_trade = out.minutes_in_trade || parsedFromImage.minutes_in_trade;
+    out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
+    out.tickerRejectReason = out.ticker ? undefined : (parsedFromImage.tickerRejectReason || out.tickerRejectReason);
+    out.tickerSource = out.ticker ? (parsedFromImage.tickerSource || 'full_ocr') : 'none';
+    out.detectedText = ocrText;
+    hints.push(...extractContextHints(combinedOcrText));
+    hints.push('OCR text extracted from image');
+  } else if (files.some((f) => f.type.startsWith('image/'))) {
+    hints.push('No OCR text found from image content (beta)');
+  }
+
+  if (hints.length) out.hints = hints;
+  return out;
+}
+
+async function extractNoTradeSuggestions(files: File[], onOcrDebug?: (debug: OcrDebugState) => void): Promise<NoTradeExtractSuggestions> {
+  const out: NoTradeExtractSuggestions = {};
+  const hints: string[] = [];
+  const text = files.map((f) => `${f.name} ${f.type}`).join(' ');
+
+  const fromMeta = parseNoTradeText(text);
+  out.day_date = fromMeta.day_date;
+  out.reason = fromMeta.reason;
+  out.parsedHeaderLine = fromMeta.parsedHeaderLine;
+
+  const reasonMap: Array<{ test: RegExp; reason: string }> = [
+    { test: /news/i, reason: 'News risk' },
+    { test: /chop|choppy|range/i, reason: 'Choppy session' },
+    { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' },
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, reason: 'No trade taken' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, reason: 'News risk' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, reason: 'Session over / too late' },
+    { test: /not\s*clean|no\s*displacement/i, reason: 'No clear displacement' },
+    { test: /didn[’']?t\s*force/i, reason: 'No force trade discipline' }
+  ];
+  for (const r of reasonMap) {
+    if (r.test.test(text)) {
+      out.reason = r.reason;
+      hints.push(`Detected "${r.reason}" hint`);
+      break;
+    }
+  }
+  const ocrResult = await extractTextFromImages(files, onOcrDebug);
+  out.ocrStatus = ocrResult.status;
+  out.ocrCharCount = ocrResult.charCount;
+  out.ocrError = ocrResult.error;
+  out.ocrSteps = ocrResult.steps;
+  out.headerOcrText = ocrResult.headerText;
+  const ocrText = ocrResult.text;
+  const combinedOcrText = [ocrResult.headerText, ocrText].filter(Boolean).join('\n');
+  if (combinedOcrText) {
+    const parsedFromImage = parseNoTradeText(combinedOcrText);
+    out.day_date = out.day_date || parsedFromImage.day_date;
+    out.reason = out.reason || parsedFromImage.reason;
+    out.parsedHeaderLine = out.parsedHeaderLine || parsedFromImage.parsedHeaderLine;
+    out.detectedText = ocrText;
+    hints.push(...extractContextHints(combinedOcrText));
+    hints.push('OCR text extracted from image');
+  } else if (files.some((f) => f.type.startsWith('image/'))) {
+    hints.push('No OCR text found from image content (beta)');
+  }
+  if (hints.length) out.hints = hints;
+  return out;
+}
+
+function parseTradeText(text: string, headerOcrText?: string): TradeExtractSuggestions {
+  const out: TradeExtractSuggestions = {};
+  const normalized = text.replace(/\r/g, ' ');
+  const tickerResult = extractTickerFromScreenshotText(normalized, headerOcrText);
+  if (tickerResult.headerLine) out.parsedHeaderLine = tickerResult.headerLine;
+  if (tickerResult.ticker) out.ticker = tickerResult.ticker;
+  if (!tickerResult.ticker && tickerResult.rejectReason) out.tickerRejectReason = tickerResult.rejectReason;
+  out.tickerSource = tickerResult.source || 'none';
+  if (tickerResult.microResolutionRule) out.microResolutionRule = tickerResult.microResolutionRule;
+  const dateResult = extractDateFromText(normalized, tickerResult.headerLine);
+  if (dateResult.date) out.trade_date = dateResult.date;
+  if (!out.parsedHeaderLine && dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
+  const pnlMatch =
+    normalized.match(/(?:pnl|profit|loss|result|net)\s*[:=]?\s*([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)/i) ||
+    normalized.match(/([+-]?\$?\s*\d[\d,]*(?:\.\d+)?)\s*(usd|dollars?|\$)\b/i);
+  if (pnlMatch) out.pnl = sanitizeNumberToken(pnlMatch[1]);
+  const rMatch = normalized.match(/([+-]?\d+(?:\.\d+)?)\s*R\b/i);
+  if (rMatch) out.r_multiple = rMatch[1];
+  const minutesResult = extractMinutesSuggestion(normalized);
+  if (minutesResult.value) out.minutes_in_trade = minutesResult.value;
+  if (minutesResult.reason) out.minutesRejectReason = minutesResult.reason;
+  if (minutesResult.timeframeRejected) out.timeframeRejected = true;
+  return out;
+}
+
+function parseNoTradeText(text: string): NoTradeExtractSuggestions {
+  const out: NoTradeExtractSuggestions = {};
+  const normalized = text.replace(/\r/g, ' ');
+  const dateResult = extractDateFromText(normalized);
+  if (dateResult.date) out.day_date = dateResult.date;
+  if (dateResult.headerLine) out.parsedHeaderLine = dateResult.headerLine;
+  const reasonMap: Array<{ test: RegExp; reason: string }> = [
+    { test: /news/i, reason: 'News risk' },
+    { test: /chop|choppy|range/i, reason: 'Choppy session' },
+    { test: /no[-_ ]?setup|noa\+|no a\+/i, reason: 'No A+ setup' },
+    { test: /fatigue|tired/i, reason: 'Not mentally ready' },
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, reason: 'No trade taken' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, reason: 'News risk' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, reason: 'Session over / too late' },
+    { test: /not\s*clean|no\s*displacement/i, reason: 'No clear displacement' },
+    { test: /didn[’']?t\s*force/i, reason: 'No force trade discipline' }
+  ];
+  for (const r of reasonMap) {
+    if (r.test.test(normalized)) {
+      out.reason = r.reason;
+      break;
+    }
+  }
+  return out;
+}
+
+function normalizeDate(value: string): string {
+  if (/^20\d{2}[-_./]\d{1,2}[-_./]\d{1,2}$/.test(value)) {
+    const [y, m, d] = value.split(/[-_./]/).map((v) => Number(v));
+    return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  if (/^\d{1,2}[-/.]\d{1,2}[-/.]20\d{2}$/.test(value)) {
+    const [m, d, y] = value.split(/[-/.]/).map((v) => Number(v));
+    return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  return value.replace(/[_.]/g, '-').replace(/\//g, '-');
+}
+
+function sanitizeNumberToken(value: string): string {
+  const cleaned = value.replace(/\s/g, '').replace(/\$/g, '').replace(/,/g, '');
+  const match = cleaned.match(/[+-]?\d+(?:\.\d+)?/);
+  return match?.[0] || '';
+}
+
+const EXCLUDED_TICKER_TOKENS = new Set([
+  'CME',
+  'CBOT',
+  'NYMEX',
+  'COMEX',
+  'NASDAQ',
+  'NYSE',
+  'USD',
+  'USDT'
+]);
+
+const REJECTED_SHORT_TICKERS = new Set(['EA', 'CE', 'ME', 'US', 'TO', 'ON', 'AT', 'IN', 'OF', 'AN', 'OR', 'ET']);
+
+type TickerParseResult = {
+  ticker?: string;
+  headerLine?: string;
+  rejectReason?: string;
+  source?: 'header_ocr' | 'full_ocr' | 'metadata' | 'none';
+  microResolutionRule?: string;
+};
+
+function extractTickerFromScreenshotText(text: string, headerOcrText?: string): TickerParseResult {
+  const familyResolution = resolveFuturesFamily([headerOcrText || '', text].join('\n'));
+  if (familyResolution.ticker) {
+    return {
+      ticker: familyResolution.ticker,
+      source: headerOcrText?.trim() ? 'header_ocr' : 'full_ocr',
+      headerLine: headerOcrText?.split('\n')[0]?.trim(),
+      microResolutionRule: familyResolution.rule
+    };
+  }
+  if (headerOcrText?.trim()) {
+    const fromCrop = findTickerToken(headerOcrText, true);
+    if (fromCrop.ticker) return { ...fromCrop, source: 'header_ocr', headerLine: headerOcrText.split('\n')[0]?.trim() || headerOcrText.trim() };
+  }
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const tradingViewLine = lines.find((line) =>
+    /[·•|]/.test(line) && /(?:\b\d+\b|\b\d+[mhdw]\b|\b(MES|ES|NQ|MNQ|CL|GC)\d*!?\b)/i.test(line)
+  );
+
+  if (tradingViewLine) {
+    const fromHeader = findTickerToken(tradingViewLine, true);
+    if (fromHeader.ticker) return { ...fromHeader, headerLine: tradingViewLine, source: 'full_ocr' };
+    if (fromHeader.rejectReason) return { ...fromHeader, headerLine: tradingViewLine, source: 'none' };
+  }
+
+  const generic = findTickerToken(text, false);
+  if (generic.ticker) return { ...generic, source: 'full_ocr' };
+  return { ...generic, source: 'none' };
+}
+
+function findTickerToken(text: string, preferLeftmost: boolean): TickerParseResult {
+  const futuresMatches = Array.from(text.matchAll(/\b([A-Z0-9!]{2,6})\b/gi));
+  if (futuresMatches.length) {
+    for (const m of futuresMatches) {
+      const recovered = recoverFuturesTicker(m[1]);
+      if (recovered) return { ticker: recovered };
+    }
+  }
+
+  const symbolMatches = Array.from(text.matchAll(/\b[A-Z]{2,6}\d*!?\b/g));
+  const ordered = preferLeftmost ? symbolMatches : [...symbolMatches];
+  for (const match of ordered) {
+    const candidate = normalizeTickerToken(match[0]);
+    if (!candidate) continue;
+    if (EXCLUDED_TICKER_TOKENS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it is an exchange/source/currency token.` };
+    }
+    if (candidate.length < 2 || REJECTED_SHORT_TICKERS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it looks like OCR junk/short token.` };
+    }
+    if (candidate.length === 2 && !SUPPORTED_SHORT_TICKERS.has(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because short tickers require stronger confidence.` };
+    }
+    if (!/^[A-Z]{2,5}$/.test(candidate)) {
+      return { rejectReason: `Rejected "${candidate}" because it failed symbol validation.` };
+    }
+    return { ticker: candidate };
+  }
+  return { rejectReason: 'No strong ticker candidate found.' };
+}
+
+function normalizeTickerToken(raw: string): string {
+  const upper = raw.toUpperCase().replace(/[^A-Z0-9!]/g, '');
+  if (!upper) return '';
+  if (/^(MES|ES|NQ|MNQ|CL|GC)\d*!?$/.test(upper)) {
+    return upper.match(/^(MES|ES|NQ|MNQ|CL|GC)/)?.[1] || '';
+  }
+  if (/^[A-Z]{2,6}\d*!?$/.test(upper)) {
+    return upper.replace(/\d+!?$/, '');
+  }
+  return '';
+}
+
+const FUTURES_BASE_TICKERS = ['MES', 'ES', 'NQ', 'MNQ', 'CL', 'GC'] as const;
+const SUPPORTED_SHORT_TICKERS = new Set(['ES', 'NQ', 'CL', 'GC']);
+
+function recoverFuturesTicker(raw: string): string {
+  const upper = raw.toUpperCase().replace(/[^A-Z0-9!]/g, '');
+  if (!upper) return '';
+  const cleaned = upper.replace(/[!|]/g, '').replace(/1$/, '').replace(/0/g, 'O').replace(/5/g, 'S').replace(/8/g, 'B');
+  for (const ticker of FUTURES_BASE_TICKERS) {
+    if (cleaned === ticker) return ticker;
+    if (levenshteinDistance(cleaned, ticker) <= 1) return ticker;
+    if (cleaned.endsWith(ticker)) return ticker;
+  }
+  return '';
+}
+
+function resolveFuturesFamily(text: string): { ticker?: string; rule?: string } {
+  const tokens = Array.from(text.toUpperCase().matchAll(/\b([A-Z0-9!]{2,8})\b/g)).map((m) => m[1]);
+  const recovered = new Set<string>();
+  for (const token of tokens) {
+    const next = recoverFuturesTicker(token);
+    if (next) recovered.add(next);
+  }
+  if (recovered.has('MES')) return { ticker: 'MES', rule: 'Micro contract precedence: MES preferred over ES.' };
+  if (recovered.has('MNQ')) return { ticker: 'MNQ', rule: 'Micro contract precedence: MNQ preferred over NQ.' };
+  if (recovered.has('ES')) return { ticker: 'ES', rule: 'Standard contract selected (no micro evidence detected).' };
+  if (recovered.has('NQ')) return { ticker: 'NQ', rule: 'Standard contract selected (no micro evidence detected).' };
+  if (recovered.has('CL')) return { ticker: 'CL', rule: 'Futures normalization applied.' };
+  if (recovered.has('GC')) return { ticker: 'GC', rule: 'Futures normalization applied.' };
+  return {};
+}
+
+function levenshteinDistance(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i += 1) {
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+type DateParseResult = {
+  date?: string;
+  headerLine?: string;
+};
+
+function extractDateFromText(text: string, preferredHeaderLine?: string): DateParseResult {
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean);
+  const headerLine = preferredHeaderLine || lines.find((line) =>
+    /[·•|]/.test(line) && /(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}\/\d{1,2}\/\d{4})/i.test(line)
+  );
+  const combined = [headerLine || '', text].join('\n');
+  const inferredYear = inferYearFromText(combined) || new Date().getFullYear();
+  const dateToken = findDateToken(combined, inferredYear);
+  return { date: dateToken, headerLine };
+}
+
+function inferYearFromText(text: string): number | null {
+  const yearMatch = text.match(/\b(20\d{2})\b/);
+  if (!yearMatch) return null;
+  const y = Number(yearMatch[1]);
+  return Number.isFinite(y) ? y : null;
+}
+
+function findDateToken(text: string, fallbackYear: number): string {
+  const iso = text.match(/\b(20\d{2})[-/.](0?[1-9]|1[0-2])[-/.](0?[1-9]|[12]\d|3[01])\b/);
+  if (iso) return normalizeDate(`${iso[1]}-${iso[2]}-${iso[3]}`);
+  const slash = text.match(/\b(0?[1-9]|1[0-2])[\/-](0?[1-9]|[12]\d|3[01])[\/-](20\d{2})\b/);
+  if (slash) return normalizeDate(`${slash[3]}-${slash[1]}-${slash[2]}`);
+
+  const monthMap: Record<string, number> = {
+    jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+    jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12
+  };
+  const named = text.match(/\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})(?:,?\s*(20\d{2}))?\b/i);
+  if (named) {
+    const month = monthMap[named[1].slice(0, 3).toLowerCase()];
+    const day = Number(named[2]);
+    const year = Number(named[3] || fallbackYear);
+    return normalizeDate(`${year}-${month}-${day}`);
+  }
+  return '';
+}
+
+function extractMinutesSuggestion(text: string): { value?: string; reason?: string; timeframeRejected?: boolean } {
+  const strongPatterns = [
+    /minutes?\s+in\s+trade\s*[:=]?\s*(\d{1,4})\b/i,
+    /held\s+for\s+(\d{1,4})\s*(?:m|min|mins|minutes)\b/i,
+    /duration\s*[:=]?\s*(\d{1,4})\s*(?:m|min|mins|minutes)\b/i,
+    /time\s+in\s+trade\s*[:=]?\s*(\d{1,4})\s*(?:m|min|mins|minutes)\b/i
+  ];
+  for (const pattern of strongPatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      return { value: match[1], reason: `Accepted minutes from explicit duration phrase "${match[0]}".` };
+    }
+  }
+
+  const anyMinuteToken = text.match(/\b(\d{1,3})\s*(m|min|mins|minutes)\b/i);
+  if (!anyMinuteToken) return {};
+  const timeframeLike = /\b(1|2|3|5|10|15|30|45|60|120|240)\s*(m|min|mins)\b/i.test(anyMinuteToken[0]);
+  if (timeframeLike) {
+    return { timeframeRejected: true, reason: `Rejected "${anyMinuteToken[0]}" because it matches a chart timeframe token.` };
+  }
+  return { reason: `Rejected "${anyMinuteToken[0]}" because no explicit duration wording was found.` };
+}
+
+function extractContextHints(text: string): string[] {
+  const hintRules: Array<{ test: RegExp; hint: string }> = [
+    { test: /no\s*trade|didn[’']?t\s*trade|flat\s*today/i, hint: 'No-trade note found' },
+    { test: /no\s*a\+\s*setup|no\s*setup/i, hint: 'No A+ setup note found' },
+    { test: /red\s*folder|news\s*event|fomc|cpi|nfp/i, hint: 'News event caution note found' },
+    { test: /session\s*over|too\s*late|late\s*entry/i, hint: 'Session over / too late note found' },
+    { test: /choppy|not\s*clean|no\s*displacement/i, hint: 'Choppy / no displacement note found' },
+    { test: /didn[’']?t\s*force|no\s*force/i, hint: 'Discipline note: did not force trade' }
+  ];
+  return hintRules.filter((rule) => rule.test.test(text)).map((rule) => rule.hint);
+}
+
+type OcrResult = {
+  status: OcrDebugState['ocrStatus'];
+  text: string;
+  headerText: string;
+  charCount: number;
+  error?: string;
+  steps: string[];
+};
+
+async function extractTextFromImages(files: File[], onDebug?: (debug: OcrDebugState) => void): Promise<OcrResult> {
+  const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+  const steps: string[] = [];
+  if (!imageFiles.length) {
+    const result: OcrResult = { status: 'no_images', text: '', headerText: '', charCount: 0, steps: ['No image files found'] };
+    onDebug?.({ ocrStatus: result.status, ocrCharCount: 0, ocrSteps: result.steps });
+    return result;
+  }
+  try {
+    const tesseract = await loadTesseractRuntime();
+    const chunks: string[] = [];
+    const headerChunks: string[] = [];
+    for (const file of imageFiles) {
+      steps.push(`image loaded: ${file.name}`);
+      onDebug?.({ ocrStatus: 'image_loaded', ocrSteps: [...steps] });
+      const prepared = await preprocessImageForOcr(file);
+      const preparedHeader = await preprocessHeaderCropForOcr(file);
+      steps.push(`ocr running: ${file.name}`);
+      onDebug?.({ ocrStatus: 'running', ocrSteps: [...steps] });
+      const result = await tesseract.recognize(prepared, 'eng');
+      const headerResult = await tesseract.recognize(preparedHeader, 'eng');
+      const text = String(result?.data?.text || '').trim();
+      const headerText = String(headerResult?.data?.text || '').trim();
+      if (text) {
+        chunks.push(text);
+        steps.push(`ocr succeeded: ${file.name}`);
+        onDebug?.({ ocrStatus: 'succeeded', ocrCharCount: chunks.join('\n').length, ocrSteps: [...steps] });
+      } else {
+        steps.push(`ocr returned no text: ${file.name}`);
+        onDebug?.({ ocrStatus: 'no_text', ocrCharCount: chunks.join('\n').length, ocrSteps: [...steps] });
+      }
+      if (headerText) headerChunks.push(headerText);
+    }
+    const text = chunks.join('\n').trim();
+    const headerText = headerChunks.join('\n').trim();
+    const charCount = text.length;
+    return { status: text || headerText ? 'succeeded' : 'no_text', text, headerText, charCount, steps };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    steps.push(`ocr failed: ${message}`);
+    onDebug?.({ ocrStatus: 'failed', ocrError: message, ocrCharCount: 0, ocrSteps: [...steps] });
+    return { status: 'failed', text: '', headerText: '', charCount: 0, error: message, steps };
+  }
+}
+
+type TesseractLike = {
+  recognize: (image: HTMLCanvasElement, language: string) => Promise<{ data?: { text?: string } }>;
+};
+
+async function loadTesseractRuntime(): Promise<TesseractLike> {
+  const globalWithTesseract = globalThis as typeof globalThis & { Tesseract?: TesseractLike };
+  if (globalWithTesseract.Tesseract?.recognize) return globalWithTesseract.Tesseract;
+  await loadScriptOnce('https://cdn.jsdelivr.net/npm/tesseract.js@6/dist/tesseract.min.js');
+  if (globalWithTesseract.Tesseract?.recognize) return globalWithTesseract.Tesseract;
+  throw new Error('Tesseract runtime failed to load from CDN.');
+}
+
+function loadScriptOnce(src: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[data-ocr-runtime="${src}"]`) as HTMLScriptElement | null;
+    if (existing?.dataset.loaded === 'true') {
+      resolve();
+      return;
+    }
+    if (existing) {
+      existing.addEventListener('load', () => resolve(), { once: true });
+      existing.addEventListener('error', () => reject(new Error('OCR runtime script failed to load.')), { once: true });
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.async = true;
+    script.dataset.ocrRuntime = src;
+    script.addEventListener('load', () => {
+      script.dataset.loaded = 'true';
+      resolve();
+    }, { once: true });
+    script.addEventListener('error', () => reject(new Error('OCR runtime script failed to load.')), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+async function preprocessImageForOcr(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  const scale = 1.5;
+  const width = Math.max(1, Math.round(bitmap.width * scale));
+  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    bitmap.close();
+    throw new Error('Failed to initialize canvas context for OCR preprocessing.');
+  }
+  ctx.drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, width, height);
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    const contrastBoost = gray > 140 ? 255 : 0;
+    data[i] = contrastBoost;
+    data[i + 1] = contrastBoost;
+    data[i + 2] = contrastBoost;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+async function preprocessHeaderCropForOcr(file: File): Promise<HTMLCanvasElement> {
+  const bitmap = await createImageBitmap(file);
+  const cropWidth = Math.max(1, Math.round(bitmap.width * 0.6));
+  const cropHeight = Math.max(1, Math.round(bitmap.height * 0.22));
+  const canvas = document.createElement('canvas');
+  canvas.width = cropWidth;
+  canvas.height = cropHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    bitmap.close();
+    throw new Error('Failed to initialize canvas context for header OCR preprocessing.');
+  }
+  ctx.drawImage(bitmap, 0, 0, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+  bitmap.close();
+  const imageData = ctx.getImageData(0, 0, cropWidth, cropHeight);
+  const { data } = imageData;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    const gray = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    const contrastBoost = gray > 140 ? 255 : 0;
+    data[i] = contrastBoost;
+    data[i + 1] = contrastBoost;
+    data[i + 2] = contrastBoost;
+  }
+  ctx.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
+function formatOcrStatus(status: OcrDebugState['ocrStatus']) {
+  if (!status) return 'Idle';
+  if (status === 'image_loaded') return 'Image loaded';
+  if (status === 'running') return 'OCR running';
+  if (status === 'succeeded') return 'OCR succeeded';
+  if (status === 'no_text') return 'OCR returned no text';
+  if (status === 'failed') return 'OCR failed';
+  if (status === 'no_images') return 'No image files found';
+  return 'Idle';
+}
+
+function getPeriodRange(period: DashboardPeriod, anchor: Date): { start: string; end: string } {
+  if (period === 'lifetime') {
+    return { start: '2000-01-01', end: new Date().toISOString().slice(0, 10) };
+  }
+  const y = anchor.getUTCFullYear();
+  const m = anchor.getUTCMonth();
+  const d = anchor.getUTCDate();
+  if (period === 'weekly') {
+    const dt = new Date(Date.UTC(y, m, d));
+    const day = dt.getUTCDay();
+    dt.setUTCDate(dt.getUTCDate() - day);
+    const end = new Date(dt);
+    end.setUTCDate(dt.getUTCDate() + 6);
+    return { start: dt.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'monthly') {
+    const start = new Date(Date.UTC(y, m, 1));
+    const end = new Date(Date.UTC(y, m + 1, 0));
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'quarterly') {
+    const qStartMonth = Math.floor(m / 3) * 3;
+    const start = new Date(Date.UTC(y, qStartMonth, 1));
+    const end = new Date(Date.UTC(y, qStartMonth + 3, 0));
+    return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
+  }
+  if (period === 'annual') {
+    return { start: `${y}-01-01`, end: `${y}-12-31` };
+  }
+  return { start: `${y}-01-01`, end: new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10) };
+}
+
+function shiftPeriod(anchor: Date, period: DashboardPeriod, direction: number): Date {
+  if (period === 'lifetime') return new Date(anchor);
+  const next = new Date(anchor);
+  if (period === 'weekly') next.setUTCDate(next.getUTCDate() + 7 * direction);
+  else if (period === 'monthly') next.setUTCMonth(next.getUTCMonth() + direction);
+  else if (period === 'quarterly') next.setUTCMonth(next.getUTCMonth() + 3 * direction);
+  else next.setUTCFullYear(next.getUTCFullYear() + direction);
+  return next;
+}
+
+function parseIsoDateInput(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return null;
+  const [year, month, day] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+function parseMonthInput(value: string) {
+  if (!/^\d{4}-\d{2}$/.test(String(value || ''))) return null;
+  const [year, month] = value.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+function anchorForYtdYear(year: number) {
+  const now = new Date();
+  const month = now.getUTCMonth();
+  const day = now.getUTCDate();
+  const endOfTargetMonth = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
+  return new Date(Date.UTC(year, month, Math.min(day, endOfTargetMonth)));
+}
+
+function inDateRange(dateStr: string, start: string, end: string) {
+  return dateStr >= start && dateStr <= end;
+}
+
+function toDateInput(value: string) {
+  return value.slice(0, 10);
+}
+
+function toLocalDateTimeInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hh}:${mm}`;
+}
+
+function parseStoredDateTime(value: string | null | undefined) {
+  const parsed = new Date(value || '');
+  if (!Number.isNaN(parsed.getTime())) return parsed;
+  return new Date();
+}
+
+function parseLocalDateTimeInput(value: string) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+  if (match) {
+    const [, year, month, day, hh, mm] = match;
+    return new Date(Number(year), Number(month) - 1, Number(day), Number(hh), Number(mm), 0, 0);
+  }
+  return parseStoredDateTime(value);
+}
+
+function toLocalDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDecisionTimestampLocal(value: string) {
+  const stamp = parseStoredDateTime(value);
+  if (Number.isNaN(stamp.getTime())) return String(value || '').slice(0, 16).replace('T', ' ');
+  return toLocalDateTimeInputValue(stamp).replace('T', ' ');
+}
+
+function normalizeTimeInput(value: unknown) {
+  const raw = String(value || '').trim();
+  const match = raw.match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return '';
+  const hh = Math.min(23, Math.max(0, Number(match[1] || 0)));
+  const mm = Math.min(59, Math.max(0, Number(match[2] || 0)));
+  return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+}
+
+function getHistoryDateRange(mode: HistoryDateFilter, todayKey: string, customStart: string, customEnd: string): { start: string; end: string } {
+  if (mode === 'this_month') {
+    const date = new Date(`${todayKey}T00:00:00Z`);
+    const start = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    return { start, end: todayKey };
+  }
+  if (mode === 'last_30_days') {
+    return { start: addDaysKey(todayKey, -29), end: todayKey };
+  }
+  if (mode === 'custom') {
+    const start = customStart || '0000-01-01';
+    const end = customEnd || '9999-12-31';
+    return start <= end ? { start, end } : { start: end, end: start };
+  }
+  return { start: '0000-01-01', end: '9999-12-31' };
+}
+
+function countItems(items: string[]) {
+  return items.reduce<Record<string, number>>((acc, item) => {
+    const key = String(item || '').trim();
+    if (!key) return acc;
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+type PerformanceBreakdownRow = {
+  key: string;
+  trades: number;
+  winRate: number;
+  netPnl: number;
+  avgPnl: number;
+  avgR: number;
+};
+
+function computePerformanceBreakdown(rows: TradeRow[], getKey: (trade: TradeRow) => string): PerformanceBreakdownRow[] {
+  const grouped = rows.reduce<Record<string, { trades: number; wins: number; pnl: number; r: number }>>((acc, trade) => {
+    const key = String(getKey(trade) || 'Unknown').trim() || 'Unknown';
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0, r: 0 };
+    acc[key].trades += 1;
+    if (Number(trade.pnl || 0) > 0) acc[key].wins += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    acc[key].r += Number(trade.r_multiple || 0);
+    return acc;
+  }, {});
+  return Object.entries(grouped)
+    .map(([key, value]) => ({
+      key,
+      trades: value.trades,
+      winRate: value.trades ? (value.wins / value.trades) * 100 : 0,
+      netPnl: value.pnl,
+      avgPnl: value.trades ? value.pnl / value.trades : 0,
+      avgR: value.trades ? value.r / value.trades : 0
+    }))
+    .sort((a, b) => b.trades - a.trades || b.netPnl - a.netPnl);
+}
+
+function computeMistakeImpact(rows: TradeRow[]): PerformanceBreakdownRow[] {
+  const expanded = rows.flatMap((trade) => {
+    const tags = normalizeMistakeTags(trade.mistake_tags);
+    return tags.map((tag) => ({
+      tag,
+      pnl: Number(trade.pnl || 0),
+      rMultiple: Number(trade.r_multiple || 0),
+      win: Number(trade.pnl || 0) > 0
+    }));
+  });
+  const grouped = expanded.reduce<Record<string, { trades: number; wins: number; pnl: number; r: number }>>((acc, trade) => {
+    const key = String(trade.tag || '').trim();
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0, r: 0 };
+    acc[key].trades += 1;
+    if (trade.win) acc[key].wins += 1;
+    acc[key].pnl += trade.pnl;
+    acc[key].r += trade.rMultiple;
+    return acc;
+  }, {});
+  return Object.entries(grouped)
+    .map(([key, value]) => ({
+      key,
+      trades: value.trades,
+      winRate: value.trades ? (value.wins / value.trades) * 100 : 0,
+      netPnl: value.pnl,
+      avgPnl: value.trades ? value.pnl / value.trades : 0,
+      avgR: value.trades ? value.r / value.trades : 0
+    }))
+    .sort((a, b) => b.trades - a.trades || a.avgPnl - b.avgPnl);
+}
+
+function computeGroupStats(rows: TradeRow[], getKey: (trade: TradeRow) => string) {
+  const grouped = rows.reduce<Record<string, { trades: number; wins: number; pnl: number }>>((acc, trade) => {
+    const key = getKey(trade) || 'Unknown';
+    if (!acc[key]) acc[key] = { trades: 0, wins: 0, pnl: 0 };
+    acc[key].trades += 1;
+    if (Number(trade.pnl || 0) > 0) acc[key].wins += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    return acc;
+  }, {});
+  return Object.entries(grouped).map(([key, v]) => ({
+    key,
+    trades: v.trades,
+    winRate: v.trades ? (v.wins / v.trades) * 100 : 0,
+    netPnl: v.pnl
+  })).sort((a, b) => b.netPnl - a.netPnl);
+}
+
+function computeStreaks(rows: TradeRow[]) {
+  // Streak rule: use P&L sign only.
+  // Positive pnl => win streak, negative pnl => loss streak, zero pnl breaks streak.
+  const sorted = [...rows].sort((a, b) => {
+    const byDate = a.trade_date.localeCompare(b.trade_date);
+    if (byDate !== 0) return byDate;
+    const createdA = Date.parse(String((a as TradeRow & { created_at?: string }).created_at || ''));
+    const createdB = Date.parse(String((b as TradeRow & { created_at?: string }).created_at || ''));
+    if (!Number.isNaN(createdA) && !Number.isNaN(createdB) && createdA !== createdB) return createdA - createdB;
+    return a.id.localeCompare(b.id);
+  });
+  let currentWin = 0;
+  let currentLoss = 0;
+  let longestWin = 0;
+  let longestLoss = 0;
+  let runningWin = 0;
+  let runningLoss = 0;
+
+  sorted.forEach((trade) => {
+    const pnl = Number(trade.pnl || 0);
+    if (pnl > 0) {
+      runningWin += 1;
+      runningLoss = 0;
+    } else if (pnl < 0) {
+      runningLoss += 1;
+      runningWin = 0;
+    } else {
+      runningWin = 0;
+      runningLoss = 0;
+    }
+    longestWin = Math.max(longestWin, runningWin);
+    longestLoss = Math.max(longestLoss, runningLoss);
+  });
+
+  for (let idx = sorted.length - 1; idx >= 0; idx -= 1) {
+    const pnl = Number(sorted[idx].pnl || 0);
+    if (pnl > 0 && currentLoss === 0) currentWin += 1;
+    else if (pnl < 0 && currentWin === 0) currentLoss += 1;
+    else break;
+  }
+
+  return { currentWin, currentLoss, longestWin, longestLoss };
+}
+
+function getEmotionalInsight(rows: TradeRow[]) {
+  const low = rows.filter((trade) => Number(trade.emotional_pressure || 0) <= 2);
+  const high = rows.filter((trade) => Number(trade.emotional_pressure || 0) >= 4);
+  if (low.length < 2 || high.length < 2) return '';
+  const lowAvg = low.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / low.length;
+  const highAvg = high.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / high.length;
+  if (lowAvg - highAvg > 5) return 'Interpretation: lower emotional pressure (levels 1-2) is currently associated with stronger average outcomes than high-pressure trades.';
+  if (highAvg - lowAvg > 5) return 'Interpretation: high-pressure trades are currently outperforming low-pressure trades; verify if this is sustained or sample noise.';
+  return 'Interpretation: outcomes are currently similar across pressure ranges in this sample.';
+}
+
+function pickStrongestSetupCallout(rows: PerformanceBreakdownRow[], minSample: number) {
+  if (!rows.length) return null;
+  const eligible = rows.filter((row) => row.trades >= minSample);
+  const source = eligible.length ? eligible : rows.slice(0, Math.min(5, rows.length));
+  if (!source.length) return null;
+  const ranked = [...source].sort((a, b) => {
+    const scoreA = a.avgR * 100 + a.winRate * 1.2 + a.avgPnl * 0.5;
+    const scoreB = b.avgR * 100 + b.winRate * 1.2 + b.avgPnl * 0.5;
+    return scoreB - scoreA;
+  });
+  const top = ranked[0];
+  return { ...top, limited: top.trades < minSample };
+}
+
+function getMultiTradeDayInsight(rows: TradeRow[]) {
+  const byDate = rows.reduce<Record<string, { trades: number; pnl: number }>>((acc, trade) => {
+    const key = trade.trade_date;
+    if (!acc[key]) acc[key] = { trades: 0, pnl: 0 };
+    acc[key].trades += 1;
+    acc[key].pnl += Number(trade.pnl || 0);
+    return acc;
+  }, {});
+  const days = Object.values(byDate);
+  if (days.length < 4) return '';
+  const heavy = days.filter((day) => day.trades >= 3);
+  const light = days.filter((day) => day.trades < 3 && day.trades > 0);
+  if (heavy.length < 2 || light.length < 2) return '';
+  const heavyAvg = heavy.reduce((sum, day) => sum + day.pnl, 0) / heavy.length;
+  const lightAvg = light.reduce((sum, day) => sum + day.pnl, 0) / light.length;
+  if (heavyAvg + 5 < lightAvg) return 'Trade pacing signal: days with 3+ trades underperformed lighter days this period.';
+  if (lightAvg + 5 < heavyAvg) return 'Trade pacing signal: 3+ trade days outperformed lighter days this period (worth validating over a larger sample).';
+  return 'Trade pacing signal: no clear performance gap yet between lighter days and 3+ trade days.';
+}
+
+function getEmotionCoachingNotes(rows: TradeRow[]) {
+  const notes: string[] = [];
+  const low = rows.filter((trade) => Number(trade.emotional_pressure || 0) <= 2);
+  const high = rows.filter((trade) => Number(trade.emotional_pressure || 0) >= 4);
+  if (low.length >= 2 && high.length >= 2) {
+    const lowAvgPnl = low.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / low.length;
+    const highAvgPnl = high.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / high.length;
+    if (lowAvgPnl - highAvgPnl > 5) notes.push(`Best average results came at pressure 1-2 (${lowAvgPnl.toFixed(2)} vs ${highAvgPnl.toFixed(2)} at pressure 4-5).`);
+    else if (highAvgPnl - lowAvgPnl > 5) notes.push(`Higher pressure (4-5) outperformed low pressure in this sample (${highAvgPnl.toFixed(2)} vs ${lowAvgPnl.toFixed(2)}); treat as early signal.`);
+    else notes.push('Pressure 1-2 vs 4-5 outcomes are currently similar (no strong edge yet).');
+    const avgTags = (sample: TradeRow[]) => sample.reduce((sum, trade) => sum + normalizeMistakeTags(trade.mistake_tags).length, 0) / Math.max(1, sample.length);
+    const lowMistakes = avgTags(low);
+    const highMistakes = avgTags(high);
+    if (highMistakes - lowMistakes > 0.5) notes.push(`Higher pressure also carried more mistake tags (${highMistakes.toFixed(1)} vs ${lowMistakes.toFixed(1)} per trade).`);
+  }
+  return notes;
+}
+
+function getSessionCoachingNote(trades: TradeRow[], sessions: SessionRow[]) {
+  if (trades.length < 4 || sessions.length < 2) return '';
+  const weeksWithJournal = new Set(
+    sessions
+      .filter((session) => !isChartSessionType(session.session_type))
+      .map((session) => weekKeyFromDate(session.session_date))
+      .filter(Boolean)
+  );
+  if (!weeksWithJournal.size) return 'No post-session review sessions were logged in this period.';
+  const withJournal = trades.filter((trade) => weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
+  const withoutJournal = trades.filter((trade) => !weeksWithJournal.has(weekKeyFromDate(trade.trade_date)));
+  if (withJournal.length < 2 || withoutJournal.length < 2) return 'Session signal is limited (small sample of journal vs non-journal weeks).';
+  const avg = (rows: TradeRow[]) => rows.reduce((sum, trade) => sum + Number(trade.pnl || 0), 0) / rows.length;
+  const withAvg = avg(withJournal);
+  const withoutAvg = avg(withoutJournal);
+  if (withAvg - withoutAvg > 5) return `Journal-session weeks outperformed non-journal weeks (${withAvg.toFixed(2)} vs ${withoutAvg.toFixed(2)} avg P&L per trade).`;
+  if (withoutAvg - withAvg > 5) return `Non-journal weeks outperformed journal-session weeks in this window (${withoutAvg.toFixed(2)} vs ${withAvg.toFixed(2)}); monitor before drawing conclusions.`;
+  return 'Journal-session vs non-journal weeks are currently similar in outcome.';
+}
+
+function buildCalendarCells(monthStart: Date, trades: TradeRow[], allTrades: TradeRow[], noTrades: NoTradeDayRow[], tradeFilter: TradeTypeFilter) {
+  const start = new Date(monthStart);
+  const offset = start.getUTCDay();
+  start.setUTCDate(start.getUTCDate() - offset);
+  const monthEnd = new Date(Date.UTC(monthStart.getUTCFullYear(), monthStart.getUTCMonth() + 1, 0));
+  const end = new Date(monthEnd);
+  end.setUTCDate(monthEnd.getUTCDate() + (6 - monthEnd.getUTCDay()));
+  const days = Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+  return Array.from({ length: days }, (_, idx) => {
+    const dt = new Date(start);
+    dt.setUTCDate(start.getUTCDate() + idx);
+    const date = dt.toISOString().slice(0, 10);
+    const dayTrades = trades.filter((t) => t.trade_date === date);
+    const dayAllTrades = allTrades.filter((t) => t.trade_date === date);
+    const pnl = dayTrades.reduce((sum, t) => sum + Number(t.pnl || 0), 0);
+    const rTotal = dayTrades.reduce((sum, t) => sum + Number(t.r_multiple || 0), 0);
+    const noTrade = noTrades.some((n) => n.day_date === date);
+    const hasPaperOnly = dayTrades.length === 0 && dayAllTrades.some((t) => isPaperTrade(t));
+    const hasLiveOnly = dayTrades.length === 0 && dayAllTrades.some((t) => !isPaperTrade(t));
+    const oppositeModeOnly = tradeFilter === 'live'
+      ? (hasPaperOnly ? 'PT' : '')
+      : tradeFilter === 'paper'
+        ? (hasLiveOnly ? 'LT' : '')
+        : '';
+    return {
+      date,
+      day: dt.getUTCDate(),
+      pnl,
+      rTotal,
+      tradeCount: dayTrades.length,
+      oppositeModeOnly,
+      noTrade,
+      isOutside: dt.getUTCMonth() !== monthStart.getUTCMonth()
+    };
+  });
+}
+
+function periodTypeLabel(period: DashboardPeriod) {
+  if (period === 'weekly') return 'Week';
+  if (period === 'monthly') return 'Month';
+  if (period === 'quarterly') return 'Quarter';
+  if (period === 'annual') return 'Year';
+  if (period === 'lifetime') return 'Lifetime';
+  return 'YTD';
+}
+
+function formatPeriodLabel(period: DashboardPeriod, anchor: Date, start: string, end: string) {
+  if (period === 'lifetime') {
+    return `All time · ${formatDateShort(start)} to ${formatDateShort(end)}`;
+  }
+  if (period === 'weekly') {
+    const startDate = new Date(`${start}T00:00:00Z`);
+    const endDate = new Date(`${end}T00:00:00Z`);
+    return `${startDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })}–${endDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' })}`;
+  }
+  if (period === 'monthly') return anchor.toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  if (period === 'quarterly') return `Q${Math.floor(anchor.getUTCMonth() / 3) + 1} ${anchor.getUTCFullYear()}`;
+  if (period === 'annual') return String(anchor.getUTCFullYear());
+  return `Year to date · ${anchor.getUTCFullYear()}`;
+}
+
+function getLifetimeRange(
+  trades: TradeRow[],
+  noTrades: NoTradeDayRow[],
+  sessions: SessionRow[],
+  reviews: WeeklyReviewRow[]
+) {
+  const allDates = [
+    ...trades.map((t) => t.trade_date),
+    ...noTrades.map((n) => n.day_date),
+    ...sessions.map((s) => s.session_date),
+    ...reviews.map((r) => r.week_key)
+  ].filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))).sort();
+  const today = new Date().toISOString().slice(0, 10);
+  if (!allDates.length) return { start: today, end: today };
+  return { start: allDates[0], end: allDates[allDates.length - 1] };
+}
+
+function buildRWholeOptions() {
+  const values = Array.from({ length: 36 }, (_, i) => String(i - 10));
+  return [...values.slice(0, 11), '-0', ...values.slice(11)];
+}
+
+function parseRMultipleToParts(rawValue: unknown): { r_multiple_whole: string; r_multiple_decimal: string } {
+  const numeric = Number(rawValue ?? 2);
+  if (!Number.isFinite(numeric)) {
+    return { r_multiple_whole: '2', r_multiple_decimal: '00' };
+  }
+  const rounded = Math.round(numeric * 100) / 100;
+  const negative = rounded < 0;
+  const abs = Math.abs(rounded);
+  const wholeAbs = Math.trunc(abs);
+  const decimal = Math.round((abs - wholeAbs) * 100);
+  const wholeSigned = negative ? (wholeAbs === 0 ? '-0' : String(-wholeAbs)) : String(wholeAbs);
+  return {
+    r_multiple_whole: clampRWholeOption(wholeSigned),
+    r_multiple_decimal: String(Math.min(99, Math.max(0, decimal))).padStart(2, '0')
+  };
+}
+
+function clampRWholeOption(value: string) {
+  if (value === '-0') return value;
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '2';
+  return String(Math.min(25, Math.max(-10, Math.trunc(numeric))));
+}
+
+function buildRMultipleValue(wholeRaw: string, decimalRaw: string) {
+  const wholePart = wholeRaw === '-0' ? 0 : Number(wholeRaw || 0);
+  const decimal = Math.min(99, Math.max(0, Number(decimalRaw || 0)));
+  const magnitude = Math.abs(wholePart) + decimal / 100;
+  const negative = wholeRaw === '-0' || wholePart < 0;
+  const signed = negative ? -magnitude : magnitude;
+  return Number(signed.toFixed(2));
+}
+
+function computeProcessAnalytics(trades: TradeRow[], sessions: SessionRow[]) {
+  const gradedTrades = trades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A' || grade === 'B' || grade === 'C' || grade === 'D';
+  });
+  const strongTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A';
+  });
+  const weakTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'C' || grade === 'D';
+  });
+  const weakTagCounts: Record<string, number> = {};
+  let ruleFollowingLosses = 0;
+  let wonDespiteWeak = 0;
+  for (const trade of gradedTrades) {
+    const tags = resolveSetupTags(trade);
+    if (tags.includes('Rule-Following Loss')) ruleFollowingLosses += 1;
+    if (tags.includes('Won Despite Weak Setup')) wonDespiteWeak += 1;
+    for (const tag of tags) {
+      if (tag === 'Rule-Following Loss' || tag === 'Won Despite Weak Setup') continue;
+      weakTagCounts[tag] = (weakTagCounts[tag] || 0) + 1;
+    }
+  }
+  const topWeaknessCount = Object.values(weakTagCounts).length ? Math.max(...Object.values(weakTagCounts)) : 0;
+  const topWeaknesses = topWeaknessCount
+    ? Object.entries(weakTagCounts).filter(([, count]) => count === topWeaknessCount).map(([tag]) => tag)
+    : [];
+  const postSessionReviews = sessions
+    .filter((session) => session.session_type === 'post_session_review' || session.session_type === 'journal')
+    .map((session) => parseSessionNotes(session.notes).meta)
+    .filter((meta): meta is PostSessionMeta & { kind: 'post_session_review' } => Boolean(meta && meta.kind === 'post_session_review'));
+  const biasSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.bias_correctness))
+    .filter((value) => value !== 'N/A');
+  const biasAccurate = biasSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const marketSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.expected_condition_correctness))
+    .filter((value) => value !== 'N/A');
+  const marketAccurate = marketSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  return {
+    bias: {
+      sampleCount: biasSamples.length,
+      accuracy: biasSamples.length ? (biasAccurate / biasSamples.length) * 100 : 0
+    },
+    marketCondition: {
+      sampleCount: marketSamples.length,
+      accuracy: marketSamples.length ? (marketAccurate / marketSamples.length) * 100 : 0
+    },
+    setup: {
+      gradedCount: gradedTrades.length,
+      aaRate: gradedTrades.length ? (strongTrades.length / gradedTrades.length) * 100 : 0,
+      topWeaknessLabel: topWeaknesses.length ? topWeaknesses.join(' / ') : '',
+      ruleFollowingLosses,
+      wonDespiteWeak,
+      strongAvgR: strongTrades.length ? strongTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / strongTrades.length : null,
+      weakAvgR: weakTrades.length ? weakTrades.reduce((sum, trade) => sum + Number(trade.r_multiple || 0), 0) / weakTrades.length : null
+    }
+  };
+}
+
+function computePlaybookAlignment(trades: TradeRow[], sessions: SessionRow[]) {
+  const postSessionReviews = sessions
+    .filter((session) => session.session_type === 'post_session_review' || session.session_type === 'journal')
+    .map((session) => parseSessionNotes(session.notes).meta)
+    .filter((meta): meta is PostSessionMeta & { kind: 'post_session_review' } => Boolean(meta && meta.kind === 'post_session_review'));
+  const biasSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.bias_correctness))
+    .filter((value) => value !== 'N/A');
+  const biasAccurate = biasSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const marketSamples = postSessionReviews
+    .map((meta) => normalizeValidationYesPartialNoNa(meta.validation?.expected_condition_correctness))
+    .filter((value) => value !== 'N/A');
+  const marketAccurate = marketSamples.filter((value) => value === 'Yes' || value === 'Partially').length;
+  const gradedTrades = trades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A' || grade === 'B' || grade === 'C' || grade === 'D';
+  });
+  const strongTrades = gradedTrades.filter((trade) => {
+    const grade = resolveSetupGrade(trade);
+    return grade === 'A+' || grade === 'A';
+  });
+  const poiQualityPassCount = gradedTrades.filter((trade) => {
+    const poiQuality = String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || '');
+    return poiQuality === 'Strong confluence POI' || poiQuality === 'Clean POI only';
+  }).length;
+  const targetRoomPassCount = gradedTrades.filter((trade) => {
+    const targetRoom = String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || '');
+    return targetRoom === '2R+' || targetRoom === '1.5R–2R';
+  }).length;
+  const driftCounts: Record<string, number> = {};
+  const acceptedDriftTags = new Set([
+    'Mixed Context',
+    'Against Context',
+    'Weak Displacement',
+    'Choppy Price Action',
+    'Poor R:R',
+    'No Structure Confirmation',
+    'Minor Structure Only',
+    'Rule-Breaking Trade',
+    'Questionable POI',
+    'No Clear POI'
+  ]);
+  for (const trade of trades) {
+    const tags = resolveSetupTags(trade);
+    for (const tag of tags) {
+      if (acceptedDriftTags.has(tag)) driftCounts[tag] = (driftCounts[tag] || 0) + 1;
+    }
+    if (trade.classification === 'FOMO trade' || trade.classification === 'Forced trade') {
+      driftCounts['Rule-Breaking Trade'] = (driftCounts['Rule-Breaking Trade'] || 0) + 1;
+    }
+    if (resolveEntryEmotion(trade) === 'FOMO / Impatient' || resolveEntryEmotion(trade) === 'Revengeful / Tilted') {
+      driftCounts['Emotional Entry Drift'] = (driftCounts['Emotional Entry Drift'] || 0) + 1;
+    }
+    if (normalizeMistakeTags(trade.mistake_tags).length) {
+      driftCounts['Mistake-tagged execution drift'] = (driftCounts['Mistake-tagged execution drift'] || 0) + 1;
+    }
+  }
+  const topRuleDriftCount = Object.values(driftCounts).length ? Math.max(...Object.values(driftCounts)) : 0;
+  const topRuleDrift = topRuleDriftCount
+    ? Object.entries(driftCounts).filter(([, count]) => count === topRuleDriftCount).map(([tag]) => tag)
+    : [];
+  return {
+    bias: {
+      sampleCount: biasSamples.length,
+      accuracy: biasSamples.length ? (biasAccurate / biasSamples.length) * 100 : 0
+    },
+    marketCondition: {
+      sampleCount: marketSamples.length,
+      accuracy: marketSamples.length ? (marketAccurate / marketSamples.length) * 100 : 0
+    },
+    setup: {
+      gradedCount: gradedTrades.length,
+      aaRate: gradedTrades.length ? (strongTrades.length / gradedTrades.length) * 100 : 0,
+      poiQualityRate: gradedTrades.length ? (poiQualityPassCount / gradedTrades.length) * 100 : 0,
+      targetRoomRate: gradedTrades.length ? (targetRoomPassCount / gradedTrades.length) * 100 : 0,
+      topRuleDriftLabel: topRuleDrift.join(' / '),
+      topRuleDriftCount
+    }
+  };
+}
+
+function evaluateSetupQuality(input: {
+  market_context_quality: string;
+  liquidity_structure_quality: string;
+  displacement_quality: string;
+  poi_quality: string;
+  target_room_quality: string;
+  classification: TradeClassification;
+  r_multiple: number;
+  mistake_tags: string[];
+}) {
+  const marketScore = setupQualityScores.market_context[input.market_context_quality as keyof typeof setupQualityScores.market_context];
+  const liquidityScore = setupQualityScores.liquidity_structure[input.liquidity_structure_quality as keyof typeof setupQualityScores.liquidity_structure];
+  const displacementScore = setupQualityScores.displacement[input.displacement_quality as keyof typeof setupQualityScores.displacement];
+  const poiScore = setupQualityScores.poi[input.poi_quality as keyof typeof setupQualityScores.poi];
+  const targetScore = setupQualityScores.target_room[input.target_room_quality as keyof typeof setupQualityScores.target_room];
+  const complete = typeof marketScore === 'number' && typeof liquidityScore === 'number' && typeof displacementScore === 'number' && typeof poiScore === 'number' && typeof targetScore === 'number' && input.target_room_quality !== 'Not checked';
+  const score = complete
+    ? Math.round(
+      marketScore * setupQualityWeights.market_context
+      + liquidityScore * setupQualityWeights.liquidity_structure
+      + displacementScore * setupQualityWeights.displacement
+      + poiScore * setupQualityWeights.poi
+      + targetScore * setupQualityWeights.target_room
+    )
+    : null;
+  const grade = score == null ? null : score >= 90 ? 'A+' : score >= 80 ? 'A' : score >= 68 ? 'B' : score >= 55 ? 'C' : 'D';
+  const label = grade === 'A+' ? 'A+ Setup' : grade === 'A' ? 'High-Quality Setup' : grade === 'B' ? 'Valid Setup' : grade === 'C' ? 'Questionable Setup' : grade === 'D' ? 'Low-Quality / Avoid' : 'Setup Grade pending';
+  const tags = new Set<string>();
+  if (input.market_context_quality === 'Mixed / unclear') tags.add('Mixed Context');
+  if (input.market_context_quality === 'Against context') tags.add('Against Context');
+  if (input.liquidity_structure_quality === 'No clear confirmation') tags.add('No Structure Confirmation');
+  if (input.liquidity_structure_quality === 'Minor structure only') tags.add('Minor Structure Only');
+  if (input.displacement_quality === 'Weak displacement') tags.add('Weak Displacement');
+  if (input.displacement_quality === 'Choppy / overlapping') {
+    tags.add('Choppy Price Action');
+    tags.add('Weak Displacement');
+  }
+  if (input.poi_quality === 'Fib / level confluence only') tags.add('Fib/Level-Only POI');
+  if (input.poi_quality === 'Questionable POI') tags.add('Questionable POI');
+  if (input.poi_quality === 'No clear POI') tags.add('No Clear POI');
+  if (input.target_room_quality === 'Less than 1R') tags.add('Poor R:R');
+  if (input.target_room_quality === 'Not checked') tags.add('R:R Not Checked');
+  if ((input.classification === 'Valid setup') && (grade === 'C' || grade === 'D')) tags.add('Classification Mismatch');
+  if (input.classification === 'FOMO trade' || input.classification === 'Forced trade') tags.add('Rule-Breaking Trade');
+  const hasMajorMistakeTags = normalizeMistakeTags(input.mistake_tags).length > 0;
+  if ((grade === 'A' || grade === 'A+') && input.r_multiple < 0 && input.classification === 'Valid setup' && !hasMajorMistakeTags) tags.add('Rule-Following Loss');
+  if ((grade === 'C' || grade === 'D') && input.r_multiple > 0) tags.add('Won Despite Weak Setup');
+  return { score, grade, label, tags: Array.from(tags) };
+}
+
+function resolveSetupAnswers(trade: TradeRow) {
+  return {
+    market_context_quality: String((trade as TradeRow & { market_context_quality?: string | null }).market_context_quality || ''),
+    liquidity_structure_quality: String((trade as TradeRow & { liquidity_structure_quality?: string | null }).liquidity_structure_quality || ''),
+    displacement_quality: String((trade as TradeRow & { displacement_quality?: string | null }).displacement_quality || ''),
+    poi_quality: String((trade as TradeRow & { poi_quality?: string | null }).poi_quality || ''),
+    target_room_quality: String((trade as TradeRow & { target_room_quality?: string | null }).target_room_quality || '')
+  };
+}
+
+function resolveSetupScore(trade: TradeRow) {
+  const raw = Number((trade as TradeRow & { setup_score?: number | null }).setup_score ?? NaN);
+  if (Number.isFinite(raw)) return Math.round(raw);
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.score;
+}
+
+function resolveSetupGrade(trade: TradeRow) {
+  const stored = String((trade as TradeRow & { setup_grade?: string | null }).setup_grade || '');
+  if (['A+', 'A', 'B', 'C', 'D'].includes(stored)) return stored;
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.grade;
+}
+
+function resolveSetupTags(trade: TradeRow) {
+  const stored = (trade as TradeRow & { setup_auto_tags?: string[] | null }).setup_auto_tags;
+  if (Array.isArray(stored) && stored.length) return stored.map((value) => String(value));
+  const recalculated = evaluateSetupQuality({
+    ...resolveSetupAnswers(trade),
+    classification: trade.classification,
+    r_multiple: Number(trade.r_multiple || 0),
+    mistake_tags: normalizeMistakeTags(trade.mistake_tags)
+  });
+  return recalculated.tags;
+}
+
+function setupGradeLabel(grade: string | null) {
+  if (grade === 'A+') return 'A+ Setup';
+  if (grade === 'A') return 'High-Quality Setup';
+  if (grade === 'B') return 'Valid Setup';
+  if (grade === 'C') return 'Questionable Setup';
+  if (grade === 'D') return 'Low-Quality / Avoid';
+  return 'Setup Grade pending';
+}
+
+function setupGradeColor(grade: string) {
+  if (grade === 'A+' || grade === 'A') return '#4ad66d';
+  if (grade === 'B') return '#86efac';
+  if (grade === 'C') return '#facc15';
+  if (grade === 'D') return '#ff6b6b';
+  return '#93a6c9';
+}
+
+function normalizeValidationYesPartialNoNa(raw: unknown) {
+  const value = String(raw || '').trim();
+  if (value === 'Correct') return 'Yes';
+  if (value === 'Partially correct') return 'Partially';
+  if (value === 'Incorrect') return 'No';
+  return validationYesPartialNoNaOptions.includes(value as typeof validationYesPartialNoNaOptions[number]) ? value : validationYesPartialNoNaOptions[3];
+}
+
+function normalizeSetupFocusOutcome(raw: unknown) {
+  const value = String(raw || '').trim();
+  if (value === 'Correct') return setupFocusOutcomeOptions[0];
+  if (value === 'Partially correct') return setupFocusOutcomeOptions[2];
+  if (value === 'Incorrect') return setupFocusOutcomeOptions[3];
+  return setupFocusOutcomeOptions.includes(value as typeof setupFocusOutcomeOptions[number]) ? value : setupFocusOutcomeOptions[4];
+}
+
+function toEditorText(value: string) {
+  const normalized = String(value || '');
+  if (!normalized.trim()) return '';
+  if (/<\/?[a-z][\s\S]*>/i.test(normalized)) return htmlToEditorText(normalized);
+  return normalized;
+}
+
+function toDisplayHtml(value: string) {
+  const normalized = String(value || '');
+  if (!normalized.trim()) return '';
+  if (/<\/?[a-z][\s\S]*>/i.test(normalized)) return normalizeStoredRichText(normalized);
+  return normalizeStoredRichText(markdownishToHtml(normalized));
+}
+
+function normalizeStoredRichText(html: string) {
+  const text = String(html || '')
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '')
+    .replace(/\son[a-z]+\s*=\s*(['"]).*?\1/gi, '')
+    .replace(/javascript:/gi, '');
+  const trimmed = text.trim();
+  if (!trimmed || /^<(br|div|p)>\s*<\/\1>$/i.test(trimmed)) return '';
+  return trimmed;
+}
+
+function htmlToEditorText(rawHtml: string) {
+  const sanitized = normalizeStoredRichText(rawHtml)
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?>[\s\S]*?<\/style>/gi, '');
+  let text = sanitized
+    .replace(/<\/?(strong|b)>/gi, '**')
+    .replace(/<\/?u>/gi, '__')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<div>/gi, '')
+    .replace(/<\/p>/gi, '\n')
+    .replace(/<p>/gi, '')
+    .replace(/<li[^>]*>/gi, '- ')
+    .replace(/<\/li>/gi, '\n')
+    .replace(/<\/?(ul|ol)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, '');
+  text = decodeHtmlEntities(text).replace(/\n{3,}/g, '\n\n').trim();
+  return text;
+}
+
+function markdownishToHtml(rawValue: string) {
+  const lines = String(rawValue || '').replace(/\r/g, '').split('\n');
+  const blocks: string[] = [];
+  let listType: 'ul' | 'ol' | null = null;
+  let listItems: string[] = [];
+
+  const flushList = () => {
+    if (!listType || !listItems.length) return;
+    blocks.push(`<${listType}>${listItems.join('')}</${listType}>`);
+    listType = null;
+    listItems = [];
+  };
+
+  lines.forEach((line) => {
+    const bullet = line.match(/^(\s*)[-*]\s+(.*)$/);
+    const numbered = line.match(/^(\s*)\d+\.\s+(.*)$/);
+    if (bullet) {
+      if (listType !== 'ul') flushList();
+      listType = 'ul';
+      const indent = Math.floor((bullet[1] || '').length / 2);
+      listItems.push(`<li style="margin-left:${indent * 10}px">${applyInlineMarkup(bullet[2])}</li>`);
+      return;
+    }
+    if (numbered) {
+      if (listType !== 'ol') flushList();
+      listType = 'ol';
+      const indent = Math.floor((numbered[1] || '').length / 2);
+      listItems.push(`<li style="margin-left:${indent * 10}px">${applyInlineMarkup(numbered[2])}</li>`);
+      return;
+    }
+    flushList();
+    if (!line.trim()) {
+      blocks.push('<div><br></div>');
+      return;
+    }
+    blocks.push(`<div>${applyInlineMarkup(line)}</div>`);
+  });
+  flushList();
+  return blocks.join('');
+}
+
+function applyInlineMarkup(rawLine: string) {
+  const escaped = escapeHtml(rawLine);
+  return escaped
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<u>$1</u>');
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function decodeHtmlEntities(value: string) {
+  return value
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'");
+}
+
+function wrapWithToken(source: string, start: number, end: number, token: string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const selected = source.slice(from, to) || 'text';
+  const wrapped = `${token}${selected}${token}`;
+  const text = `${source.slice(0, from)}${wrapped}${source.slice(to)}`;
+  return { text, nextStart: from + token.length, nextEnd: from + token.length + selected.length };
+}
+
+function applyListActivation(source: string, start: number, end: number, type: 'bullet' | 'numbered') {
+  if (start === end) {
+    const lineStart = source.lastIndexOf('\n', start - 1) + 1;
+    const nextBreak = source.indexOf('\n', start);
+    const lineEnd = nextBreak === -1 ? source.length : nextBreak;
+    const line = source.slice(lineStart, lineEnd);
+    const indent = (line.match(/^\s*/) || [''])[0];
+    const cleaned = stripListPrefix(line.trimStart());
+    const marker = type === 'bullet' ? '- ' : '1. ';
+    const nextLine = `${indent}${marker}${cleaned}`;
+    const text = `${source.slice(0, lineStart)}${nextLine}${source.slice(lineEnd)}`;
+    const caretOffset = cleaned.length === 0
+      ? lineStart + indent.length + marker.length
+      : Math.min(lineStart + nextLine.length, lineStart + indent.length + marker.length + (start - lineStart));
+    return { text, nextStart: caretOffset, nextEnd: caretOffset };
+  }
+
+  if (type === 'bullet') {
+    return mutateLines(source, start, end, (line) => {
+      if (!line.trim()) return line;
+      const indent = (line.match(/^\s*/) || [''])[0];
+      const cleaned = stripListPrefix(line.trimStart());
+      return `${indent}- ${cleaned}`;
+    });
+  }
+
+  let count = 1;
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const indent = (line.match(/^\s*/) || [''])[0];
+    const cleaned = stripListPrefix(line.trimStart());
+    const next = `${indent}${count}. ${cleaned}`;
+    count += 1;
+    return next;
+  });
+}
+
+function stripListPrefix(line: string) {
+  return line.replace(/^(-|\*|\d+\.)\s+/, '');
+}
+
+function indentLines(source: string, start: number, end: number, delta: number) {
+  return mutateLines(source, start, end, (line) => {
+    if (!line.trim()) return line;
+    const leading = line.match(/^\s*/)?.[0] || '';
+    const updated = Math.max(0, leading.length + delta);
+    return `${' '.repeat(updated)}${line.trimStart()}`;
+  });
+}
+
+function mutateLines(source: string, start: number, end: number, transform: (line: string) => string) {
+  const from = Math.max(0, Math.min(start, end));
+  const to = Math.max(from, Math.max(start, end));
+  const lineStart = source.lastIndexOf('\n', from - 1) + 1;
+  const nextBreak = source.indexOf('\n', to);
+  const lineEnd = nextBreak === -1 ? source.length : nextBreak;
+  const segment = source.slice(lineStart, lineEnd);
+  const lines = segment.split('\n');
+  const updated = lines.map(transform).join('\n');
+  return { text: `${source.slice(0, lineStart)}${updated}${source.slice(lineEnd)}`, nextStart: lineStart, nextEnd: lineStart + updated.length };
+}
+
+function isPaperTrade(trade: TradeRow) {
+  return Boolean((trade as TradeRow & { is_paper_trade?: unknown }).is_paper_trade);
+}
+
+function matchesTradeTypeFilter(trade: TradeRow, filter: TradeTypeFilter) {
+  if (filter === 'all') return true;
+  return filter === 'paper' ? isPaperTrade(trade) : !isPaperTrade(trade);
+}
+
+function filterTradesByType(trades: TradeRow[], filter: TradeTypeFilter) {
+  return trades.filter((trade) => matchesTradeTypeFilter(trade, filter));
+}
+
+function formatStreakLabel(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return `Win ${currentWin}`;
+  if (currentLoss > 0) return `Loss ${currentLoss}`;
+  return 'Neutral 0';
+}
+
+function streakColor(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return '#4ad66d';
+  if (currentLoss > 0) return '#ff6b6b';
+  return '#9eaac4';
+}
+
+function streakCardStyle(currentWin: number, currentLoss: number) {
+  if (currentWin > 0) return { background: 'rgba(74,214,109,0.10)', borderColor: '#2f6f4a' };
+  if (currentLoss > 0) return { background: 'rgba(255,107,107,0.10)', borderColor: '#7a3f3f' };
+  return undefined;
+}
+
+function getTimelineCreatedAt(item: { type: 'trade'; trade: TradeRow } | { type: 'no_trade'; noTrade: NoTradeDayRow } | { type: 'session'; session: SessionRow } | { type: 'decision'; decision: DecisionCheckRow }) {
+  const raw = item.type === 'trade'
+    ? (item.trade as TradeRow & { created_at?: string }).created_at
+    : item.type === 'no_trade'
+      ? (item.noTrade as NoTradeDayRow & { created_at?: string }).created_at
+      : item.type === 'session'
+        ? (item.session as SessionRow & { created_at?: string }).created_at
+        : (item.decision as DecisionCheckRow & { created_at?: string }).created_at || item.decision.decision_timestamp;
+  if (!raw) return '0000-00-00T00:00:00.000Z';
+  const timestamp = Date.parse(raw);
+  return Number.isNaN(timestamp) ? '0000-00-00T00:00:00.000Z' : new Date(timestamp).toISOString();
+}
+
+function normalizeInstrument(value: string) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function normalizeTag(value: string) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function normalizeMistakeTags(value: unknown): string[] {
+  const sanitize = (values: string[]) => normalizeUniqueTags(values).filter((tag) => !isInactiveMistakeTag(tag));
+  if (Array.isArray(value)) {
+    return sanitize(value.map((item) => normalizeTag(String(item ?? ''))));
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    const tokens = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+    return sanitize(tokens.map((token) => normalizeTag(token)));
+  }
+  if (value == null) return [];
+  if (typeof value === 'object') return [];
+  return sanitize([normalizeTag(String(value))]);
+}
+
+function normalizeEntryEmotion(value: unknown): EntryEmotion {
+  const normalized = normalizeTag(String(value || ''));
+  const match = entryEmotionOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || entryEmotionOptions[0].value) as EntryEmotion;
+}
+
+function normalizeInTradeEmotion(value: unknown): InTradeEmotion {
+  const normalized = normalizeTag(String(value || ''));
+  const match = inTradeEmotionOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || inTradeEmotionOptions[0].value) as InTradeEmotion;
+}
+
+function normalizeNoTradeMindset(value: unknown): NoTradeMindset {
+  const normalized = normalizeTag(String(value || ''));
+  const match = noTradeMindsetOptions.find((option) => option.value.toLowerCase() === normalized.toLowerCase());
+  return (match?.value || noTradeMindsetOptions[0].value) as NoTradeMindset;
+}
+
+function legacyEmotions(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map((item) => normalizeTag(String(item || ''))).filter(Boolean);
+  if (typeof value === 'string') {
+    const token = normalizeTag(value);
+    return token ? [token] : [];
+  }
+  return [];
+}
+
+function resolveEntryEmotion(trade: TradeRow): EntryEmotion {
+  const explicit = normalizeTag(String((trade as TradeRow & { entry_emotion?: unknown }).entry_emotion || ''));
+  if (explicit) return normalizeEntryEmotion(explicit);
+  const firstLegacy = legacyEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion)[0] || '';
+  const key = firstLegacy.toLowerCase();
+  if (key.includes('panic')) return 'Revengeful / Tilted';
+  if (key.includes('fear') || key.includes('anxiety')) return 'FOMO / Impatient';
+  if (key.includes('euphoria') || key.includes('thrill')) return 'Greedy';
+  if (key.includes('confidence') || key.includes('optimism') || key.includes('hope') || key.includes('relief')) return 'Confident';
+  return normalizeEntryEmotion(firstLegacy || 'Calm');
+}
+
+function resolveInTradeEmotion(trade: TradeRow): InTradeEmotion {
+  const explicit = normalizeTag(String((trade as TradeRow & { in_trade_emotion?: unknown }).in_trade_emotion || ''));
+  if (explicit) return normalizeInTradeEmotion(explicit);
+  const legacy = legacyEmotions((trade as TradeRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (trade as TradeRow & { trading_emotion?: unknown }).trading_emotion);
+  const source = legacy[1] || legacy[0] || '';
+  const key = source.toLowerCase();
+  if (key.includes('panic') || key.includes('fear')) return 'Panicked';
+  if (key.includes('surprise')) return 'Surprised';
+  if (key.includes('greed') || key.includes('euphoria') || key.includes('thrill')) return 'Greedy';
+  if (key.includes('confidence') || key.includes('optimism') || key.includes('relief')) return 'Confident';
+  return normalizeInTradeEmotion(source || 'Calm');
+}
+
+function resolveNoTradeMindset(noTrade: NoTradeDayRow): NoTradeMindset {
+  const explicit = normalizeTag(String((noTrade as NoTradeDayRow & { no_trade_mindset?: unknown }).no_trade_mindset || ''));
+  if (explicit) return normalizeNoTradeMindset(explicit);
+  const firstLegacy = legacyEmotions((noTrade as NoTradeDayRow & { trading_emotions?: unknown; trading_emotion?: unknown }).trading_emotions ?? (noTrade as NoTradeDayRow & { trading_emotion?: unknown }).trading_emotion)[0] || '';
+  const key = firstLegacy.toLowerCase();
+  if (key.includes('disappoint')) return 'Present but disappointed';
+  if (key.includes('not') || key.includes('absent')) return 'Not fully present';
+  if (key.includes('accept') || key.includes('indifferent') || key.includes('relief')) return 'Accepting / indifferent';
+  return normalizeNoTradeMindset(firstLegacy || 'Present but disappointed');
+}
+
+function normalizeUniqueInstruments(values: string[]) {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  values.forEach((raw) => {
+    const normalized = normalizeInstrument(raw);
+    if (!normalized || seen.has(normalized)) return;
+    seen.add(normalized);
+    next.push(normalized);
+  });
+  return next.sort();
+}
+
+function normalizeUniqueTags(values: string[]) {
+  const seen = new Set<string>();
+  const next: string[] = [];
+  values.forEach((raw) => {
+    const normalized = normalizeTag(raw);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) return;
+    seen.add(key);
+    next.push(normalized);
+  });
+  return next.sort((a, b) => a.localeCompare(b));
+}
+
+function isInactiveMistakeTag(tag: string) {
+  return INACTIVE_MISTAKE_TAGS.has(String(tag || '').trim().toLowerCase());
+}
+
+function resolveMistakeCatalogState(activeCatalog: unknown, hiddenCatalog: unknown, historicalTags: unknown = []): { active: string[]; hidden: string[] } {
+  const hiddenSeed = normalizeMistakeTags(hiddenCatalog);
+  const hiddenSet = new Set(hiddenSeed.map((item) => item.toLowerCase()));
+  const sourceActive = normalizeMistakeTags(activeCatalog);
+  const historical = normalizeMistakeTags(historicalTags);
+  const defaultSet = new Set(DEFAULT_MISTAKE_CATALOG.map((item) => item.toLowerCase()));
+
+  const cleanedActive = normalizeUniqueTags(
+    sourceActive.filter((tag) => !isInactiveMistakeTag(tag) && !hiddenSet.has(tag.toLowerCase()))
+  );
+  const hasReasonableDefaultCoverage = cleanedActive.filter((tag) => defaultSet.has(tag.toLowerCase())).length >= 2;
+  const looksStaleOnly = cleanedActive.length <= 1 && !hasReasonableDefaultCoverage;
+  const fallbackActive = normalizeUniqueTags([
+    ...DEFAULT_MISTAKE_CATALOG.filter((tag) => !hiddenSet.has(tag.toLowerCase())),
+    ...cleanedActive
+  ]);
+  const active = normalizeUniqueTags(
+    (looksStaleOnly ? fallbackActive : (cleanedActive.length ? cleanedActive : fallbackActive))
+      .filter((tag) => !hiddenSet.has(tag.toLowerCase()))
+  );
+  const activeSet = new Set(active.map((tag) => tag.toLowerCase()));
+
+  const hidden = normalizeUniqueTags([
+    ...hiddenSeed,
+    ...historical.filter((tag) => !defaultSet.has(tag.toLowerCase())),
+    ...(looksStaleOnly ? sourceActive : [])
+  ]).filter((tag) => !activeSet.has(tag.toLowerCase()));
+  return { active, hidden };
+}
+
+function normalizeActiveMistakeCatalog(activeCatalog: unknown, hiddenCatalog: unknown): string[] {
+  return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).active;
+}
+
+function normalizeHiddenMistakeCatalog(hiddenCatalog: unknown, activeCatalog: unknown): string[] {
+  return resolveMistakeCatalogState(activeCatalog, hiddenCatalog).hidden;
+}
+
+function settingsCacheKey(userId: string) {
+  return `${SETTINGS_CACHE_PREFIX}${userId}`;
+}
+
+function readSettingsCache(userId: string): SettingsRow | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(settingsCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SettingsRow> | null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return {
+      user_id: userId,
+      daily_reminder: Boolean(parsed.daily_reminder),
+      weekly_reminder: Boolean(parsed.weekly_reminder),
+      default_risk: Number(parsed.default_risk ?? 0),
+      chart_session_start_default: normalizeTimeInput(parsed.chart_session_start_default ?? SESSION_DEFAULT_TIMES.chart.start),
+      chart_session_end_default: normalizeTimeInput(parsed.chart_session_end_default ?? SESSION_DEFAULT_TIMES.chart.end),
+      journal_session_start_default: normalizeTimeInput(parsed.journal_session_start_default ?? SESSION_DEFAULT_TIMES.journal.start),
+      journal_session_end_default: normalizeTimeInput(parsed.journal_session_end_default ?? SESSION_DEFAULT_TIMES.journal.end),
+      display_name: normalizeTag(String(parsed.display_name || '')),
+      instruments: normalizeUniqueInstruments(Array.isArray(parsed.instruments) ? parsed.instruments.map((item) => String(item ?? '')) : []),
+      mistake_catalog: normalizeMistakeTags(parsed.mistake_catalog),
+      mistake_catalog_hidden: normalizeMistakeTags(parsed.mistake_catalog_hidden)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSettingsCache(settings: SettingsRow) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(settingsCacheKey(settings.user_id), JSON.stringify({
+      user_id: settings.user_id,
+      daily_reminder: settings.daily_reminder,
+      weekly_reminder: settings.weekly_reminder,
+      default_risk: settings.default_risk,
+      chart_session_start_default: normalizeTimeInput(settings.chart_session_start_default),
+      chart_session_end_default: normalizeTimeInput(settings.chart_session_end_default),
+      journal_session_start_default: normalizeTimeInput(settings.journal_session_start_default),
+      journal_session_end_default: normalizeTimeInput(settings.journal_session_end_default),
+      display_name: settings.display_name,
+      instruments: settings.instruments,
+      mistake_catalog: settings.mistake_catalog,
+      mistake_catalog_hidden: settings.mistake_catalog_hidden
+    }));
+  } catch {
+    // ignore local storage write failures
+  }
+}
+
+function downloadTextFile(filename: string, content: string, mimeType: string) {
+  if (typeof window === 'undefined') return;
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+}
+
+function recordsToCsv(records: Record<string, string | number | null | undefined>[]) {
+  if (!records.length) return 'record_type\n';
+  const headers = Array.from(records.reduce((set, row) => {
+    Object.keys(row).forEach((key) => set.add(key));
+    return set;
+  }, new Set<string>()));
+  const escapeCsv = (value: string | number | null | undefined) => {
+    const normalized = value == null ? '' : String(value);
+    if (/[",\n]/.test(normalized)) return `"${normalized.replace(/"/g, '""')}"`;
+    return normalized;
+  };
+  const lines = [
+    headers.join(','),
+    ...records.map((row) => headers.map((header) => escapeCsv(row[header])).join(','))
+  ];
+  return lines.join('\n');
+}
+
+function normalizeSupabaseError(message: string) {
+  const text = String(message || '');
+  if (isRecoverableSchemaError(text)) {
+    return 'Some data is temporarily unavailable while database schema metadata refreshes. Please retry in a moment.';
+  }
+  return text;
+}
+
+function isSettingsCatalogSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(instruments|mistake_catalog|mistake_catalog_hidden|chart_session_start_default|chart_session_end_default|journal_session_start_default|journal_session_end_default).*?schema cache/i.test(text)
+    || /column .*?(instruments|mistake_catalog|mistake_catalog_hidden|chart_session_start_default|chart_session_end_default|journal_session_start_default|journal_session_end_default).*? does not exist/i.test(text);
+}
+
+function isWeeklyReviewPaperSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(q_paper).*?schema cache/i.test(text)
+    || /column .*?(q_paper).*? does not exist/i.test(text);
+}
+
+function isPlaybookTradeEntryPinSchemaMismatch(message: string) {
+  const text = String(message || '');
+  return /could not find .*?(pin_trade_entry).*?schema cache/i.test(text)
+    || /column .*?(pin_trade_entry).*? does not exist/i.test(text);
+}
+
+function isRecoverableSchemaError(message: string) {
+  const text = String(message || '');
+  return isSettingsCatalogSchemaMismatch(text)
+    || isWeeklyReviewPaperSchemaMismatch(text)
+    || isPlaybookTradeEntryPinSchemaMismatch(text)
+    || /schema cache/i.test(text)
+    || /column .* does not exist/i.test(text)
+    || /relation .* does not exist/i.test(text)
+    || /Could not find the table/i.test(text);
+}
+
+function currentWeekKey() {
+  return sundayWeekStart(new Date().toISOString().slice(0, 10));
+}
+
+function weekKeyFromDate(dateStr: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ''))) return '';
+  return sundayWeekStart(dateStr);
+}
+
+function weekInputFromKey(weekKey: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(weekKey || ''))) return '';
+  const sundayDate = new Date(`${weekKey}T00:00:00Z`);
+  sundayDate.setUTCDate(sundayDate.getUTCDate() + 1);
+  const dt = new Date(Date.UTC(sundayDate.getUTCFullYear(), sundayDate.getUTCMonth(), sundayDate.getUTCDate()));
+  const jan4 = new Date(Date.UTC(dt.getUTCFullYear(), 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const week1 = new Date(jan4);
+  week1.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
+  const weekNo = Math.floor((dt.getTime() - week1.getTime()) / (7 * 24 * 60 * 60 * 1000)) + 1;
+  return `${dt.getUTCFullYear()}-W${String(Math.max(1, weekNo)).padStart(2, '0')}`;
+}
+
+function weekKeyFromInput(weekInput: string) {
+  const m = String(weekInput || '').match(/^(\d{4})-W(\d{2})$/);
+  if (!m) return currentWeekKey();
+  const year = Number(m[1]);
+  const week = Number(m[2]);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4Day = jan4.getUTCDay() || 7;
+  const week1 = new Date(jan4);
+  week1.setUTCDate(jan4.getUTCDate() - jan4Day + 1);
+  const monday = new Date(week1);
+  monday.setUTCDate(week1.getUTCDate() + (week - 1) * 7);
+  monday.setUTCDate(monday.getUTCDate() - 1);
+  return monday.toISOString().slice(0, 10);
+}
+
+function currentWeekInput() {
+  return weekInputFromKey(currentWeekKey());
+}
+
+function splitDisplayName(displayName: string, email?: string) {
+  const cleaned = String(displayName || '').trim();
+  if (cleaned) {
+    const tokens = cleaned.split(/\s+/).filter(Boolean);
+    return [tokens[0] || '', tokens.slice(1).join(' ')] as const;
+  }
+  const fromEmail = String(email || '').split('@')[0] || '';
+  const emailParts = fromEmail.split(/[._-]+/).filter(Boolean);
+  return [emailParts[0] || '', emailParts.slice(1).join(' ')] as const;
+}
+
+function buildInitials(firstName: string, lastName: string, email?: string) {
+  const f = (firstName || '').trim()[0] || '';
+  const l = (lastName || '').trim()[0] || '';
+  if (f || l) return `${f}${l}`.toUpperCase();
+  const fallback = String(email || '').trim()[0] || 'U';
+  return fallback.toUpperCase();
+}
+
+function calculateDurationMinutes(startTime: string, endTime: string) {
+  const parse = (value: string) => {
+    const [h, m] = String(value || '').split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return 0;
+    return h * 60 + m;
+  };
+  const start = parse(startTime);
+  const end = parse(endTime);
+  const diff = end - start;
+  return diff >= 0 ? diff : 24 * 60 + diff;
+}
+
+function formatMinutesLabel(totalMinutes: number) {
+  const safe = Math.max(0, Number(totalMinutes || 0));
+  const hours = Math.floor(safe / 60);
+  const minutes = safe % 60;
+  if (!hours) return `${minutes}m`;
+  if (!minutes) return `${hours}h`;
+  return `${hours}h ${minutes}m`;
+}
