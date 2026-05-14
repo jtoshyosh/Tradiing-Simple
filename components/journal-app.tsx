@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, useTransition, type KeyboardEvent } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase-browser';
-import type { AttachmentRow, DecisionCheckRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
+import type { AttachmentRow, DayAttachmentRow, DecisionCheckRow, EntryDayAttachmentLinkRow, NoTradeDayRow, PlaybookSectionRow, SessionRow, SettingsRow, TradeRow, WeeklyReviewRow, TradeClassification } from '@/types/models';
 
 const APP_VERSION = 'v1.0';
 const tabs = ['dashboard', 'history', 'log', 'review', 'playbook', 'decide'] as const;
@@ -501,6 +501,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   const [reviews, setReviews] = useState<WeeklyReviewRow[]>([]);
   const [settings, setSettings] = useState<SettingsRow | null>(null);
   const [attachments, setAttachments] = useState<AttachmentRow[]>([]);
+  const [dayAttachments, setDayAttachments] = useState<DayAttachmentRow[]>([]);
+  const [entryDayAttachmentLinks, setEntryDayAttachmentLinks] = useState<EntryDayAttachmentLinkRow[]>([]);
   const [error, setError] = useState('');
   const [weekInput, setWeekInput] = useState(currentWeekInput());
   const [reviewAnswers, setReviewAnswers] = useState({ q1: '', q2: '', q3: '', q_paper: '' });
@@ -664,7 +666,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
   }, []);
 
   async function loadAll() {
-    const [t, n, sessionResult, r, s, a, p, d] = await Promise.all([
+    const [t, n, sessionResult, r, s, a, p, d, da, dl] = await Promise.all([
       supabase.from('trades').select('*').order('trade_date', { ascending: false }),
       supabase.from('no_trade_days').select('*').order('day_date', { ascending: false }),
       supabase.from('sessions').select('*').order('session_date', { ascending: false }).order('created_at', { ascending: false }),
@@ -672,9 +674,11 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       supabase.from('user_settings').select('*').maybeSingle(),
       supabase.from('attachments').select('*').order('created_at', { ascending: false }),
       supabase.from('playbook_sections').select('*').order('updated_at', { ascending: false }),
-      supabase.from('decision_checks').select('*').order('decision_timestamp', { ascending: false })
+      supabase.from('decision_checks').select('*').order('decision_timestamp', { ascending: false }),
+      supabase.from('day_attachments').select('*').order('created_at', { ascending: false }),
+      supabase.from('entry_day_attachment_links').select('*').order('created_at', { ascending: false })
     ]);
-    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error, d.error].filter(Boolean);
+    const errors = [t.error, n.error, sessionResult.error, r.error, s.error, a.error, p.error, d.error, da.error, dl.error].filter(Boolean);
     const blocking = errors.find((entry) => !isRecoverableSchemaError(entry?.message || ''));
     if (blocking) {
       setError(normalizeSupabaseError(blocking.message));
@@ -745,6 +749,8 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       mistake_catalog_hidden: cachedCatalog?.hidden || resolvedCatalog.hidden
     });
     setAttachments(((a.data || []) as AttachmentRow[]) || []);
+    setDayAttachments(((da.data || []) as DayAttachmentRow[]) || []);
+    setEntryDayAttachmentLinks(((dl.data || []) as EntryDayAttachmentLinkRow[]) || []);
     setPlaybookRows(((p.data || []) as PlaybookSectionRow[]) || []);
     setDecisionChecks(((d.data || []) as DecisionCheckRow[]) || []);
   }
@@ -778,6 +784,47 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       `${section.title}\n${section.content}`.toLowerCase().includes(needle)
     );
   }, [mergedPlaybookSections, playbookSearch]);
+
+  function linkedDayAttachmentsForEntry(kind: 'trade' | 'no_trade', id: string) {
+    const links = entryDayAttachmentLinks.filter((row) => (kind === 'trade' ? row.trade_id === id : row.no_trade_day_id === id));
+    const linkIds = new Set(links.map((row) => row.day_attachment_id));
+    return dayAttachments.filter((row) => linkIds.has(row.id));
+  }
+
+  function entryAttachments(kind: 'trade' | 'no_trade', id: string) {
+    const legacy = kind === 'trade'
+      ? attachments.filter((a) => a.trade_id === id)
+      : attachments.filter((a) => a.no_trade_day_id === id);
+    const linkedDay = linkedDayAttachmentsForEntry(kind, id).map((row) => ({
+      id: `day-${row.id}`,
+      user_id: row.user_id,
+      trade_id: kind === 'trade' ? id : null,
+      no_trade_day_id: kind === 'no_trade' ? id : null,
+      session_id: null,
+      file_path: row.file_path,
+      file_name: row.file_name,
+      mime_type: row.mime_type,
+      byte_size: row.byte_size
+    } as AttachmentRow));
+    return [...legacy, ...linkedDay];
+  }
+
+  async function linkDayAttachmentToEntry(dayAttachmentId: string, kind: 'trade' | 'no_trade', entryId: string) {
+    const payload = {
+      user_id: userId,
+      day_attachment_id: dayAttachmentId,
+      trade_id: kind === 'trade' ? entryId : null,
+      no_trade_day_id: kind === 'no_trade' ? entryId : null,
+      session_id: null,
+      decision_check_id: null
+    };
+    const { error: linkError } = await supabase.from('entry_day_attachment_links').insert(payload);
+    if (linkError && !String(linkError.message || '').toLowerCase().includes('duplicate')) {
+      setError(normalizeSupabaseError(linkError.message));
+      return;
+    }
+    await loadAll();
+  }
 
   useEffect(() => {
     setPlaybookQuickReminderDraft(playbookQuickReminderRow?.content ?? PLAYBOOK_QUICK_REMINDERS_DEFAULT);
@@ -1268,7 +1315,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       timeLabel: `${trade.trade_date} · ${isPaperTrade(trade) ? 'Paper trade' : 'Live trade'}`,
       title: `${trade.ticker} · ${trade.classification}`,
       summary: `${trade.family} · ${trade.model} · ${Number(trade.r_multiple || 0).toFixed(2)}R · ${trade.minutes_in_trade}m`,
-      attachmentCount: attachments.filter((a) => a.trade_id === trade.id).length
+      attachmentCount: entryAttachments('trade', trade.id).length
     }));
     const noTradeItems: ReviewReferenceItem[] = weekNoTrades.map((day) => ({
       id: day.id,
@@ -1277,7 +1324,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
       timeLabel: `${day.day_date} · No-trade day`,
       title: day.reason,
       summary: `Mindset: ${resolveNoTradeMindset(day)}`,
-      attachmentCount: attachments.filter((a) => a.no_trade_day_id === day.id).length
+      attachmentCount: entryAttachments('no_trade', day.id).length
     }));
     const sessionItems: ReviewReferenceItem[] = weekSessions.map((session) => ({
       id: session.id,
@@ -3177,7 +3224,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <div className="small muted">Entry emotion: {resolveEntryEmotion(item.trade)} · In-trade emotion: {resolveInTradeEmotion(item.trade)}</div>
                   <div>{normalizeMistakeTags(item.trade.mistake_tags).map((m) => <span className="badge" key={m}>{m}</span>)}</div>
                   <div className="row">
-                    <div className="small muted">Attachments: {attachments.filter((a) => a.trade_id === item.trade.id).length}</div>
+                    <div className="small muted">Attachments: {entryAttachments('trade', item.trade.id).length}</div>
                     <div className="row">
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'trade', id: item.trade.id })}>View</button>
                       <button className="inline" type="button" onClick={() => startEditTrade(item.trade)}>Edit</button>
@@ -3229,7 +3276,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       ) : null}
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.trade.notes || ''} emptyLabel="—" />
-                      <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                      <AttachmentPreviewList entries={entryAttachments('trade', item.trade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
                 )}
@@ -3241,7 +3288,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                   <div className="small"><span className="badge">No-trade day</span> Reason: {item.noTrade.reason}</div>
                   <div className="small muted">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
                   <div className="row">
-                    <div className="small muted">Attachments: {attachments.filter((a) => a.no_trade_day_id === item.noTrade.id).length}</div>
+                    <div className="small muted">Attachments: {entryAttachments('no_trade', item.noTrade.id).length}</div>
                     <div className="row">
                       <button className="inline" type="button" onClick={() => void openEntryDetail({ kind: 'no_trade', id: item.noTrade.id })}>View</button>
                       <button className="inline" type="button" onClick={() => startEditNoTrade(item.noTrade)}>Edit</button>
@@ -3261,7 +3308,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                       <div className="small">No-trade mindset: {resolveNoTradeMindset(item.noTrade)}</div>
                       <div className="small">Notes:</div>
                       <RichTextContent value={item.noTrade.notes || ''} emptyLabel="—" />
-                      <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                      <AttachmentPreviewList entries={entryAttachments('no_trade', item.noTrade.id)} signedUrls={signedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                     </div>
                   </article>
                 )}
@@ -3678,6 +3725,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               multiple
               onChange={(e) => void runTradeExtraction(Array.from(e.currentTarget.files || []))}
             />
+            <div className="trade stack">
+              <strong>Day attachments</strong>
+              <div className="small muted">Reusable for other entries on {tradeDraft.trade_date || 'this date'}.</div>
+              {(dayAttachments.filter((row) => row.attachment_date === (tradeDraft.trade_date || new Date().toISOString().slice(0, 10))).length === 0) ? (
+                <div className="small muted">No day attachments found for this date yet.</div>
+              ) : dayAttachments
+                .filter((row) => row.attachment_date === (tradeDraft.trade_date || new Date().toISOString().slice(0, 10)))
+                .map((row) => {
+                  const linked = editingTradeId ? entryDayAttachmentLinks.some((l) => l.day_attachment_id === row.id && l.trade_id === editingTradeId) : false;
+                  return (
+                    <div className="row small" key={`trade-day-${row.id}`}>
+                      <span>{row.file_name}</span>
+                      <button className="inline" type="button" disabled={!editingTradeId || linked} onClick={() => editingTradeId ? void linkDayAttachmentToEntry(row.id, 'trade', editingTradeId) : undefined}>{linked ? 'Linked' : (editingTradeId ? 'Link' : 'Save trade first')}</button>
+                    </div>
+                  );
+                })}
+            </div>
             <div className="row">
               <span className="small muted">Upload-assisted autofill</span>
               <button className="inline" type="button" onClick={(e) => {
@@ -3800,6 +3864,23 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
               multiple
               onChange={(e) => void runNoTradeExtraction(Array.from(e.currentTarget.files || []))}
             />
+            <div className="trade stack">
+              <strong>Day attachments</strong>
+              <div className="small muted">Reusable for other entries on {noTradeDraft.day_date || 'this date'}.</div>
+              {(dayAttachments.filter((row) => row.attachment_date === (noTradeDraft.day_date || new Date().toISOString().slice(0, 10))).length === 0) ? (
+                <div className="small muted">No day attachments found for this date yet.</div>
+              ) : dayAttachments
+                .filter((row) => row.attachment_date === (noTradeDraft.day_date || new Date().toISOString().slice(0, 10)))
+                .map((row) => {
+                  const linked = editingNoTradeId ? entryDayAttachmentLinks.some((l) => l.day_attachment_id === row.id && l.no_trade_day_id === editingNoTradeId) : false;
+                  return (
+                    <div className="row small" key={`no-trade-day-${row.id}`}>
+                      <span>{row.file_name}</span>
+                      <button className="inline" type="button" disabled={!editingNoTradeId || linked} onClick={() => editingNoTradeId ? void linkDayAttachmentToEntry(row.id, 'no_trade', editingNoTradeId) : undefined}>{linked ? 'Linked' : (editingNoTradeId ? 'Link' : 'Save no-trade day first')}</button>
+                    </div>
+                  );
+                })}
+            </div>
             <div className="row">
               <span className="small muted">Upload-assisted autofill</span>
               <button className="inline" type="button" onClick={(e) => {
@@ -4427,7 +4508,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div>{normalizeMistakeTags(t.mistake_tags).map((m) => <span key={m} className="badge">{m}</span>)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={t.notes || ''} emptyLabel="—" />
-                    <AttachmentPreviewList entries={attachments.filter((a) => a.trade_id === t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    <AttachmentPreviewList entries={entryAttachments('trade', t.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
                 );
               })()
@@ -4442,7 +4523,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
                     <div className="small">No-trade mindset: {resolveNoTradeMindset(n)}</div>
                     <div className="small">Notes:</div>
                     <RichTextContent value={n.notes || ''} emptyLabel="—" />
-                    <AttachmentPreviewList entries={attachments.filter((a) => a.no_trade_day_id === n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
+                    <AttachmentPreviewList entries={entryAttachments('no_trade', n.id)} signedUrls={reviewSignedUrls} onOpenImage={(url, name) => setLightbox({ url, name })} />
                   </article>
                 );
               })()
