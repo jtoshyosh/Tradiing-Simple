@@ -905,6 +905,62 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     await loadAll();
   }
 
+  async function uploadAsDayAttachmentAndLink(file: File, entryDate: string, target: { trade_id?: string | null; no_trade_day_id?: string | null }) {
+    const safeName = file.name || `upload-${Date.now()}`;
+    const alreadyExisting = dayAttachments.find((row) => (
+      row.user_id === userId
+      && row.attachment_date === entryDate
+      && row.file_name === safeName
+      && Number(row.byte_size || 0) === Number(file.size || 0)
+      && (row.mime_type || '') === (file.type || 'application/octet-stream')
+    ));
+    if (alreadyExisting) {
+      const { error: linkError } = await supabase.from('entry_day_attachment_links').insert({
+        user_id: userId,
+        day_attachment_id: alreadyExisting.id,
+        trade_id: target.trade_id || null,
+        no_trade_day_id: target.no_trade_day_id || null,
+        session_id: null,
+        decision_check_id: null
+      });
+      if (linkError && !String(linkError.message || '').toLowerCase().includes('duplicate')) {
+        setError(normalizeSupabaseError(linkError.message));
+      }
+      return;
+    }
+    const filePath = `${userId}/day/${entryDate}/${crypto.randomUUID()}_${safeName}`;
+    const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
+    if (uploadError) {
+      setError(normalizeSupabaseError(uploadError.message));
+      return;
+    }
+    const { data: dayRow, error: dayError } = await supabase
+      .from('day_attachments')
+      .insert({
+        user_id: userId,
+        attachment_date: entryDate,
+        file_path: filePath,
+        file_name: safeName,
+        mime_type: file.type || 'application/octet-stream',
+        byte_size: file.size
+      })
+      .select('*')
+      .single();
+    if (dayError || !dayRow) {
+      setError(normalizeSupabaseError(dayError?.message || 'Failed to create day attachment row.'));
+      return;
+    }
+    const { error: linkError } = await supabase.from('entry_day_attachment_links').insert({
+      user_id: userId,
+      day_attachment_id: (dayRow as DayAttachmentRow).id,
+      trade_id: target.trade_id || null,
+      no_trade_day_id: target.no_trade_day_id || null,
+      session_id: null,
+      decision_check_id: null
+    });
+    if (linkError) setError(normalizeSupabaseError(linkError.message));
+  }
+
   useEffect(() => {
     setPlaybookQuickReminderDraft(playbookQuickReminderRow?.content ?? PLAYBOOK_QUICK_REMINDERS_DEFAULT);
   }, [playbookQuickReminderRow?.content]);
@@ -1532,22 +1588,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const files = formData.getAll('files') as File[];
     for (const file of files) {
       if (!file || file.size === 0) continue;
-      const filePath = `${userId}/${data.id}/${crypto.randomUUID()}_${file.name}`;
-      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
-      if (uploadError) {
-        setError(normalizeSupabaseError(uploadError.message));
-        continue;
-      }
-      await supabase.from('attachments').insert({
-        user_id: userId,
-        trade_id: data.id,
-        no_trade_day_id: null,
-        session_id: null,
-        file_path: filePath,
-        file_name: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        byte_size: file.size
-      });
+      await uploadAsDayAttachmentAndLink(file, payload.trade_date, { trade_id: data.id, no_trade_day_id: null });
     }
 
     await loadAll();
@@ -1575,22 +1616,7 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     const files = formData.getAll('no_trade_files') as File[];
     for (const file of files) {
       if (!file || file.size === 0) continue;
-      const filePath = `${userId}/no-trade/${data.id}/${crypto.randomUUID()}_${file.name}`;
-      const { error: uploadError } = await supabase.storage.from('attachments').upload(filePath, file, { upsert: false });
-      if (uploadError) {
-        setError(normalizeSupabaseError(uploadError.message));
-        continue;
-      }
-      await supabase.from('attachments').insert({
-        user_id: userId,
-        trade_id: null,
-        no_trade_day_id: data.id,
-        session_id: null,
-        file_path: filePath,
-        file_name: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        byte_size: file.size
-      });
+      await uploadAsDayAttachmentAndLink(file, payload.day_date, { trade_id: null, no_trade_day_id: data.id });
     }
 
     await loadAll();
