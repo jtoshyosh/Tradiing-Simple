@@ -753,6 +753,85 @@ export default function JournalApp({ userId, email, onSignOut }: Props) {
     setEntryDayAttachmentLinks(((dl.data || []) as EntryDayAttachmentLinkRow[]) || []);
     setPlaybookRows(((p.data || []) as PlaybookSectionRow[]) || []);
     setDecisionChecks(((d.data || []) as DecisionCheckRow[]) || []);
+
+    const backfilled = await backfillLegacyAttachmentsToDayModel(
+      ((a.data || []) as AttachmentRow[]) || [],
+      normalizedTrades,
+      normalizedNoTrades,
+      ((sessionResult.data || []) as SessionRow[]) || [],
+      ((da.data || []) as DayAttachmentRow[]) || [],
+      ((dl.data || []) as EntryDayAttachmentLinkRow[]) || []
+    );
+    if (backfilled) {
+      const [freshDay, freshLinks] = await Promise.all([
+        supabase.from('day_attachments').select('*').order('created_at', { ascending: false }),
+        supabase.from('entry_day_attachment_links').select('*').order('created_at', { ascending: false })
+      ]);
+      if (!freshDay.error) setDayAttachments(((freshDay.data || []) as DayAttachmentRow[]) || []);
+      if (!freshLinks.error) setEntryDayAttachmentLinks(((freshLinks.data || []) as EntryDayAttachmentLinkRow[]) || []);
+    }
+  }
+
+  async function backfillLegacyAttachmentsToDayModel(
+    legacyAttachments: AttachmentRow[],
+    tradeRows: TradeRow[],
+    noTradeRows: NoTradeDayRow[],
+    sessionRows: SessionRow[],
+    existingDayRows: DayAttachmentRow[],
+    existingLinks: EntryDayAttachmentLinkRow[]
+  ) {
+    const tradeDateById = new Map(tradeRows.map((row) => [row.id, row.trade_date]));
+    const noTradeDateById = new Map(noTradeRows.map((row) => [row.id, row.day_date]));
+    const sessionDateById = new Map(sessionRows.map((row) => [row.id, row.session_date]));
+    const dayByKey = new Map(existingDayRows.map((row) => [`${row.user_id}|${row.attachment_date}|${row.file_path}`, row]));
+    const linkKeySet = new Set(existingLinks.map((row) => `${row.day_attachment_id}|${row.trade_id || ''}|${row.no_trade_day_id || ''}|${row.session_id || ''}`));
+    let changed = false;
+
+    for (const file of legacyAttachments) {
+      const entryDate = file.trade_id
+        ? tradeDateById.get(file.trade_id)
+        : file.no_trade_day_id
+          ? noTradeDateById.get(file.no_trade_day_id)
+          : file.session_id
+            ? sessionDateById.get(file.session_id)
+            : null;
+      if (!entryDate) continue;
+      const dayKey = `${file.user_id}|${entryDate}|${file.file_path}`;
+      let dayRow = dayByKey.get(dayKey);
+      if (!dayRow) {
+        const { data: insertedDay, error: dayError } = await supabase
+          .from('day_attachments')
+          .insert({
+            user_id: file.user_id,
+            attachment_date: entryDate,
+            file_path: file.file_path,
+            file_name: file.file_name,
+            mime_type: file.mime_type,
+            byte_size: file.byte_size
+          })
+          .select('*')
+          .single();
+        if (dayError) continue;
+        dayRow = insertedDay as DayAttachmentRow;
+        dayByKey.set(dayKey, dayRow);
+        changed = true;
+      }
+      const linkKey = `${dayRow.id}|${file.trade_id || ''}|${file.no_trade_day_id || ''}|${file.session_id || ''}`;
+      if (linkKeySet.has(linkKey)) continue;
+      const { error: linkError } = await supabase.from('entry_day_attachment_links').insert({
+        user_id: file.user_id,
+        day_attachment_id: dayRow.id,
+        trade_id: file.trade_id,
+        no_trade_day_id: file.no_trade_day_id,
+        session_id: file.session_id,
+        decision_check_id: null
+      });
+      if (!linkError) {
+        linkKeySet.add(linkKey);
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   const playbookQuickReminderRow = useMemo(

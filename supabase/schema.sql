@@ -253,7 +253,7 @@ create table if not exists public.day_attachments (
   byte_size bigint not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (user_id, attachment_date)
+  unique (user_id, attachment_date, file_path)
 );
 
 create table if not exists public.entry_day_attachment_links (
